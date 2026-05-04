@@ -57,18 +57,27 @@ export const clientsApi = {
   configText: (id) => api.get(`/clients/${id}/config-text`),
   subscription: (id) => api.get(`/clients/${id}/subscription`),
 
-  // Скачивание конфига через JS fetch с авторизацией (решает проблему Unauthorized)
+  // Скачивание конфига через JS fetch с авторизацией
+  // AWG2/WireGuard: сервер отдаёт Amnezia JSON (.json)
+  // Xray: сервер отдаёт VLESS URI (.txt)
   downloadConfig: async (id, filename) => {
     const token = localStorage.getItem('token');
     const response = await fetch(`/api/clients/${id}/config`, {
       headers: { Authorization: `Bearer ${token}` },
     });
     if (!response.ok) throw new Error('Download failed');
+    // Получаем имя файла из Content-Disposition заголовка
+    const disposition = response.headers.get('Content-Disposition');
+    let serverFilename = filename;
+    if (disposition) {
+      const match = disposition.match(/filename="?(.+?)"?$/);
+      if (match) serverFilename = match[1];
+    }
     const blob = await response.blob();
     const url = window.URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = filename;
+    a.download = serverFilename;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);

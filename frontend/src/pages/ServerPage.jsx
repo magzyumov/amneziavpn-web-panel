@@ -271,9 +271,22 @@ function ClientModal({ client, protocolType, onClose }) {
     try {
       if (tab === 'amnezia') {
         await clientsApi.downloadConfigAmnezia(client.id, `${client.name}_amnezia.json`);
+      } else if (tab === 'cfg' && isXray) {
+        // Для Xray на вкладке VLESS URI скачиваем как .txt
+        // Создаём текстовый файл из VLESS URI
+        const blob = new Blob([config], { type: 'text/plain' });
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `${client.name}.txt`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        window.URL.revokeObjectURL(url);
       } else {
-        const ext = isXray ? 'txt' : 'conf';
-        await clientsApi.downloadConfig(client.id, `${client.name}.${ext}`);
+        // Сервер сам определяет правильное расширение файла из Content-Disposition
+        // AWG2/WireGuard → .json (Amnezia формат), Xray → .json (Amnezia формат)
+        await clientsApi.downloadConfig(client.id);
       }
     } catch (e) {
       alert('Download failed: ' + e.message);
@@ -304,7 +317,7 @@ function ClientModal({ client, protocolType, onClose }) {
             }
             <div className="text-muted mono" style={{ marginTop: 12, fontSize: 11 }}>
               {isXray
-                ? 'Scan with FLClash, v2rayNG or compatible client'
+                ? 'Scan with AmneziaVPN, FLClash, v2rayNG or compatible client'
                 : 'Scan with AmneziaVPN client (JSON format)'}
             </div>
           </div>

@@ -407,46 +407,54 @@ Endpoint = $SERVER_IP_ADDRESS:$WIREGUARD_SERVER_PORT
 PersistentKeepalive = 25`;
 
 // Block #9 — Xray клиент JSON (для импорта в AmneziaVPN)
-const XRAY_CLIENT_TEMPLATE = `{
-    "log": { "loglevel": "error" },
-    "inbounds": [{
-        "listen": "127.0.0.1",
-        "port": 10808,
-        "protocol": "socks",
-        "settings": { "udp": true }
-    }],
-    "outbounds": [{
-        "protocol": "vless",
-        "settings": {
-            "vnext": [{
-                "address": "$SERVER_IP_ADDRESS",
-                "port": $XRAY_SERVER_PORT,
-                "users": [{
-                    "id": "$XRAY_CLIENT_ID",
-                    "flow": "xtls-rprx-vision",
-                    "encryption": "none"
+// Полный формат AmneziaVPN — с обёрткой container/host/port/type
+const XRAY_CLIENT_JSON_TEMPLATE = `{
+    "container": "amnezia-xray",
+    "host": "$SERVER_IP_ADDRESS",
+    "port": $XRAY_SERVER_PORT_NUM,
+    "type": "xray",
+    "config": {
+        "log": { "loglevel": "error" },
+        "inbounds": [{
+            "listen": "127.0.0.1",
+            "port": 10808,
+            "protocol": "socks",
+            "settings": { "udp": true }
+        }],
+        "outbounds": [{
+            "protocol": "vless",
+            "settings": {
+                "vnext": [{
+                    "address": "$SERVER_IP_ADDRESS",
+                    "port": $XRAY_SERVER_PORT_NUM,
+                    "users": [{
+                        "id": "$XRAY_CLIENT_ID",
+                        "flow": "xtls-rprx-vision",
+                        "encryption": "none"
+                    }]
                 }]
-            }]
-        },
-        "streamSettings": {
-            "network": "tcp",
-            "security": "reality",
-            "realitySettings": {
-                "fingerprint": "chrome",
-                "serverName": "$XRAY_SITE_NAME",
-                "publicKey": "$XRAY_PUBLIC_KEY",
-                "shortId": "$XRAY_SHORT_ID",
-                "spiderX": ""
+            },
+            "streamSettings": {
+                "network": "tcp",
+                "security": "reality",
+                "realitySettings": {
+                    "fingerprint": "chrome",
+                    "serverName": "$XRAY_SITE_NAME",
+                    "publicKey": "$XRAY_PUBLIC_KEY",
+                    "shortId": "$XRAY_SHORT_ID",
+                    "spiderX": ""
+                }
             }
-        }
-    }]
+        }]
+    }
 }`;
 
 // Amnezia JSON для AWG2 (импорт в десктопный AmneziaVPN)
+// Числовые поля НЕ в кавычках — AmneziaVPN парсит строго по типам
 const AWG2_CLIENT_JSON_TEMPLATE = `{
     "container": "amnezia-awg2",
     "host": "$SERVER_IP_ADDRESS",
-    "port": "$AWG_SERVER_PORT",
+    "port": $AWG_SERVER_PORT_NUM,
     "type": "awg2",
     "config": {
         "address": "$WIREGUARD_CLIENT_IP/32",
@@ -454,30 +462,31 @@ const AWG2_CLIENT_JSON_TEMPLATE = `{
         "private_key": "$WIREGUARD_CLIENT_PRIVATE_KEY",
         "public_key": "$WIREGUARD_SERVER_PUBLIC_KEY",
         "psk": "$WIREGUARD_PSK",
-        "jc": "$JUNK_PACKET_COUNT",
-        "jmin": "$JUNK_PACKET_MIN_SIZE",
-        "jmax": "$JUNK_PACKET_MAX_SIZE",
-        "s1": "$INIT_PACKET_JUNK_SIZE",
-        "s2": "$RESPONSE_PACKET_JUNK_SIZE",
-        "s3": "$COOKIE_REPLY_PACKET_JUNK_SIZE",
-        "s4": "$TRANSPORT_PACKET_JUNK_SIZE",
-        "h1": "$INIT_PACKET_MAGIC_HEADER",
-        "h2": "$RESPONSE_PACKET_MAGIC_HEADER",
-        "h3": "$UNDERLOAD_PACKET_MAGIC_HEADER",
-        "h4": "$TRANSPORT_PACKET_MAGIC_HEADER",
-        "i1": "$SPECIAL_JUNK_1",
-        "i2": "$SPECIAL_JUNK_2",
-        "i3": "$SPECIAL_JUNK_3",
-        "i4": "$SPECIAL_JUNK_4",
-        "i5": "$SPECIAL_JUNK_5"
+        "jc": $JUNK_PACKET_COUNT_NUM,
+        "jmin": $JUNK_PACKET_MIN_SIZE_NUM,
+        "jmax": $JUNK_PACKET_MAX_SIZE_NUM,
+        "s1": $INIT_PACKET_JUNK_SIZE_NUM,
+        "s2": $RESPONSE_PACKET_JUNK_SIZE_NUM,
+        "s3": $COOKIE_REPLY_PACKET_JUNK_SIZE_NUM,
+        "s4": $TRANSPORT_PACKET_JUNK_SIZE_NUM,
+        "h1": $INIT_PACKET_MAGIC_HEADER_NUM,
+        "h2": $RESPONSE_PACKET_MAGIC_HEADER_NUM,
+        "h3": $UNDERLOAD_PACKET_MAGIC_HEADER_NUM,
+        "h4": $TRANSPORT_PACKET_MAGIC_HEADER_NUM,
+        "i1": $SPECIAL_JUNK_1_NUM,
+        "i2": $SPECIAL_JUNK_2_NUM,
+        "i3": $SPECIAL_JUNK_3_NUM,
+        "i4": $SPECIAL_JUNK_4_NUM,
+        "i5": $SPECIAL_JUNK_5_NUM
     }
 }`;
 
 // Amnezia JSON для WireGuard (импорт в десктопный AmneziaVPN)
+// Числовые поля НЕ в кавычках — AmneziaVPN парсит строго по типам
 const WG_CLIENT_JSON_TEMPLATE = `{
     "container": "amnezia-wireguard",
     "host": "$SERVER_IP_ADDRESS",
-    "port": "$WIREGUARD_SERVER_PORT",
+    "port": $WIREGUARD_SERVER_PORT_NUM,
     "type": "wireguard",
     "config": {
         "address": "$WIREGUARD_CLIENT_IP/32",
@@ -561,15 +570,16 @@ export async function installAWG2(server, options = {}) {
   const s2   = options.s2   ?? randInt(100, 200);
   const s3   = options.s3   ?? randInt(30, 100);
   const s4   = options.s4   ?? randInt(10, 50);
-  const h1   = options.h1   ?? randRange(600000000, 1500000000);
-  const h2   = options.h2   ?? randRange(1500000000, 1900000000);
-  const h3   = options.h3   ?? randRange(1800000000, 2100000000);
-  const h4   = options.h4   ?? randRange(2100000000, 2139000000);
-  const i1   = options.i1   ?? randRange(600000000, 1500000000);
-  const i2   = options.i2   ?? randRange(1500000000, 1900000000);
-  const i3   = options.i3   ?? randRange(600000000, 1500000000);
-  const i4   = options.i4   ?? randRange(1500000000, 1900000000);
-  const i5   = options.i5   ?? randRange(600000000, 1500000000);
+  // H и I параметры — это целые числа, не диапазоны
+  const h1   = options.h1   ?? randInt(600000000, 1500000000);
+  const h2   = options.h2   ?? randInt(1500000000, 1900000000);
+  const h3   = options.h3   ?? randInt(1800000000, 2100000000);
+  const h4   = options.h4   ?? randInt(2100000000, 2139000000);
+  const i1   = options.i1   ?? randInt(600000000, 1500000000);
+  const i2   = options.i2   ?? randInt(1500000000, 1900000000);
+  const i3   = options.i3   ?? randInt(600000000, 1500000000);
+  const i4   = options.i4   ?? randInt(1500000000, 1900000000);
+  const i5   = options.i5   ?? randInt(600000000, 1500000000);
 
   // 1. Собираем образ если нет
   await buildImage(server, imageName, buildDir, DOCKERFILES.awg2);
@@ -727,15 +737,15 @@ export async function addAWG2Client(server, protocol, clientName) {
     RESPONSE_PACKET_JUNK_SIZE: c.s2 ?? randInt(100, 200),
     COOKIE_REPLY_PACKET_JUNK_SIZE: c.s3 ?? randInt(30, 100),
     TRANSPORT_PACKET_JUNK_SIZE: c.s4 ?? randInt(10, 50),
-    INIT_PACKET_MAGIC_HEADER: c.h1 ?? randRange(600000000, 1500000000),
-    RESPONSE_PACKET_MAGIC_HEADER: c.h2 ?? randRange(1500000000, 1900000000),
-    UNDERLOAD_PACKET_MAGIC_HEADER: c.h3 ?? randRange(1800000000, 2100000000),
-    TRANSPORT_PACKET_MAGIC_HEADER: c.h4 ?? randRange(2100000000, 2139000000),
-    SPECIAL_JUNK_1: c.i1 ?? randRange(600000000, 1500000000),
-    SPECIAL_JUNK_2: c.i2 ?? randRange(1500000000, 1900000000),
-    SPECIAL_JUNK_3: c.i3 ?? randRange(600000000, 1500000000),
-    SPECIAL_JUNK_4: c.i4 ?? randRange(1500000000, 1900000000),
-    SPECIAL_JUNK_5: c.i5 ?? randRange(600000000, 1500000000),
+    INIT_PACKET_MAGIC_HEADER: c.h1 ?? randInt(600000000, 1500000000),
+    RESPONSE_PACKET_MAGIC_HEADER: c.h2 ?? randInt(1500000000, 1900000000),
+    UNDERLOAD_PACKET_MAGIC_HEADER: c.h3 ?? randInt(1800000000, 2100000000),
+    TRANSPORT_PACKET_MAGIC_HEADER: c.h4 ?? randInt(2100000000, 2139000000),
+    SPECIAL_JUNK_1: c.i1 ?? randInt(600000000, 1500000000),
+    SPECIAL_JUNK_2: c.i2 ?? randInt(1500000000, 1900000000),
+    SPECIAL_JUNK_3: c.i3 ?? randInt(600000000, 1500000000),
+    SPECIAL_JUNK_4: c.i4 ?? randInt(1500000000, 1900000000),
+    SPECIAL_JUNK_5: c.i5 ?? randInt(600000000, 1500000000),
     WIREGUARD_SERVER_PUBLIC_KEY: c.serverPubKey,
     WIREGUARD_PSK: presharedKey,
     SERVER_IP_ADDRESS: server.host,
@@ -744,7 +754,28 @@ export async function addAWG2Client(server, protocol, clientName) {
 
   // Генерируем .conf для WireGuard клиентов и Amnezia JSON для десктопного приложения
   const clientConf = renderTemplate(AWG2_CLIENT_TEMPLATE, templateVars);
-  const configJson = renderTemplate(AWG2_CLIENT_JSON_TEMPLATE, templateVars);
+  // Добавляем числовые переменные для JSON шаблона (без кавычек)
+  const jsonVars = {
+    ...templateVars,
+    AWG_SERVER_PORT_NUM: c.port,
+    JUNK_PACKET_COUNT_NUM: c.jc ?? randInt(3, 10),
+    JUNK_PACKET_MIN_SIZE_NUM: c.jmin ?? randInt(10, 50),
+    JUNK_PACKET_MAX_SIZE_NUM: c.jmax ?? randInt(200, 1000),
+    INIT_PACKET_JUNK_SIZE_NUM: c.s1 ?? randInt(100, 200),
+    RESPONSE_PACKET_JUNK_SIZE_NUM: c.s2 ?? randInt(100, 200),
+    COOKIE_REPLY_PACKET_JUNK_SIZE_NUM: c.s3 ?? randInt(30, 100),
+    TRANSPORT_PACKET_JUNK_SIZE_NUM: c.s4 ?? randInt(10, 50),
+    INIT_PACKET_MAGIC_HEADER_NUM: parseInt(String(c.h1 ?? randInt(600000000, 1500000000))) || randInt(600000000, 1500000000),
+    RESPONSE_PACKET_MAGIC_HEADER_NUM: parseInt(String(c.h2 ?? randInt(1500000000, 1900000000))) || randInt(1500000000, 1900000000),
+    UNDERLOAD_PACKET_MAGIC_HEADER_NUM: parseInt(String(c.h3 ?? randInt(1800000000, 2100000000))) || randInt(1800000000, 2100000000),
+    TRANSPORT_PACKET_MAGIC_HEADER_NUM: parseInt(String(c.h4 ?? randInt(2100000000, 2139000000))) || randInt(2100000000, 2139000000),
+    SPECIAL_JUNK_1_NUM: parseInt(String(c.i1 ?? randInt(600000000, 1500000000))) || randInt(600000000, 1500000000),
+    SPECIAL_JUNK_2_NUM: parseInt(String(c.i2 ?? randInt(1500000000, 1900000000))) || randInt(1500000000, 1900000000),
+    SPECIAL_JUNK_3_NUM: parseInt(String(c.i3 ?? randInt(600000000, 1500000000))) || randInt(600000000, 1500000000),
+    SPECIAL_JUNK_4_NUM: parseInt(String(c.i4 ?? randInt(1500000000, 1900000000))) || randInt(1500000000, 1900000000),
+    SPECIAL_JUNK_5_NUM: parseInt(String(c.i5 ?? randInt(600000000, 1500000000))) || randInt(600000000, 1500000000),
+  };
+  const configJson = renderTemplate(AWG2_CLIENT_JSON_TEMPLATE, jsonVars);
 
   return { config: clientConf, configJson, type: 'awg2' };
 }
@@ -868,13 +899,13 @@ export async function addXrayClient(server, protocol, clientName) {
     throw new Error('Xray protocol config is incomplete (missing port/sni/publicKey/shortId). Reinstall the protocol.');
   }
 
-  // VLESS URI для AmneziaVPN / FLClash
+  // VLESS URI для FLClash / v2rayNG
   const vlessUrl = `vless://${clientId}@${server.host}:${port}?type=tcp&security=reality&pbk=${pubKey}&fp=chrome&sni=${sni}&sid=${shortId}&flow=xtls-rprx-vision#${safeName}`;
 
-  // JSON конфиг (формат Amnezia)
-  const clientJson = renderTemplate(XRAY_CLIENT_TEMPLATE, {
+  // JSON конфиг (формат AmneziaVPN — с обёрткой container/host/port/type)
+  const clientJson = renderTemplate(XRAY_CLIENT_JSON_TEMPLATE, {
     SERVER_IP_ADDRESS: server.host,
-    XRAY_SERVER_PORT: port,
+    XRAY_SERVER_PORT_NUM: port,
     XRAY_CLIENT_ID: clientId,
     XRAY_SITE_NAME: sni,
     XRAY_PUBLIC_KEY: pubKey,
@@ -1004,7 +1035,12 @@ export async function addWireGuardClient(server, protocol, clientName) {
   };
 
   const clientConf = renderTemplate(WG_CLIENT_TEMPLATE, templateVars);
-  const configJson = renderTemplate(WG_CLIENT_JSON_TEMPLATE, templateVars);
+  // Добавляем числовые переменные для JSON шаблона (порт без кавычек)
+  const jsonVars = {
+    ...templateVars,
+    WIREGUARD_SERVER_PORT_NUM: c.port,
+  };
+  const configJson = renderTemplate(WG_CLIENT_JSON_TEMPLATE, jsonVars);
 
   return { config: clientConf, configJson, type: 'wireguard' };
 }

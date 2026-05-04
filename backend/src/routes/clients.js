@@ -63,23 +63,38 @@ router.post('/', async (req, res) => {
   res.json({ id, name: safeName, config: result.config, type: result.type, subscriptionSlug });
 });
 
-// GET /api/clients/:id/config — скачать .conf файл (через JS fetch с авторизацией)
+// GET /api/clients/:id/config — скачать конфиг файл (через JS fetch с авторизацией)
+// Для всех протоколов: отдаём Amnezia JSON (.json) — десктопный AmneziaVPN требует этот формат
+// Также доступен VLESS URI через config-text для FLClash/v2rayNG
 router.get('/:id/config', async (req, res) => {
   await getDb();
   const client = queryOne('SELECT * FROM clients WHERE id = ?', [req.params.id]);
   if (!client) return res.status(404).json({ error: 'Not found' });
   const protocol = queryOne('SELECT type FROM protocols WHERE id = ?', [client.protocol_id]);
-  const ext = protocol?.type === 'xray' ? 'txt' : 'conf';
-  // Отдаём только основной конфиг (vless URI или .conf), без JSON части
-  const config = client.config.split('\n---AMNEZIA_JSON---\n')[0];
-  res.setHeader('Content-Disposition', `attachment; filename="${client.name}.${ext}"`);
-  res.setHeader('Content-Type', 'text/plain');
-  res.send(config);
+
+  const parts = client.config.split('\n---AMNEZIA_JSON---\n');
+
+  // Для всех протоколов: AmneziaVPN десктоп импортирует JSON формат
+  if (parts.length >= 2 && parts[1].trim()) {
+    res.setHeader('Content-Disposition', `attachment; filename="${client.name}.json"`);
+    res.setHeader('Content-Type', 'application/json');
+    res.send(parts[1].trim());
+  } else {
+    // Fallback: отдаём что есть
+    if (protocol?.type === 'xray') {
+      res.setHeader('Content-Disposition', `attachment; filename="${client.name}.txt"`);
+      res.setHeader('Content-Type', 'text/plain');
+    } else {
+      res.setHeader('Content-Disposition', `attachment; filename="${client.name}.conf"`);
+      res.setHeader('Content-Type', 'text/plain');
+    }
+    res.send(parts[0]);
+  }
 });
 
 // GET /api/clients/:id/qr — QR код для клиента
-// Для AmneziaVPN мобильного приложения: AWG2/WireGuard — Amnezia JSON формат
-// Для Xray: VLESS URI формат (FLClash/v2rayNG)
+// ВСЕ протоколы: QR код содержит Amnezia JSON формат
+// AmneziaVPN десктоп/мобильное приложение парсит только JSON из QR кода
 router.get('/:id/qr', async (req, res) => {
   await getDb();
   const client = queryOne('SELECT * FROM clients WHERE id = ?', [req.params.id]);
@@ -89,18 +104,13 @@ router.get('/:id/qr', async (req, res) => {
   let configForQr;
   const parts = client.config.split('\n---AMNEZIA_JSON---\n');
 
-  if (protocol?.type === 'xray') {
-    // Для Xray: VLESS URI — совместимо с FLClash/v2rayNG
-    configForQr = parts[0];
-  } else if (protocol?.type === 'awg2' || protocol?.type === 'wireguard') {
-    // Для AWG2/WireGuard: AmneziaVPN мобильное приложение ожидает JSON формат из QR кода
-    // Если есть JSON часть — используем её; иначе — .conf формат
-    if (parts.length >= 2 && parts[1].trim()) {
-      configForQr = parts[1].trim();
-    } else {
-      configForQr = parts[0];
-    }
+  // Для всех протоколов: AmneziaVPN парсит JSON формат из QR кода
+  // AWG2/WireGuard: есть JSON часть (Amnezia формат)
+  // Xray: JSON часть — это конфиг Xray клиента в формате Amnezia
+  if (parts.length >= 2 && parts[1].trim()) {
+    configForQr = parts[1].trim();
   } else {
+    // Fallback: если JSON части нет, используем основной конфиг
     configForQr = parts[0];
   }
 
