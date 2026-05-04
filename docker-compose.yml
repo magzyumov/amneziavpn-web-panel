@@ -1,0 +1,31 @@
+services:
+
+  backend:
+    build: ./backend
+    container_name: amnezia-panel-backend
+    restart: unless-stopped
+    environment:
+      PORT: 3001
+      JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
+      DB_PATH: /data/panel.db
+    volumes:
+      - ./data:/data
+    networks:
+      - panel
+
+  frontend:
+    build: ./frontend
+    container_name: amnezia-panel-frontend
+    restart: unless-stopped
+    ports:
+      # Панель:       http://<VPS>:${PANEL_PORT}/
+      # Подписки:     http://<VPS>:${PANEL_PORT}/sub/<slug>
+      - "${PANEL_PORT:-80}:80"
+    depends_on:
+      - backend
+    networks:
+      - panel
+
+networks:
+  panel:
+    driver: bridge
