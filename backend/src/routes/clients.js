@@ -94,14 +94,10 @@ router.get('/:id/config', async (req, res) => {
 
 // GET /api/clients/:id/qr — QR код для клиента
 //
-// Формат QR кода зависит от протокола:
-// - WireGuard/AWG: .conf формат (стандартный WireGuard конфиг) — понимает и
-//   AmneziaVPN десктоп, и стандартное WireGuard приложение
-// - Xray: VLESS URI — понимает AmneziaVPN десктоп, v2rayNG, FLClash
-//
-// Amnezia JSON формат (container/host/port/type) десктопный AmneziaVPN
-// поддерживает ТОЛЬКО при импорте из файла, НЕ через QR код.
-// Поэтому для QR используем стандартные форматы конфигов.
+// AmneziaVPN десктоп импортирует из QR кода тот же JSON формат, что и из файла:
+// { "hostName": "...", "containers": [{ "awg": { ... } }], ... }
+// QR код содержит Amnezia JSON — это единственный формат, который десктопный
+// AmneziaVPN корректно парсит при сканировании QR.
 router.get('/:id/qr', async (req, res) => {
   await getDb();
   const client = queryOne('SELECT * FROM clients WHERE id = ?', [req.params.id]);
@@ -110,12 +106,17 @@ router.get('/:id/qr', async (req, res) => {
 
   const parts = client.config.split('\n---AMNEZIA_JSON---\n');
 
-  // Для QR кода используем первую часть (.conf или VLESS URI)
-  // Это универсальный формат, который понимают все VPN клиенты
-  let configForQr = parts[0];
+  // Amnezia JSON — формат десктопного клиента AmneziaVPN
+  let configForQr;
+  if (parts.length >= 2 && parts[1].trim()) {
+    configForQr = parts[1].trim();
+  } else {
+    // Fallback: .conf или VLESS URI
+    configForQr = parts[0];
+  }
 
   const qr = await QRCode.toDataURL(configForQr, { width: 400, margin: 2, errorCorrectionLevel: 'L' });
-  res.json({ qr, format: protocol?.type === 'xray' ? 'vless' : 'conf' });
+  res.json({ qr });
 });
 
 router.get('/:id/config-text', async (req, res) => {

@@ -406,96 +406,229 @@ AllowedIPs = 0.0.0.0/0, ::/0
 Endpoint = $SERVER_IP_ADDRESS:$WIREGUARD_SERVER_PORT
 PersistentKeepalive = 25`;
 
-// Block #9 — Xray клиент JSON (для импорта в AmneziaVPN)
-// Полный формат AmneziaVPN — с обёрткой container/host/port/type
-const XRAY_CLIENT_JSON_TEMPLATE = `{
-    "container": "amnezia-xray",
-    "host": "$SERVER_IP_ADDRESS",
-    "port": $XRAY_SERVER_PORT_NUM,
-    "type": "xray",
-    "config": {
-        "log": { "loglevel": "error" },
-        "inbounds": [{
-            "listen": "127.0.0.1",
-            "port": 10808,
-            "protocol": "socks",
-            "settings": { "udp": true }
+// ─── Функции генерации Amnezia JSON (формат десктопного клиента) ─────────────
+//
+// Формат основан на исходном коде AmneziaVPN десктоп (github.com/amnezia-vpn/amnezia-client)
+// Ключевые особенности:
+// - Корневая структура: { "hostName": "...", "containers": [...], ... }
+// - containers — массив объектов вида { "container": "amnezia-awg", "awg": { ... } }
+// - Внутри объекта протокола: serverConfig поля + last_config (JSON-строка клиента)
+// - Ключи клиента: hostName, port, client_ip, client_priv_key, server_pub_key, psk_key, config
+// - config (nativeConfig) — полный .conf текст клиента
+//
+// Ссылки на исходники:
+//   client/core/models/serverConfig.cpp — ServerConfig::fromJson()
+//   client/core/models/containerConfig.cpp — ContainerConfig::toJson()
+//   client/core/models/protocols/awgProtocolConfig.cpp — AwgClientConfig::toJson()
+//   client/core/models/protocols/wireGuardProtocolConfig.cpp — WireGuardClientConfig::toJson()
+//   client/core/utils/constants/configKeys.h — имена ключей JSON
+
+/**
+ * Генерирует Amnezia JSON для клиента AWG (AmneziaWG).
+ * Формат совместим с десктопным AmneziaVPN для импорта через QR и файл.
+ */
+function buildAmneziaAwgJson(params) {
+  const {
+    serverHost, port, clientIp, clientPrivKey, clientPubKey, serverPubKey, presharedKey,
+    nativeConfig, jc, jmin, jmax, s1, s2, s3, s4, h1, h2, h3, h4, i1, i2, i3, i4, i5,
+  } = params;
+
+  // last_config — JSON-строка с конфигом клиента (AwgClientConfig)
+  const lastConfigObj = {
+    config: nativeConfig,  // nativeConfig — полный .conf текст
+    hostName: serverHost,
+    port: port,
+    client_ip: `${clientIp}/32`,
+    client_priv_key: clientPrivKey,
+    client_pub_key: clientPubKey,
+    server_pub_key: serverPubKey,
+    psk_key: presharedKey,
+    allowed_ips: ['0.0.0.0/0', '::/0'],
+    persistent_keep_alive: '25',
+    Jc: String(jc),
+    Jmin: String(jmin),
+    Jmax: String(jmax),
+    S1: String(s1),
+    S2: String(s2),
+    S3: String(s3),
+    S4: String(s4),
+    H1: String(h1),
+    H2: String(h2),
+    H3: String(h3),
+    H4: String(h4),
+    I1: String(i1),
+    I2: String(i2),
+    I3: String(i3),
+    I4: String(i4),
+    I5: String(i5),
+  };
+
+  // Объект протокола awg (AwgProtocolConfig = AwgServerConfig + last_config)
+  const awgObj = {
+    port: String(port),
+    transport_proto: 'udp',
+    protocol_version: '2',
+    subnet_address: '10.8.1.0',
+    subnet_cidr: '24',
+    Jc: String(jc),
+    Jmin: String(jmin),
+    Jmax: String(jmax),
+    S1: String(s1),
+    S2: String(s2),
+    S3: String(s3),
+    S4: String(s4),
+    H1: String(h1),
+    H2: String(h2),
+    H3: String(h3),
+    H4: String(h4),
+    I1: String(i1),
+    I2: String(i2),
+    I3: String(i3),
+    I4: String(i4),
+    I5: String(i5),
+    last_config: JSON.stringify(lastConfigObj),
+  };
+
+  // Container object
+  const containerObj = {
+    container: 'amnezia-awg',
+    awg: awgObj,
+  };
+
+  // Корневой объект (SelfHostedServerConfig)
+  const rootObj = {
+    hostName: serverHost,
+    containers: [containerObj],
+    defaultContainer: 'amnezia-awg',
+    dns1: '1.1.1.1',
+    dns2: '8.8.8.8',
+  };
+
+  return JSON.stringify(rootObj, null, 4);
+}
+
+/**
+ * Генерирует Amnezia JSON для клиента WireGuard.
+ */
+function buildAmneziaWireGuardJson(params) {
+  const {
+    serverHost, port, clientIp, clientPrivKey, clientPubKey, serverPubKey, presharedKey,
+    nativeConfig,
+  } = params;
+
+  // last_config — JSON-строка с конфигом клиента (WireGuardClientConfig)
+  const lastConfigObj = {
+    config: nativeConfig,
+    hostName: serverHost,
+    port: port,
+    client_ip: `${clientIp}/32`,
+    client_priv_key: clientPrivKey,
+    client_pub_key: clientPubKey,
+    server_pub_key: serverPubKey,
+    psk_key: presharedKey,
+    allowed_ips: ['0.0.0.0/0', '::/0'],
+    persistent_keep_alive: '25',
+  };
+
+  // Объект протокола wireguard
+  const wgObj = {
+    port: String(port),
+    transport_proto: 'udp',
+    subnet_address: '10.8.1.0',
+    subnet_cidr: '24',
+    last_config: JSON.stringify(lastConfigObj),
+  };
+
+  // Container object
+  const containerObj = {
+    container: 'amnezia-wireguard',
+    wireguard: wgObj,
+  };
+
+  const rootObj = {
+    hostName: serverHost,
+    containers: [containerObj],
+    defaultContainer: 'amnezia-wireguard',
+    dns1: '1.1.1.1',
+    dns2: '8.8.8.8',
+  };
+
+  return JSON.stringify(rootObj, null, 4);
+}
+
+/**
+ * Генерирует Amnezia JSON для клиента Xray.
+ */
+function buildAmneziaXrayJson(params) {
+  const {
+    serverHost, port, clientId, sni, publicKey, shortId,
+  } = params;
+
+  // Xray native config (полный JSON конфиг Xray клиента)
+  const xrayNativeConfig = {
+    log: { loglevel: 'error' },
+    inbounds: [{
+      listen: '127.0.0.1',
+      port: 10808,
+      protocol: 'socks',
+      settings: { udp: true },
+    }],
+    outbounds: [{
+      protocol: 'vless',
+      settings: {
+        vnext: [{
+          address: serverHost,
+          port: port,
+          users: [{
+            id: clientId,
+            flow: 'xtls-rprx-vision',
+            encryption: 'none',
+          }],
         }],
-        "outbounds": [{
-            "protocol": "vless",
-            "settings": {
-                "vnext": [{
-                    "address": "$SERVER_IP_ADDRESS",
-                    "port": $XRAY_SERVER_PORT_NUM,
-                    "users": [{
-                        "id": "$XRAY_CLIENT_ID",
-                        "flow": "xtls-rprx-vision",
-                        "encryption": "none"
-                    }]
-                }]
-            },
-            "streamSettings": {
-                "network": "tcp",
-                "security": "reality",
-                "realitySettings": {
-                    "fingerprint": "chrome",
-                    "serverName": "$XRAY_SITE_NAME",
-                    "publicKey": "$XRAY_PUBLIC_KEY",
-                    "shortId": "$XRAY_SHORT_ID",
-                    "spiderX": ""
-                }
-            }
-        }]
-    }
-}`;
+      },
+      streamSettings: {
+        network: 'tcp',
+        security: 'reality',
+        realitySettings: {
+          fingerprint: 'chrome',
+          serverName: sni,
+          publicKey: publicKey,
+          shortId: shortId,
+          spiderX: '',
+        },
+      },
+    }],
+  };
 
-// Amnezia JSON для AWG2 (импорт в десктопный AmneziaVPN)
-// Числовые поля НЕ в кавычках — AmneziaVPN парсит строго по типам
-const AWG2_CLIENT_JSON_TEMPLATE = `{
-    "container": "amnezia-awg2",
-    "host": "$SERVER_IP_ADDRESS",
-    "port": $AWG_SERVER_PORT_NUM,
-    "type": "awg2",
-    "config": {
-        "address": "$WIREGUARD_CLIENT_IP/32",
-        "dns": "$PRIMARY_DNS, $SECONDARY_DNS",
-        "private_key": "$WIREGUARD_CLIENT_PRIVATE_KEY",
-        "public_key": "$WIREGUARD_SERVER_PUBLIC_KEY",
-        "psk": "$WIREGUARD_PSK",
-        "jc": $JUNK_PACKET_COUNT_NUM,
-        "jmin": $JUNK_PACKET_MIN_SIZE_NUM,
-        "jmax": $JUNK_PACKET_MAX_SIZE_NUM,
-        "s1": $INIT_PACKET_JUNK_SIZE_NUM,
-        "s2": $RESPONSE_PACKET_JUNK_SIZE_NUM,
-        "s3": $COOKIE_REPLY_PACKET_JUNK_SIZE_NUM,
-        "s4": $TRANSPORT_PACKET_JUNK_SIZE_NUM,
-        "h1": $INIT_PACKET_MAGIC_HEADER_NUM,
-        "h2": $RESPONSE_PACKET_MAGIC_HEADER_NUM,
-        "h3": $UNDERLOAD_PACKET_MAGIC_HEADER_NUM,
-        "h4": $TRANSPORT_PACKET_MAGIC_HEADER_NUM,
-        "i1": $SPECIAL_JUNK_1_NUM,
-        "i2": $SPECIAL_JUNK_2_NUM,
-        "i3": $SPECIAL_JUNK_3_NUM,
-        "i4": $SPECIAL_JUNK_4_NUM,
-        "i5": $SPECIAL_JUNK_5_NUM
-    }
-}`;
+  // last_config — JSON-строка с конфигом клиента (XrayClientConfig)
+  const lastConfigObj = {
+    config: JSON.stringify(xrayNativeConfig),
+    hostName: serverHost,
+    port: String(port),
+  };
 
-// Amnezia JSON для WireGuard (импорт в десктопный AmneziaVPN)
-// Числовые поля НЕ в кавычках — AmneziaVPN парсит строго по типам
-const WG_CLIENT_JSON_TEMPLATE = `{
-    "container": "amnezia-wireguard",
-    "host": "$SERVER_IP_ADDRESS",
-    "port": $WIREGUARD_SERVER_PORT_NUM,
-    "type": "wireguard",
-    "config": {
-        "address": "$WIREGUARD_CLIENT_IP/32",
-        "dns": "$PRIMARY_DNS, $SECONDARY_DNS",
-        "private_key": "$WIREGUARD_CLIENT_PRIVATE_KEY",
-        "public_key": "$WIREGUARD_SERVER_PUBLIC_KEY",
-        "psk": "$WIREGUARD_PSK"
-    }
-}`;
+  // Объект протокола xray
+  const xrayObj = {
+    port: String(port),
+    transport_proto: 'tcp',
+    site: sni,
+    last_config: JSON.stringify(lastConfigObj),
+  };
+
+  // Container object
+  const containerObj = {
+    container: 'amnezia-xray',
+    xray: xrayObj,
+  };
+
+  const rootObj = {
+    hostName: serverHost,
+    containers: [containerObj],
+    defaultContainer: 'amnezia-xray',
+  };
+
+  return JSON.stringify(rootObj, null, 4);
+}
 
 // ─── Хелперы ─────────────────────────────────────────────────────────────────
 
@@ -758,39 +891,41 @@ export async function addAWG2Client(server, protocol, clientName) {
     AWG_SERVER_PORT: c.port,
   };
 
-  // Генерируем .conf для WireGuard клиентов и Amnezia JSON для десктопного приложения
+  // Генерируем .conf (стандартный WireGuard формат)
   const clientConf = renderTemplate(AWG2_CLIENT_TEMPLATE, templateVars);
-  // Добавляем числовые переменные для JSON шаблона (без кавычек)
-  const jsonVars = {
-    ...templateVars,
-    AWG_SERVER_PORT_NUM: c.port,
-    JUNK_PACKET_COUNT_NUM: c.jc ?? randInt(3, 10),
-    JUNK_PACKET_MIN_SIZE_NUM: c.jmin ?? randInt(10, 50),
-    JUNK_PACKET_MAX_SIZE_NUM: c.jmax ?? randInt(200, 1000),
-    INIT_PACKET_JUNK_SIZE_NUM: c.s1 ?? randInt(100, 200),
-    RESPONSE_PACKET_JUNK_SIZE_NUM: c.s2 ?? randInt(100, 200),
-    COOKIE_REPLY_PACKET_JUNK_SIZE_NUM: c.s3 ?? randInt(30, 100),
-    TRANSPORT_PACKET_JUNK_SIZE_NUM: c.s4 ?? randInt(10, 50),
-    INIT_PACKET_MAGIC_HEADER_NUM: parseInt(String(c.h1 ?? randInt(600000000, 1500000000))) || randInt(600000000, 1500000000),
-    RESPONSE_PACKET_MAGIC_HEADER_NUM: parseInt(String(c.h2 ?? randInt(1500000000, 1900000000))) || randInt(1500000000, 1900000000),
-    UNDERLOAD_PACKET_MAGIC_HEADER_NUM: parseInt(String(c.h3 ?? randInt(1800000000, 2100000000))) || randInt(1800000000, 2100000000),
-    TRANSPORT_PACKET_MAGIC_HEADER_NUM: parseInt(String(c.h4 ?? randInt(2100000000, 2139000000))) || randInt(2100000000, 2139000000),
-    SPECIAL_JUNK_1_NUM: parseInt(String(c.i1 ?? randInt(600000000, 1500000000))) || randInt(600000000, 1500000000),
-    SPECIAL_JUNK_2_NUM: parseInt(String(c.i2 ?? randInt(1500000000, 1900000000))) || randInt(1500000000, 1900000000),
-    SPECIAL_JUNK_3_NUM: parseInt(String(c.i3 ?? randInt(600000000, 1500000000))) || randInt(600000000, 1500000000),
-    SPECIAL_JUNK_4_NUM: parseInt(String(c.i4 ?? randInt(1500000000, 1900000000))) || randInt(1500000000, 1900000000),
-    SPECIAL_JUNK_5_NUM: parseInt(String(c.i5 ?? randInt(600000000, 1500000000))) || randInt(600000000, 1500000000),
-  };
-  const configJson = renderTemplate(AWG2_CLIENT_JSON_TEMPLATE, jsonVars);
 
-  // Валидация JSON — если шаблон отрисовался с ошибкой, JSON будет невалидным
-  try {
-    JSON.parse(configJson);
-  } catch (e) {
-    console.error('AWG2 JSON validation failed:', e.message);
-    console.error('Generated JSON:', configJson.slice(0, 500));
-    throw new Error(`AWG2 config JSON is invalid: ${e.message}. Check template variables.`);
-  }
+  // Генерируем Amnezia JSON (формат десктопного клиента AmneziaVPN)
+  const jcVal = c.jc ?? randInt(3, 10);
+  const jminVal = c.jmin ?? randInt(10, 50);
+  const jmaxVal = c.jmax ?? randInt(200, 1000);
+  const s1Val = c.s1 ?? randInt(100, 200);
+  const s2Val = c.s2 ?? randInt(100, 200);
+  const s3Val = c.s3 ?? randInt(30, 100);
+  const s4Val = c.s4 ?? randInt(10, 50);
+  const h1Val = parseInt(String(c.h1 ?? randInt(600000000, 1500000000))) || randInt(600000000, 1500000000);
+  const h2Val = parseInt(String(c.h2 ?? randInt(1500000000, 1900000000))) || randInt(1500000000, 1900000000);
+  const h3Val = parseInt(String(c.h3 ?? randInt(1800000000, 2100000000))) || randInt(1800000000, 2100000000);
+  const h4Val = parseInt(String(c.h4 ?? randInt(2100000000, 2139000000))) || randInt(2100000000, 2139000000);
+  const i1Val = parseInt(String(c.i1 ?? randInt(600000000, 1500000000))) || randInt(600000000, 1500000000);
+  const i2Val = parseInt(String(c.i2 ?? randInt(1500000000, 1900000000))) || randInt(1500000000, 1900000000);
+  const i3Val = parseInt(String(c.i3 ?? randInt(600000000, 1500000000))) || randInt(600000000, 1500000000);
+  const i4Val = parseInt(String(c.i4 ?? randInt(1500000000, 1900000000))) || randInt(1500000000, 1900000000);
+  const i5Val = parseInt(String(c.i5 ?? randInt(600000000, 1500000000))) || randInt(600000000, 1500000000);
+
+  const configJson = buildAmneziaAwgJson({
+    serverHost: server.host,
+    port: c.port,
+    clientIp,
+    clientPrivKey,
+    clientPubKey,
+    serverPubKey: c.serverPubKey,
+    presharedKey,
+    nativeConfig: clientConf,
+    jc: jcVal, jmin: jminVal, jmax: jmaxVal,
+    s1: s1Val, s2: s2Val, s3: s3Val, s4: s4Val,
+    h1: h1Val, h2: h2Val, h3: h3Val, h4: h4Val,
+    i1: i1Val, i2: i2Val, i3: i3Val, i4: i4Val, i5: i5Val,
+  });
 
   return { config: clientConf, configJson, type: 'awg2' };
 }
@@ -917,25 +1052,17 @@ export async function addXrayClient(server, protocol, clientName) {
   // VLESS URI для FLClash / v2rayNG
   const vlessUrl = `vless://${clientId}@${server.host}:${port}?type=tcp&security=reality&pbk=${pubKey}&fp=chrome&sni=${sni}&sid=${shortId}&flow=xtls-rprx-vision#${safeName}`;
 
-  // JSON конфиг (формат AmneziaVPN — с обёрткой container/host/port/type)
-  const clientJson = renderTemplate(XRAY_CLIENT_JSON_TEMPLATE, {
-    SERVER_IP_ADDRESS: server.host,
-    XRAY_SERVER_PORT_NUM: port,
-    XRAY_CLIENT_ID: clientId,
-    XRAY_SITE_NAME: sni,
-    XRAY_PUBLIC_KEY: pubKey,
-    XRAY_SHORT_ID: shortId,
+  // Amnezia JSON (формат десктопного клиента AmneziaVPN)
+  const configJson = buildAmneziaXrayJson({
+    serverHost: server.host,
+    port,
+    clientId,
+    sni,
+    publicKey: pubKey,
+    shortId,
   });
 
-  // Валидация JSON
-  try {
-    JSON.parse(clientJson);
-  } catch (e) {
-    console.error('Xray JSON validation failed:', e.message);
-    throw new Error(`Xray config JSON is invalid: ${e.message}. Check template variables.`);
-  }
-
-  return { config: vlessUrl, configJson: clientJson, type: 'xray' };
+  return { config: vlessUrl, configJson, type: 'xray' };
 }
 
 // ─── WireGuard classic ────────────────────────────────────────────────────────
@@ -1058,20 +1185,18 @@ export async function addWireGuardClient(server, protocol, clientName) {
   };
 
   const clientConf = renderTemplate(WG_CLIENT_TEMPLATE, templateVars);
-  // Добавляем числовые переменные для JSON шаблона (порт без кавычек)
-  const jsonVars = {
-    ...templateVars,
-    WIREGUARD_SERVER_PORT_NUM: c.port,
-  };
-  const configJson = renderTemplate(WG_CLIENT_JSON_TEMPLATE, jsonVars);
 
-  // Валидация JSON
-  try {
-    JSON.parse(configJson);
-  } catch (e) {
-    console.error('WireGuard JSON validation failed:', e.message);
-    throw new Error(`WireGuard config JSON is invalid: ${e.message}. Check template variables.`);
-  }
+  // Amnezia JSON (формат десктопного клиента AmneziaVPN)
+  const configJson = buildAmneziaWireGuardJson({
+    serverHost: server.host,
+    port: c.port,
+    clientIp,
+    clientPrivKey,
+    clientPubKey,
+    serverPubKey: c.serverPubKey,
+    presharedKey,
+    nativeConfig: clientConf,
+  });
 
   return { config: clientConf, configJson, type: 'wireguard' };
 }
