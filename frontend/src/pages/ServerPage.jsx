@@ -317,8 +317,8 @@ function ClientModal({ client, protocolType, onClose }) {
             }
             <div className="text-muted mono" style={{ marginTop: 12, fontSize: 11 }}>
               {isXray
-                ? 'Scan with AmneziaVPN, FLClash, v2rayNG or compatible client'
-                : 'Scan with AmneziaVPN client (JSON format)'}
+                ? 'VLESS URI — сканируйте в AmneziaVPN, FLClash, v2rayNG'
+                : '.conf формат — сканируйте в AmneziaVPN или WireGuard приложении'}
             </div>
           </div>
         )}

@@ -546,9 +546,15 @@ async function buildImage(server, imageName, buildDir, dockerfile) {
 }
 
 // Подстановка переменных в шаблон
+// ВАЖНО: сортируем по длине ключа по убыванию, чтобы более длинные имена
+// заменялись первыми. Это предотвращает коллизии, когда одно имя является
+// префиксом другого: $WIREGUARD_SERVER_PORT_NUM должен замениться ДО
+// $WIREGUARD_SERVER_PORT, иначе получится <port>_NUM вместо числа.
 function renderTemplate(template, vars) {
-  return Object.entries(vars).reduce((str, [k, v]) =>
-    str.replaceAll(`$${k}`, String(v)), template);
+  return Object.entries(vars)
+    .sort((a, b) => b[0].length - a[0].length)
+    .reduce((str, [k, v]) =>
+      str.replaceAll(`$${k}`, String(v)), template);
 }
 
 // ─── AWG 2.0 ─────────────────────────────────────────────────────────────────
@@ -777,6 +783,15 @@ export async function addAWG2Client(server, protocol, clientName) {
   };
   const configJson = renderTemplate(AWG2_CLIENT_JSON_TEMPLATE, jsonVars);
 
+  // Валидация JSON — если шаблон отрисовался с ошибкой, JSON будет невалидным
+  try {
+    JSON.parse(configJson);
+  } catch (e) {
+    console.error('AWG2 JSON validation failed:', e.message);
+    console.error('Generated JSON:', configJson.slice(0, 500));
+    throw new Error(`AWG2 config JSON is invalid: ${e.message}. Check template variables.`);
+  }
+
   return { config: clientConf, configJson, type: 'awg2' };
 }
 
@@ -912,6 +927,14 @@ export async function addXrayClient(server, protocol, clientName) {
     XRAY_SHORT_ID: shortId,
   });
 
+  // Валидация JSON
+  try {
+    JSON.parse(clientJson);
+  } catch (e) {
+    console.error('Xray JSON validation failed:', e.message);
+    throw new Error(`Xray config JSON is invalid: ${e.message}. Check template variables.`);
+  }
+
   return { config: vlessUrl, configJson: clientJson, type: 'xray' };
 }
 
@@ -1041,6 +1064,14 @@ export async function addWireGuardClient(server, protocol, clientName) {
     WIREGUARD_SERVER_PORT_NUM: c.port,
   };
   const configJson = renderTemplate(WG_CLIENT_JSON_TEMPLATE, jsonVars);
+
+  // Валидация JSON
+  try {
+    JSON.parse(configJson);
+  } catch (e) {
+    console.error('WireGuard JSON validation failed:', e.message);
+    throw new Error(`WireGuard config JSON is invalid: ${e.message}. Check template variables.`);
+  }
 
   return { config: clientConf, configJson, type: 'wireguard' };
 }
