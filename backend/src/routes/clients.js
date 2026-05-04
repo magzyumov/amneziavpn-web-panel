@@ -63,6 +63,7 @@ router.post('/', async (req, res) => {
   res.json({ id, name: safeName, config: result.config, type: result.type, subscriptionSlug });
 });
 
+// GET /api/clients/:id/config — скачать .conf файл (через JS fetch с авторизацией)
 router.get('/:id/config', async (req, res) => {
   await getDb();
   const client = queryOne('SELECT * FROM clients WHERE id = ?', [req.params.id]);
@@ -76,6 +77,9 @@ router.get('/:id/config', async (req, res) => {
   res.send(config);
 });
 
+// GET /api/clients/:id/qr — QR код для клиента
+// Для AmneziaVPN мобильного приложения: AWG2/WireGuard — Amnezia JSON формат
+// Для Xray: VLESS URI формат (FLClash/v2rayNG)
 router.get('/:id/qr', async (req, res) => {
   await getDb();
   const client = queryOne('SELECT * FROM clients WHERE id = ?', [req.params.id]);
@@ -83,16 +87,24 @@ router.get('/:id/qr', async (req, res) => {
   const protocol = queryOne('SELECT type FROM protocols WHERE id = ?', [client.protocol_id]);
 
   let configForQr;
+  const parts = client.config.split('\n---AMNEZIA_JSON---\n');
+
   if (protocol?.type === 'xray') {
-    // Для Xray: VLESS URI (первая часть до разделителя) — совместимо с FLClash/v2rayNG
-    configForQr = client.config.split('\n---AMNEZIA_JSON---\n')[0];
+    // Для Xray: VLESS URI — совместимо с FLClash/v2rayNG
+    configForQr = parts[0];
+  } else if (protocol?.type === 'awg2' || protocol?.type === 'wireguard') {
+    // Для AWG2/WireGuard: AmneziaVPN мобильное приложение ожидает JSON формат из QR кода
+    // Если есть JSON часть — используем её; иначе — .conf формат
+    if (parts.length >= 2 && parts[1].trim()) {
+      configForQr = parts[1].trim();
+    } else {
+      configForQr = parts[0];
+    }
   } else {
-    // Для AWG2/WireGuard: стандартный .conf (первая часть) — AmneziaVPN мобильное приложение
-    // читает стандартный WireGuard/AWG конфиг из QR
-    configForQr = client.config.split('\n---AMNEZIA_JSON---\n')[0];
+    configForQr = parts[0];
   }
 
-  const qr = await QRCode.toDataURL(configForQr, { width: 300, margin: 2 });
+  const qr = await QRCode.toDataURL(configForQr, { width: 400, margin: 2, errorCorrectionLevel: 'L' });
   res.json({ qr });
 });
 
@@ -100,12 +112,18 @@ router.get('/:id/config-text', async (req, res) => {
   await getDb();
   const client = queryOne('SELECT * FROM clients WHERE id = ?', [req.params.id]);
   if (!client) return res.status(404).json({ error: 'Not found' });
-  // Возвращаем только vless URI (до разделителя)
+  // Возвращаем только vless URI или .conf (до разделителя)
   const config = client.config.split('\n---AMNEZIA_JSON---\n')[0];
-  res.json({ config, name: client.name });
+  const protocol = queryOne('SELECT type FROM protocols WHERE id = ?', [client.protocol_id]);
+
+  // Также возвращаем Amnezia JSON если есть
+  const parts = client.config.split('\n---AMNEZIA_JSON---\n');
+  const configJson = parts.length >= 2 ? parts[1] : null;
+
+  res.json({ config, configJson, name: client.name, type: protocol?.type });
 });
 
-// GET /api/clients/:id/config-amnezia — JSON конфиг для AmneziaVPN
+// GET /api/clients/:id/config-amnezia — JSON конфиг для AmneziaVPN (скачивание)
 router.get('/:id/config-amnezia', async (req, res) => {
   await getDb();
   const client = queryOne('SELECT * FROM clients WHERE id = ?', [req.params.id]);

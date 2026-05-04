@@ -688,19 +688,30 @@ export async function addAWG2Client(server, protocol, clientName) {
   const peerCount = parseInt(peersRes.stdout.trim()) || 0;
   const clientIp = `10.8.1.${peerCount + 2}`;
 
-  // Дописываем peer в серверный конфиг (файловый подход — не требует kernel module)
-  await execSudo(server, `printf '\\n[Peer]\\nPublicKey = ${clientPubKey}\\nPresharedKey = ${presharedKey}\\nAllowedIPs = ${clientIp}/32\\n' >> /opt/amnezia/awg/awg0.conf`);
+  // Способ 1 (предпочтительный): добавляем peer в работающий интерфейс через `awg set`
+  // Это не требует перезапуска интерфейса и не вызывает "Protocol not supported"
+  const pskTmp = `/tmp/.awgpsk_${Date.now()}`;
+  await execSudo(server, `echo '${presharedKey}' > ${pskTmp} && docker cp ${pskTmp} ${cn}:${pskTmp} && rm -f ${pskTmp}`);
+  const addPeerRes = await execSudo(server, `docker exec ${cn} sh -c "awg set awg0 peer ${clientPubKey} preshared-key ${pskTmp} allowed-ips ${clientIp}/32; rm -f ${pskTmp}"`);
 
-  // Перезагружаем интерфейс внутри контейнера через awg-quick (userspace-safe)
-  const reloadRes = await execSudo(server, `docker exec ${cn} sh -c "awg-quick down awg0 2>/dev/null; awg-quick up /opt/amnezia/awg/awg0.conf"`);
-  if (reloadRes.code !== 0) {
-    // Пробуем альтернативный способ — только добавить peer без перезапуска
-    const pskTmp = `/tmp/.awgpsk_${Date.now()}`;
-    await execSudo(server, `echo '${presharedKey}' > ${pskTmp} && docker cp ${pskTmp} ${cn}:${pskTmp} && rm -f ${pskTmp}`);
-    const addPeerRes = await execSudo(server, `docker exec ${cn} sh -c "awg set awg0 peer ${clientPubKey} preshared-key ${pskTmp} allowed-ips ${clientIp}/32; rm -f ${pskTmp}"`);
-    if (addPeerRes.code !== 0) {
-      throw new Error(`Failed to add AWG2 peer: Unable to modify interface: ${addPeerRes.stderr || reloadRes.stderr}`);
+  if (addPeerRes.code !== 0) {
+    // Способ 2 (резервный): перезапуск интерфейса через awg-quick down/up
+    // Сначала дописываем peer в конфиг файл
+    await execSudo(server, `printf '\\n[Peer]\\nPublicKey = ${clientPubKey}\\nPresharedKey = ${presharedKey}\\nAllowedIPs = ${clientIp}/32\\n' >> /opt/amnezia/awg/awg0.conf`);
+    const reloadRes = await execSudo(server, `docker exec ${cn} sh -c "awg-quick down awg0 2>/dev/null; awg-quick up /opt/amnezia/awg/awg0.conf"`);
+    if (reloadRes.code !== 0) {
+      // Способ 3: перезапуск всего контейнера
+      await execSudo(server, `docker restart ${cn}`);
+      // Ждём пока контейнер поднимется
+      await new Promise(r => setTimeout(r, 3000));
+      const statusAfterRestart = await exec(server, `docker inspect --format='{{.State.Status}}' ${cn} 2>/dev/null || echo ''`);
+      if (statusAfterRestart.stdout.trim() !== 'running') {
+        throw new Error(`Failed to add AWG2 peer and restart container. awg set error: ${addPeerRes.stderr}; awg-quick error: ${reloadRes.stderr}`);
+      }
     }
+  } else {
+    // awg set прошёл успешно — дописываем peer в конфиг файл для сохранения
+    await execSudo(server, `printf '\\n[Peer]\\nPublicKey = ${clientPubKey}\\nPresharedKey = ${presharedKey}\\nAllowedIPs = ${clientIp}/32\\n' >> /opt/amnezia/awg/awg0.conf`);
   }
 
   // Общие параметры шаблона
@@ -1039,3 +1050,181 @@ export const PROTOCOLS = {
   xray:      { name: 'Xray VLESS Reality', description: 'VLESS + Reality — имитирует TLS трафик',  icon: '⚡' },
   wireguard: { name: 'WireGuard',          description: 'Классический WireGuard без обфускации',   icon: '🔒' },
 };
+
+// ─── Сканирование и импорт существующих протоколов ─────────────────────────────
+
+// Маппинг имён контейнеров Amnezia на типы протоколов
+const CONTAINER_TYPE_MAP = {
+  'amnezia-awg2': 'awg2',
+  'amnezia-wireguard': 'wireguard',
+  'amnezia-xray': 'xray',
+};
+
+/**
+ * Сканирует сервер на наличие установленных протоколов AmneziaVPN.
+ * Проверяет:
+ * 1. Запущенные Docker контейнеры с именами amnezia-*
+ * 2. Конфигурационные файлы в /opt/amnezia/
+ * 3. Собранные Docker образы amnezia-*
+ */
+export async function scanExistingProtocols(server) {
+  const found = [];
+
+  // 1. Проверяем запущенные и остановленные контейнеры amnezia-*
+  const containersRes = await exec(server, `docker ps -a --format '{{.Names}}\t{{.Status}}\t{{.Image}}\t{{.Ports}}' 2>/dev/null || true`);
+  if (containersRes.stdout.trim()) {
+    const lines = containersRes.stdout.trim().split('\n');
+    for (const line of lines) {
+      const [name, status, image, ports] = line.split('\t').map(s => (s || '').trim());
+      const type = CONTAINER_TYPE_MAP[name];
+      if (!type) continue;
+
+      // Извлекаем порт из строки портов (например "0.0.0.0:51820->51820/udp")
+      let port = null;
+      if (ports) {
+        const portMatch = ports.match(/:(\d+)/);
+        if (portMatch) port = parseInt(portMatch[1]);
+      }
+
+      found.push({
+        type,
+        containerName: name,
+        status: status.includes('Up') ? 'running' : 'stopped',
+        image,
+        port,
+        source: 'container',
+      });
+    }
+  }
+
+  // 2. Проверяем конфигурационные директории /opt/amnezia/<proto>/
+  // Это обнаружит протоколы, чьи контейнеры были удалены но конфиги остались
+  const configDirs = [
+    { path: '/opt/amnezia/awg', type: 'awg2', container: 'amnezia-awg2', configFile: 'awg0.conf' },
+    { path: '/opt/amnezia/wireguard', type: 'wireguard', container: 'amnezia-wireguard', configFile: 'wg0.conf' },
+    { path: '/opt/amnezia/xray', type: 'xray', container: 'amnezia-xray', configFile: 'server.json' },
+  ];
+
+  for (const dir of configDirs) {
+    // Проверяем существование конфига
+    const checkRes = await execSudo(server, `test -f ${dir.path}/${dir.configFile} && echo 'exists' || echo ''`);
+    if (checkRes.stdout.trim() !== 'exists') continue;
+
+    // Проверяем что этот контейнер ещё не найден в шаге 1
+    const alreadyFound = found.some(f => f.containerName === dir.container);
+    if (alreadyFound) continue;
+
+    // Определяем порт из конфига
+    let port = null;
+    if (dir.type === 'awg2') {
+      const portRes = await execSudo(server, `grep -E '^ListenPort' ${dir.path}/awg0.conf 2>/dev/null || true`);
+      const m = portRes.stdout.match(/ListenPort\s*=\s*(\d+)/);
+      if (m) port = parseInt(m[1]);
+    } else if (dir.type === 'wireguard') {
+      const portRes = await execSudo(server, `grep -E '^ListenPort' ${dir.path}/wg0.conf 2>/dev/null || true`);
+      const m = portRes.stdout.match(/ListenPort\s*=\s*(\d+)/);
+      if (m) port = parseInt(m[1]);
+    } else if (dir.type === 'xray') {
+      const portRes = await execSudo(server, `grep -E '"port"' ${dir.path}/server.json 2>/dev/null | head -1 || true`);
+      const m = portRes.stdout.match(/"port"\s*:\s*(\d+)/);
+      if (m) port = parseInt(m[1]);
+    }
+
+    found.push({
+      type: dir.type,
+      containerName: dir.container,
+      status: 'config_only', // Конфиг есть, контейнера нет
+      port,
+      source: 'config',
+    });
+  }
+
+  return found;
+}
+
+/**
+ * Импортирует существующий протокол Amnezia с сервера в панель.
+ * Читает конфигурацию из файлов на VPS и создаёт запись в БД.
+ */
+export async function importExistingProtocol(server, type, containerName) {
+  let port = null;
+  let config = {};
+
+  if (type === 'awg2') {
+    // Читаем порт из конфига
+    const portRes = await execSudo(server, `grep -E '^ListenPort' /opt/amnezia/awg/awg0.conf 2>/dev/null || true`);
+    const portMatch = portRes.stdout.match(/ListenPort\s*=\s*(\d+)/);
+    port = portMatch ? parseInt(portMatch[1]) : null;
+
+    // Читаем серверный публичный ключ
+    const serverPubKey = await readRemoteFile(server, '/opt/amnezia/awg/wireguard_server_public_key.key');
+
+    // Читаем параметры обфускации из awg0.conf
+    const confContent = await readRemoteFile(server, '/opt/amnezia/awg/awg0.conf');
+    const getConfValue = (key) => {
+      const m = confContent.match(new RegExp(`^${key}\\s*=\\s*(.+)$`, 'm'));
+      return m ? m[1].trim() : null;
+    };
+
+    config = {
+      port: port || 51820,
+      subnetIp: '10.8.1.0',
+      subnetCidr: '24',
+      serverPubKey: serverPubKey || '',
+      jc: parseInt(getConfValue('Jc')) || 3,
+      jmin: parseInt(getConfValue('Jmin')) || 10,
+      jmax: parseInt(getConfValue('Jmax')) || 50,
+      s1: parseInt(getConfValue('S1')) || 100,
+      s2: parseInt(getConfValue('S2')) || 100,
+      s3: parseInt(getConfValue('S3')) || 30,
+      s4: parseInt(getConfValue('S4')) || 10,
+      h1: getConfValue('H1') || '0',
+      h2: getConfValue('H2') || '0',
+      h3: getConfValue('H3') || '0',
+      h4: getConfValue('H4') || '0',
+    };
+
+    if (!port) port = config.port;
+
+  } else if (type === 'wireguard') {
+    // Читаем порт из конфига
+    const portRes = await execSudo(server, `grep -E '^ListenPort' /opt/amnezia/wireguard/wg0.conf 2>/dev/null || true`);
+    const portMatch = portRes.stdout.match(/ListenPort\s*=\s*(\d+)/);
+    port = portMatch ? parseInt(portMatch[1]) : 51820;
+
+    // Читаем серверный публичный ключ
+    const serverPubKey = await readRemoteFile(server, '/opt/amnezia/wireguard/wireguard_server_public_key.key');
+
+    config = {
+      port,
+      subnetIp: '10.8.1.0',
+      subnetCidr: '24',
+      serverPubKey: serverPubKey || '',
+    };
+
+  } else if (type === 'xray') {
+    // Читаем порт из server.json
+    const confRes = await execSudo(server, `cat /opt/amnezia/xray/server.json 2>/dev/null || true`);
+    if (confRes.stdout.trim()) {
+      try {
+        const serverJson = JSON.parse(confRes.stdout);
+        port = serverJson.inbounds?.[0]?.port || 443;
+        config = {
+          port,
+          sni: serverJson.inbounds?.[0]?.streamSettings?.realitySettings?.serverNames?.[0] || 'www.googletagmanager.com',
+          publicKey: await readRemoteFile(server, '/opt/amnezia/xray/xray_public.key') || '',
+          shortId: await readRemoteFile(server, '/opt/amnezia/xray/xray_short_id.key') || '',
+          firstUuid: await readRemoteFile(server, '/opt/amnezia/xray/xray_uuid.key') || '',
+        };
+      } catch (e) {
+        throw new Error(`Failed to parse Xray server.json: ${e.message}`);
+      }
+    } else {
+      throw new Error('Xray server.json not found on the server');
+    }
+  } else {
+    throw new Error(`Unknown protocol type: ${type}`);
+  }
+
+  return { containerName, port, config };
+}

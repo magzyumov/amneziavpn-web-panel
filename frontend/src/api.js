@@ -34,12 +34,14 @@ export const serversApi = {
   test: (id) => api.post(`/servers/${id}/test`),
   ensureDocker: (id) => api.post(`/servers/${id}/ensure-docker`),
   containers: (id) => api.get(`/servers/${id}/containers`),
+  scanProtocols: (id) => api.post(`/servers/${id}/scan-protocols`),
 };
 
 export const protocolsApi = {
   list: () => api.get('/protocols'),
   byServer: (serverId) => api.get(`/protocols/server/${serverId}`),
   install: (serverId, data) => api.post(`/protocols/server/${serverId}`, data),
+  importExisting: (serverId, data) => api.post(`/protocols/server/${serverId}/import`, data),
   delete: (id) => api.delete(`/protocols/${id}`),
   start: (id) => api.post(`/protocols/${id}/start`),
   stop: (id) => api.post(`/protocols/${id}/stop`),
@@ -53,9 +55,43 @@ export const clientsApi = {
   delete: (id) => api.delete(`/clients/${id}`),
   qr: (id) => api.get(`/clients/${id}/qr`),
   configText: (id) => api.get(`/clients/${id}/config-text`),
-  configDownloadUrl: (id) => `/api/clients/${id}/config`,
-  configAmneziaUrl: (id) => `/api/clients/${id}/config-amnezia`,
   subscription: (id) => api.get(`/clients/${id}/subscription`),
+
+  // Скачивание конфига через JS fetch с авторизацией (решает проблему Unauthorized)
+  downloadConfig: async (id, filename) => {
+    const token = localStorage.getItem('token');
+    const response = await fetch(`/api/clients/${id}/config`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!response.ok) throw new Error('Download failed');
+    const blob = await response.blob();
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    window.URL.revokeObjectURL(url);
+  },
+
+  // Скачивание Amnezia JSON конфига через JS fetch с авторизацией
+  downloadConfigAmnezia: async (id, filename) => {
+    const token = localStorage.getItem('token');
+    const response = await fetch(`/api/clients/${id}/config-amnezia`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!response.ok) throw new Error('Download failed');
+    const blob = await response.blob();
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    window.URL.revokeObjectURL(url);
+  },
 };
 
 export const subscriptionsApi = {

@@ -3,7 +3,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { getDb, query, queryOne, run } from '../services/db.js';
 import { authMiddleware } from '../middleware/auth.js';
 import { testConnection, disconnect } from '../services/ssh.js';
-import { listAmneziaContainers, ensureDocker } from '../services/protocols.js';
+import { listAmneziaContainers, ensureDocker, scanExistingProtocols } from '../services/protocols.js';
 
 const router = Router();
 router.use(authMiddleware);
@@ -65,6 +65,20 @@ router.get('/:id/containers', async (req, res) => {
 
   const containers = await listAmneziaContainers(server);
   res.json(containers);
+});
+
+// POST /api/servers/:id/scan-protocols — сканирование существующих протоколов Amnezia на сервере
+router.post('/:id/scan-protocols', async (req, res) => {
+  await getDb();
+  const server = queryOne('SELECT * FROM servers WHERE id = ?', [req.params.id]);
+  if (!server) return res.status(404).json({ error: 'Server not found' });
+
+  try {
+    const found = await scanExistingProtocols(server);
+    res.json(found);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 export default router;
