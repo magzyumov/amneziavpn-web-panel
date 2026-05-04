@@ -1,1 +1,0 @@
-- [Initial project scan](project-scanner/initial-scan.md) -- Amnezia Panel is Node.js+React, not Spring Boot. VPN management via SSH+Docker.
