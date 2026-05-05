@@ -23,6 +23,7 @@
 
 import { exec, execSudo } from './ssh.js';
 import { v4 as uuidv4 } from 'uuid';
+import zlib from 'zlib';
 
 // ─── Dockerfile'ы (вшиты в бинарник Amnezia, восстановлены) ─────────────────
 
@@ -409,23 +410,24 @@ PersistentKeepalive = 25`;
 // ─── Функции генерации Amnezia JSON (формат десктопного клиента) ─────────────
 //
 // Формат основан на исходном коде AmneziaVPN десктоп (github.com/amnezia-vpn/amnezia-client)
-// Ключевые особенности:
-// - Корневая структура: { "hostName": "...", "containers": [...], ... }
-// - containers — массив объектов вида { "container": "amnezia-awg", "awg": { ... } }
-// - Внутри объекта протокола: serverConfig поля + last_config (JSON-строка клиента)
-// - Ключи клиента: hostName, port, client_ip, client_priv_key, server_pub_key, psk_key, config
-// - config (nativeConfig) — полный .conf текст клиента
+// Изучено: importController.cpp, exportController.cpp, serverConfig.cpp, containerConfig.cpp
 //
-// Ссылки на исходники:
-//   client/core/models/serverConfig.cpp — ServerConfig::fromJson()
-//   client/core/models/containerConfig.cpp — ContainerConfig::toJson()
-//   client/core/models/protocols/awgProtocolConfig.cpp — AwgClientConfig::toJson()
-//   client/core/models/protocols/wireGuardProtocolConfig.cpp — WireGuardClientConfig::toJson()
-//   client/core/utils/constants/configKeys.h — имена ключей JSON
+// КЛЮЧЕВЫЕ ОТЛИЧИЯ ОТ ПРЕДЫДУЩЕЙ ВЕРСИИ:
+// 1. Добавлено поле isThirdPartyConfig: true (обязательно для десктопного клиента)
+// 2. allowed_ips — СТРОКА "0.0.0.0/0, ::/0", а не массив (Qt .toString() вернёт пустую строку для массива)
+// 3. Серверные поля (protocol_version, subnet_address, subnet_cidr) убраны — десктоп их не ожидает
+// 4. Компактный JSON (без pretty-printing) для уменьшения размера QR
+// 5. last_config внутри — компактный JSON (без пробелов)
 
 /**
  * Генерирует Amnezia JSON для клиента AWG (AmneziaWG).
  * Формат совместим с десктопным AmneziaVPN для импорта через QR и файл.
+ *
+ * При QR импорте десктопный клиент:
+ *   1. Base64URL-декодирует данные QR
+ *   2. Проверяет магический код 1984 (chunked формат)
+ *   3. Вызывает extractConfigFromQr() → JSON parse → qUncompress
+ * Поэтому QR данные ДОЛЖНЫ быть Base64URL-закодированы!
  */
 function buildAmneziaAwgJson(params) {
   const {
@@ -434,16 +436,17 @@ function buildAmneziaAwgJson(params) {
   } = params;
 
   // last_config — JSON-строка с конфигом клиента (AwgClientConfig)
+  // ВАЖНО: allowed_ips — СТРОКА, не массив! Qt .toString() для массива вернёт ""
   const lastConfigObj = {
     config: nativeConfig,  // nativeConfig — полный .conf текст
     hostName: serverHost,
-    port: port,
+    port: String(port),
     client_ip: `${clientIp}/32`,
     client_priv_key: clientPrivKey,
     client_pub_key: clientPubKey,
     server_pub_key: serverPubKey,
     psk_key: presharedKey,
-    allowed_ips: ['0.0.0.0/0', '::/0'],
+    allowed_ips: '0.0.0.0/0, ::/0',
     persistent_keep_alive: '25',
     Jc: String(jc),
     Jmin: String(jmin),
@@ -463,30 +466,12 @@ function buildAmneziaAwgJson(params) {
     I5: String(i5),
   };
 
-  // Объект протокола awg (AwgProtocolConfig = AwgServerConfig + last_config)
+  // Объект протокола awg — только поля, ожидаемые десктопным клиентом
   const awgObj = {
+    last_config: JSON.stringify(lastConfigObj),
+    isThirdPartyConfig: true,
     port: String(port),
     transport_proto: 'udp',
-    protocol_version: '2',
-    subnet_address: '10.8.1.0',
-    subnet_cidr: '24',
-    Jc: String(jc),
-    Jmin: String(jmin),
-    Jmax: String(jmax),
-    S1: String(s1),
-    S2: String(s2),
-    S3: String(s3),
-    S4: String(s4),
-    H1: String(h1),
-    H2: String(h2),
-    H3: String(h3),
-    H4: String(h4),
-    I1: String(i1),
-    I2: String(i2),
-    I3: String(i3),
-    I4: String(i4),
-    I5: String(i5),
-    last_config: JSON.stringify(lastConfigObj),
   };
 
   // Container object
@@ -504,7 +489,7 @@ function buildAmneziaAwgJson(params) {
     dns2: '8.8.8.8',
   };
 
-  return JSON.stringify(rootObj, null, 4);
+  return JSON.stringify(rootObj);  // Компактный JSON — без pretty-printing
 }
 
 /**
@@ -517,26 +502,26 @@ function buildAmneziaWireGuardJson(params) {
   } = params;
 
   // last_config — JSON-строка с конфигом клиента (WireGuardClientConfig)
+  // ВАЖНО: allowed_ips — СТРОКА, не массив!
   const lastConfigObj = {
     config: nativeConfig,
     hostName: serverHost,
-    port: port,
+    port: String(port),
     client_ip: `${clientIp}/32`,
     client_priv_key: clientPrivKey,
     client_pub_key: clientPubKey,
     server_pub_key: serverPubKey,
     psk_key: presharedKey,
-    allowed_ips: ['0.0.0.0/0', '::/0'],
+    allowed_ips: '0.0.0.0/0, ::/0',
     persistent_keep_alive: '25',
   };
 
-  // Объект протокола wireguard
+  // Объект протокола wireguard — только поля, ожидаемые десктопным клиентом
   const wgObj = {
+    last_config: JSON.stringify(lastConfigObj),
+    isThirdPartyConfig: true,
     port: String(port),
     transport_proto: 'udp',
-    subnet_address: '10.8.1.0',
-    subnet_cidr: '24',
-    last_config: JSON.stringify(lastConfigObj),
   };
 
   // Container object
@@ -553,7 +538,7 @@ function buildAmneziaWireGuardJson(params) {
     dns2: '8.8.8.8',
   };
 
-  return JSON.stringify(rootObj, null, 4);
+  return JSON.stringify(rootObj);  // Компактный JSON
 }
 
 /**
@@ -609,10 +594,11 @@ function buildAmneziaXrayJson(params) {
 
   // Объект протокола xray
   const xrayObj = {
+    last_config: JSON.stringify(lastConfigObj),
+    isThirdPartyConfig: true,
     port: String(port),
     transport_proto: 'tcp',
     site: sni,
-    last_config: JSON.stringify(lastConfigObj),
   };
 
   // Container object
@@ -625,9 +611,49 @@ function buildAmneziaXrayJson(params) {
     hostName: serverHost,
     containers: [containerObj],
     defaultContainer: 'amnezia-xray',
+    dns1: '1.1.1.1',
+    dns2: '8.8.8.8',
   };
 
-  return JSON.stringify(rootObj, null, 4);
+  return JSON.stringify(rootObj);  // Компактный JSON
+}
+
+// ─── Утилиты для QR кодов и vpn:// формата ──────────────────────────────────
+
+/**
+ * Кодирует Amnezia JSON в формат, совместимый с QR-сканером десктопного AmneziaVPN.
+ *
+ * Десктопный клиент при сканировании QR:
+ *   1. Base64URL-декодирует текст QR кода
+ *   2. Проверяет магический код 1984 (chunked формат)
+ *   3. Если не chunked — вызывает extractConfigFromQr(decodedBytes)
+ *   4. extractConfigFromQr: JSON parse → если не получилось → qUncompress
+ *
+ * Qt qCompress формат: [4 байта BE несжатая длина][zlib данные]
+ * Мы кодируем в этом формате и Base64URL-кодируем для QR.
+ */
+export function encodeAmneziaQrPayload(jsonString) {
+  const jsonBuf = Buffer.from(jsonString, 'utf8');
+
+  // Qt qCompress формат: 4 байта BE длина + zlib
+  const lenBuf = Buffer.alloc(4);
+  lenBuf.writeUInt32BE(jsonBuf.length, 0);
+  const compressed = zlib.deflateSync(jsonBuf, { level: 8 });
+  const qtPayload = Buffer.concat([lenBuf, compressed]);
+
+  // Base64URL кодирование (без padding)
+  return qtPayload.toString('base64url');
+}
+
+/**
+ * Кодирует Amnezia JSON в vpn:// формат для импорта через файл/текстовый ключ.
+ *
+ * vpn:// формат десктопного клиента:
+ *   vpn:// + Base64URL(Qt qCompress(JSON))
+ */
+export function encodeVpnUrl(jsonString) {
+  const b64 = encodeAmneziaQrPayload(jsonString);
+  return `vpn://${b64}`;
 }
 
 // ─── Хелперы ─────────────────────────────────────────────────────────────────

@@ -3,7 +3,7 @@ import { v4 as uuidv4 } from 'uuid';
 import QRCode from 'qrcode';
 import { getDb, query, queryOne, run } from '../services/db.js';
 import { authMiddleware } from '../middleware/auth.js';
-import { addAWG2Client, addXrayClient, addWireGuardClient } from '../services/protocols.js';
+import { addAWG2Client, addXrayClient, addWireGuardClient, encodeAmneziaQrPayload, encodeVpnUrl } from '../services/protocols.js';
 import { createSubscription, getVpsHost } from '../services/subscription.js';
 
 const router = Router();
@@ -63,9 +63,15 @@ router.post('/', async (req, res) => {
   res.json({ id, name: safeName, config: result.config, type: result.type, subscriptionSlug });
 });
 
-// GET /api/clients/:id/config — скачать конфиг файл (через JS fetch с авторизацией)
-// Для всех протоколов: отдаём Amnezia JSON (.json) — десктопный AmneziaVPN требует этот формат
-// Также доступен VLESS URI через config-text для FLClash/v2rayNG
+// GET /api/clients/:id/config — скачать конфиг файл
+//
+// AmneziaVPN десктоп при импорте файла определяет формат:
+//   1. OpenVPN: содержит "client" + "proto" + "dev tun/tap"
+//   2. WireGuard/AWG: содержит "[Interface]" + "[Peer]"
+//   3. Amnezia native: vpn:// текстовый ключ (Base64URL + zlib сжатый JSON)
+//
+// Поэтому для WG/AWG отдаём НАТИВНЫЙ .conf файл — десктоп парсит его напрямую.
+// Для Xray отдаём vpn:// формат — десктоп его корректно импортирует.
 router.get('/:id/config', async (req, res) => {
   await getDb();
   const client = queryOne('SELECT * FROM clients WHERE id = ?', [req.params.id]);
@@ -74,49 +80,69 @@ router.get('/:id/config', async (req, res) => {
 
   const parts = client.config.split('\n---AMNEZIA_JSON---\n');
 
-  // Для всех протоколов: AmneziaVPN десктоп импортирует JSON формат
-  if (parts.length >= 2 && parts[1].trim()) {
-    res.setHeader('Content-Disposition', `attachment; filename="${client.name}.json"`);
-    res.setHeader('Content-Type', 'application/json');
-    res.send(parts[1].trim());
-  } else {
-    // Fallback: отдаём что есть
-    if (protocol?.type === 'xray') {
+  if (protocol?.type === 'xray') {
+    // Xray: отдаём vpn:// формат (Amnezia десктоп его парсит через extractAmneziaConfig)
+    const amneziaJson = parts.length >= 2 ? parts[1] : null;
+    if (amneziaJson) {
+      const vpnUrl = encodeVpnUrl(amneziaJson);
+      res.setHeader('Content-Disposition', `attachment; filename="${client.name}.vpn"`);
+      res.setHeader('Content-Type', 'text/plain');
+      res.send(vpnUrl);
+    } else {
+      // Fallback: VLESS URI
       res.setHeader('Content-Disposition', `attachment; filename="${client.name}.txt"`);
       res.setHeader('Content-Type', 'text/plain');
-    } else {
-      res.setHeader('Content-Disposition', `attachment; filename="${client.name}.conf"`);
-      res.setHeader('Content-Type', 'text/plain');
+      res.send(parts[0]);
     }
+  } else {
+    // WireGuard / AWG: отдаём НАТИВНЫЙ .conf файл
+    // Десктопный AmneziaVPN распознаёт формат по [Interface] + [Peer]
+    // и корректно парсит WG/AWG конфиги из .conf файлов
+    res.setHeader('Content-Disposition', `attachment; filename="${client.name}.conf"`);
+    res.setHeader('Content-Type', 'text/plain');
     res.send(parts[0]);
   }
 });
 
 // GET /api/clients/:id/qr — QR код для клиента
 //
-// AmneziaVPN десктоп импортирует из QR кода тот же JSON формат, что и из файла:
-// { "hostName": "...", "containers": [{ "awg": { ... } }], ... }
-// QR код содержит Amnezia JSON — это единственный формат, который десктопный
-// AmneziaVPN корректно парсит при сканировании QR.
+// AmneziaVPN десктоп при сканировании QR кода:
+//   1. Base64URL-декодирует текст из QR кода
+//   2. Проверяет магический код 1984 (chunked формат)
+//   3. Если не chunked — вызывает extractConfigFromQr(decodedBytes)
+//   4. extractConfigFromQr: пробует JSON parse, затем qUncompress
+//
+// Поэтому мы кодируем Amnezia JSON в формат Qt qCompress (4 байта + zlib)
+// и Base64URL-кодируем — десктоп корректно декодирует и распакует.
 router.get('/:id/qr', async (req, res) => {
   await getDb();
   const client = queryOne('SELECT * FROM clients WHERE id = ?', [req.params.id]);
   if (!client) return res.status(404).json({ error: 'Not found' });
-  const protocol = queryOne('SELECT type FROM protocols WHERE id = ?', [client.protocol_id]);
 
   const parts = client.config.split('\n---AMNEZIA_JSON---\n');
 
-  // Amnezia JSON — формат десктопного клиента AmneziaVPN
   let configForQr;
   if (parts.length >= 2 && parts[1].trim()) {
-    configForQr = parts[1].trim();
+    // Кодируем Amnezia JSON в формат, совместимый с QR-сканером AmneziaVPN
+    // (Qt qCompress: 4 байта BE длина + zlib, затем Base64URL)
+    configForQr = encodeAmneziaQrPayload(parts[1].trim());
   } else {
-    // Fallback: .conf или VLESS URI
-    configForQr = parts[0];
+    // Fallback: нативный формат (.conf / VLESS URI) — тоже Base64URL кодируем
+    configForQr = encodeAmneziaQrPayload(parts[0]);
   }
 
-  const qr = await QRCode.toDataURL(configForQr, { width: 400, margin: 2, errorCorrectionLevel: 'L' });
-  res.json({ qr });
+  try {
+    const qr = await QRCode.toDataURL(configForQr, { width: 400, margin: 2, errorCorrectionLevel: 'L' });
+    res.json({ qr });
+  } catch (e) {
+    // Если данные слишком большие для QR, пробуем с более низкой коррекцией
+    try {
+      const qr = await QRCode.toDataURL(configForQr, { width: 400, margin: 1, errorCorrectionLevel: 'L' });
+      res.json({ qr });
+    } catch (e2) {
+      res.status(500).json({ error: `QR generation failed: ${e2.message}` });
+    }
+  }
 });
 
 router.get('/:id/config-text', async (req, res) => {
@@ -131,19 +157,28 @@ router.get('/:id/config-text', async (req, res) => {
   const parts = client.config.split('\n---AMNEZIA_JSON---\n');
   const configJson = parts.length >= 2 ? parts[1] : null;
 
-  res.json({ config, configJson, name: client.name, type: protocol?.type });
+  // vpn:// формат для копирования/импорта
+  let vpnUrl = null;
+  if (configJson) {
+    vpnUrl = encodeVpnUrl(configJson);
+  }
+
+  res.json({ config, configJson, vpnUrl, name: client.name, type: protocol?.type });
 });
 
-// GET /api/clients/:id/config-amnezia — JSON конфиг для AmneziaVPN (скачивание)
+// GET /api/clients/:id/config-amnezia — JSON конфиг в vpn:// формате (скачивание)
 router.get('/:id/config-amnezia', async (req, res) => {
   await getDb();
   const client = queryOne('SELECT * FROM clients WHERE id = ?', [req.params.id]);
   if (!client) return res.status(404).json({ error: 'Not found' });
   const parts = client.config.split('\n---AMNEZIA_JSON---\n');
   if (parts.length < 2) return res.status(404).json({ error: 'No Amnezia JSON config' });
-  res.setHeader('Content-Disposition', `attachment; filename="${client.name}_amnezia.json"`);
-  res.setHeader('Content-Type', 'application/json');
-  res.send(parts[1]);
+
+  // Отдаём в vpn:// формате — AmneziaVPN десктоп корректно импортирует
+  const vpnUrl = encodeVpnUrl(parts[1]);
+  res.setHeader('Content-Disposition', `attachment; filename="${client.name}.vpn"`);
+  res.setHeader('Content-Type', 'text/plain');
+  res.send(vpnUrl);
 });
 
 router.delete('/:id', async (req, res) => {

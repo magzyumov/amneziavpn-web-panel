@@ -244,6 +244,7 @@ function ClientModal({ client, protocolType, onClose }) {
   const [qr, setQr] = useState(null);
   const [config, setConfig] = useState('');
   const [configJson, setConfigJson] = useState(null);
+  const [vpnUrl, setVpnUrl] = useState(null);
   const [tab, setTab] = useState('qr');
   const [downloading, setDownloading] = useState(false);
 
@@ -252,6 +253,7 @@ function ClientModal({ client, protocolType, onClose }) {
     clientsApi.configText(client.id).then(r => {
       setConfig(r.data.config);
       setConfigJson(r.data.configJson || null);
+      setVpnUrl(r.data.vpnUrl || null);
     });
   }, [client.id]);
 
@@ -261,31 +263,43 @@ function ClientModal({ client, protocolType, onClose }) {
     { id: 'qr', label: 'QR' },
     { id: 'cfg', label: isXray ? 'VLESS URI' : 'Config' },
   ];
-  // Показываем вкладку Amnezia JSON только если есть JSON конфиг
-  if (configJson) {
-    tabs.push({ id: 'amnezia', label: 'Amnezia JSON' });
+  // Показываем вкладку vpn:// ключа если есть
+  if (vpnUrl) {
+    tabs.push({ id: 'vpn', label: 'vpn://' });
   }
 
   const handleDownload = async () => {
     setDownloading(true);
     try {
-      if (tab === 'amnezia') {
-        await clientsApi.downloadConfigAmnezia(client.id, `${client.name}_amnezia.json`);
-      } else if (tab === 'cfg' && isXray) {
-        // Для Xray на вкладке VLESS URI скачиваем как .txt
-        // Создаём текстовый файл из VLESS URI
-        const blob = new Blob([config], { type: 'text/plain' });
+      if (tab === 'vpn') {
+        // Скачиваем vpn:// ключ
+        const blob = new Blob([vpnUrl], { type: 'text/plain' });
         const url = window.URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = `${client.name}.txt`;
+        a.download = `${client.name}.vpn`;
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
         window.URL.revokeObjectURL(url);
+      } else if (tab === 'cfg') {
+        // На вкладке Config/VLESS URI скачиваем нативный конфиг
+        if (isXray) {
+          const blob = new Blob([config], { type: 'text/plain' });
+          const url = window.URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = `${client.name}.txt`;
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          window.URL.revokeObjectURL(url);
+        } else {
+          // WG/AWG: скачиваем .conf файл через API
+          await clientsApi.downloadConfig(client.id);
+        }
       } else {
-        // Сервер сам определяет правильное расширение файла из Content-Disposition
-        // AWG2/WireGuard → .json (Amnezia формат), Xray → .json (Amnezia формат)
+        // QR вкладка: скачиваем конфиг через API
         await clientsApi.downloadConfig(client.id);
       }
     } catch (e) {
@@ -316,12 +330,10 @@ function ClientModal({ client, protocolType, onClose }) {
               : <div style={{ padding: 40 }}><span className="spinner" style={{ width: 24, height: 24 }} /></div>
             }
             <div className="text-muted mono" style={{ marginTop: 12, fontSize: 11 }}>
-              {isXray
-                ? 'Amnezia JSON — сканируйте в AmneziaVPN десктоп/мобильное приложение'
-                : 'Amnezia JSON — сканируйте в AmneziaVPN десктоп/мобильное приложение'}
+              Сканируйте в AmneziaVPN десктоп/мобильное приложение
             </div>
           </div>
-        )}
+        )
 
         {tab === 'cfg' && (
           <div>
@@ -334,16 +346,16 @@ function ClientModal({ client, protocolType, onClose }) {
           </div>
         )}
 
-        {tab === 'amnezia' && configJson && (
+        {tab === 'vpn' && vpnUrl && (
           <div>
             <div className="notice notice-info" style={{ marginBottom: 10, fontSize: 11 }}>
-              Amnezia JSON — для импорта в десктопный AmneziaVPN
+              vpn:// ключ — скопируйте и вставьте в AmneziaVPN десктоп (Импорт → Текстовый ключ)
             </div>
-            <div className="config-box" style={{ fontSize: 10 }}>
-              {typeof configJson === 'string' ? configJson : JSON.stringify(configJson, null, 2)}
+            <div className="config-box" style={{ fontSize: 10, wordBreak: 'break-all' }}>
+              {vpnUrl}
             </div>
           </div>
-        )}
+        )
 
         <div className="modal-actions" style={{ marginTop: 16 }}>
           <button className="btn btn-outline" onClick={onClose}>Close</button>
