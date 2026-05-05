@@ -260,83 +260,152 @@ function InstallProtocolModal({ serverId, onClose, onInstalled }) {
 
 // ── Client Modal ────────────────────────────────────────
 function ClientModal({ client, protocolType, onClose }) {
-  const [qr, setQr] = useState(null);
-  const [config, setConfig] = useState('');
-  const [tab, setTab] = useState('qr');
+  // format: 'amnezia' | 'original'  (только для awg2/wireguard)
+  const [format, setFormat] = useState('amnezia');
+  const [tab, setTab]       = useState('qr');
 
-  useEffect(() => {
-    clientsApi.qr(client.id).then(r => setQr(r.data.qr)).catch(() => setQr(null));
-    clientsApi.configText(client.id).then(r => setConfig(r.data.config));
-  }, [client.id]);
+  const [origQr,    setOrigQr]    = useState(null);
+  const [amneziaQr, setAmneziaQr] = useState(null);
+  const [vpnUri,    setVpnUri]    = useState('');
+  const [origConf,  setOrigConf]  = useState('');
+  const [loadingQr, setLoadingQr] = useState(true);
 
   const isXray = protocolType === 'xray';
+  const hasAmnezia = protocolType === 'awg2' || protocolType === 'wireguard';
+
+  useEffect(() => {
+    setLoadingQr(true);
+    clientsApi.qr(client.id).then(r => {
+      setOrigQr(r.data.qr);
+      setAmneziaQr(r.data.amneziaQr || null);
+      setVpnUri(r.data.vpnUri || '');
+    }).catch(() => setOrigQr(null)).finally(() => setLoadingQr(false));
+
+    clientsApi.configText(client.id).then(r => {
+      setOrigConf(r.data.config || '');
+      if (r.data.vpnUri) setVpnUri(r.data.vpnUri);
+    });
+  }, [client.id]);
+
+  // Активные значения в зависимости от выбранного формата
+  const activeQr     = (hasAmnezia && format === 'amnezia') ? amneziaQr   : origQr;
+  const activeConfig = (hasAmnezia && format === 'amnezia') ? (vpnUri || '') : origConf;
+  const activeHint   = hasAmnezia && format === 'amnezia'
+    ? 'Сканируйте в приложении AmneziaVPN (поддерживает vpn:// ссылки)'
+    : isXray ? 'Сканируйте в FLClash, v2rayNG или совместимом клиенте' : 'Сканируйте в стандартном WireGuard клиенте';
+
+  const activeDownloadUrl  = (hasAmnezia && format === 'amnezia')
+    ? clientsApi.configAmneziaUrl(client.id)
+    : clientsApi.configDownloadUrl(client.id);
+  const activeDownloadLabel = (hasAmnezia && format === 'amnezia') ? '⬇ JSON для Amnezia' : '⬇ Скачать .conf';
 
   const tabs = [
-    { id: 'qr', label: 'QR' },
-    { id: 'cfg', label: isXray ? 'VLESS URI' : 'Config' },
-    { id: 'amnezia', label: 'Amnezia JSON' },
+    { id: 'qr',  label: 'QR-код' },
+    { id: 'cfg', label: isXray ? 'VLESS URI' : format === 'amnezia' ? 'vpn:// URI' : '.conf' },
   ];
 
   return (
     <div className="modal-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
-      <div className="modal" style={{ width: 480 }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
-          <div className="modal-title" style={{ margin: 0 }}>{client.name}</div>
-          <div style={{ display: 'flex', gap: 4 }}>
-            {tabs.map(t => (
-              <button key={t.id}
-                className={`btn btn-sm ${tab === t.id ? 'btn-primary' : 'btn-outline'}`}
-                onClick={() => setTab(t.id)}>{t.label}</button>
-            ))}
+      <div className="modal" style={{ width: 500 }}>
+
+        {/* Заголовок */}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 16 }}>
+          <div>
+            <div className="modal-title" style={{ margin: 0 }}>{client.name}</div>
+            <div className="text-muted mono" style={{ fontSize: 11, marginTop: 4 }}>
+              {protocolType?.toUpperCase()}
+            </div>
           </div>
+          <button className="btn btn-ghost btn-sm" onClick={onClose} style={{ fontSize: 18, lineHeight: 1 }}>×</button>
         </div>
 
-        {tab === 'qr' && (
-          <div style={{ textAlign: 'center' }}>
-            {qr
-              ? <img src={qr} alt="QR" className="qr-img" width={280} />
-              : <div style={{ padding: 40 }}><span className="spinner" style={{ width: 24, height: 24 }} /></div>
-            }
-            <div className="text-muted mono" style={{ marginTop: 12, fontSize: 11 }}>
-              {isXray
-                ? 'Scan with FLClash, v2rayNG or compatible client'
-                : 'Scan with AmneziaVPN client'}
-            </div>
+        {/* Переключатель формата (только для AWG и WireGuard) */}
+        {hasAmnezia && (
+          <div style={{
+            display: 'flex', gap: 0, marginBottom: 16,
+            border: '1px solid var(--border)', borderRadius: 8, overflow: 'hidden',
+          }}>
+            <button
+              style={{
+                flex: 1, padding: '8px 0', fontSize: 12, fontWeight: 600,
+                background: format === 'amnezia' ? 'var(--accent)' : 'transparent',
+                color: format === 'amnezia' ? '#fff' : 'var(--text-muted)',
+                border: 'none', cursor: 'pointer', transition: 'all .15s',
+              }}
+              onClick={() => setFormat('amnezia')}
+            >
+              📱 Для приложения Amnezia
+            </button>
+            <button
+              style={{
+                flex: 1, padding: '8px 0', fontSize: 12, fontWeight: 600,
+                background: format === 'original' ? 'var(--accent)' : 'transparent',
+                color: format === 'original' ? '#fff' : 'var(--text-muted)',
+                border: 'none', cursor: 'pointer', borderLeft: '1px solid var(--border)', transition: 'all .15s',
+              }}
+              onClick={() => setFormat('original')}
+            >
+              📄 Оригинальный формат
+            </button>
           </div>
         )}
 
+        {/* Вкладки QR / текст */}
+        <div style={{ display: 'flex', gap: 4, marginBottom: 16 }}>
+          {tabs.map(t => (
+            <button key={t.id}
+              className={`btn btn-sm ${tab === t.id ? 'btn-primary' : 'btn-outline'}`}
+              onClick={() => setTab(t.id)}>{t.label}</button>
+          ))}
+        </div>
+
+        {/* QR-код */}
+        {tab === 'qr' && (
+          <div style={{ textAlign: 'center' }}>
+            {loadingQr ? (
+              <div style={{ padding: 60 }}><span className="spinner" style={{ width: 28, height: 28 }} /></div>
+            ) : activeQr ? (
+              <img src={activeQr} alt="QR" style={{ width: 280, height: 280, borderRadius: 8 }} />
+            ) : (
+              <div className="notice notice-error">Не удалось сгенерировать QR</div>
+            )}
+            <div className="text-muted" style={{ marginTop: 12, fontSize: 11 }}>{activeHint}</div>
+          </div>
+        )}
+
+        {/* Текст конфига / URI */}
         {tab === 'cfg' && (
           <div>
-            <div className="config-box">{config || 'Loading…'}</div>
-            {isXray && (
-              <div className="notice notice-info" style={{ marginTop: 10, fontSize: 11 }}>
-                VLESS URI — для FLClash, Clash Meta, v2rayNG
-              </div>
+            {hasAmnezia && format === 'amnezia' ? (
+              <>
+                <div className="notice notice-info" style={{ marginBottom: 8, fontSize: 11 }}>
+                  <b>vpn://</b> ссылка — вставьте или отсканируйте в AmneziaVPN (iOS / Android / Desktop)
+                </div>
+                <div className="config-box" style={{ fontSize: 10, wordBreak: 'break-all', maxHeight: 160, overflowY: 'auto' }}>
+                  {vpnUri || 'Генерация…'}
+                </div>
+              </>
+            ) : (
+              <>
+                {isXray && (
+                  <div className="notice notice-info" style={{ marginBottom: 8, fontSize: 11 }}>
+                    VLESS URI — для FLClash, Clash Meta, v2rayNG
+                  </div>
+                )}
+                <div className="config-box" style={{ maxHeight: 260, overflowY: 'auto' }}>
+                  {origConf || 'Загрузка…'}
+                </div>
+              </>
             )}
           </div>
         )}
 
-        {tab === 'amnezia' && (
-          <div>
-            <div className="notice notice-info" style={{ marginBottom: 10, fontSize: 11 }}>
-              Amnezia JSON — для импорта в десктопный AmneziaVPN
-            </div>
-            <div className="config-box" style={{ fontSize: 10 }}>
-              Скачайте файл и импортируйте через AmneziaVPN → Import config
-            </div>
-          </div>
-        )}
-
+        {/* Кнопки */}
         <div className="modal-actions" style={{ marginTop: 16 }}>
-          <button className="btn btn-outline" onClick={onClose}>Close</button>
-          {tab === 'amnezia'
-            ? <button className="btn btn-primary" onClick={() => window.open(clientsApi.configAmneziaUrl(client.id), '_blank')}>
-                ⬇ Download JSON
-              </button>
-            : <button className="btn btn-primary" onClick={() => window.open(clientsApi.configDownloadUrl(client.id), '_blank')}>
-                ⬇ Download
-              </button>
-          }
+          <button className="btn btn-outline" onClick={onClose}>Закрыть</button>
+          <button className="btn btn-primary" onClick={() => window.open(activeDownloadUrl, '_blank')}>
+            {activeDownloadLabel}
+          </button>
         </div>
       </div>
     </div>
