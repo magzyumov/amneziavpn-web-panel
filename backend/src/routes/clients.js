@@ -23,13 +23,12 @@ function verifyQueryToken(req, res) {
   }
 }
 
-// Официальный формат Amnezia JSON для импорта в AmneziaVPN
-// { containers: [...], defaultContainer, description, dns1, dns2, hostName, port, ... }
+// Официальный формат Amnezia JSON — восстановлен по декодированным реальным vpn:// URI
 function buildAmneziaExportJson(client, protocol, server) {
   const parts = client.config.split('\n---AMNEZIA_JSON---\n');
   const conf = parts[0]; // оригинальный .conf текст
 
-  const get = (key) => {
+  const getConf = (key) => {
     const m = conf.match(new RegExp(`^${key}\\s*=\\s*(.+)$`, 'mi'));
     return m ? m[1].trim() : '';
   };
@@ -37,30 +36,85 @@ function buildAmneziaExportJson(client, protocol, server) {
   let containerData = {};
 
   if (protocol.type === 'awg2') {
+    const clientPrivKey = getConf('PrivateKey');
+    const clientAddr    = getConf('Address');
+    const clientIp      = clientAddr.split('/')[0];
+    const serverPubKey  = getConf('PublicKey');
+    const presharedKey  = getConf('PresharedKey');
+    const endpoint      = getConf('Endpoint');
+    const port          = endpoint.split(':').pop();
+    const hostName      = server?.host || endpoint.split(':')[0] || '';
+    const Jc = getConf('Jc'), Jmin = getConf('Jmin'), Jmax = getConf('Jmax');
+    const S1 = getConf('S1'), S2 = getConf('S2'), S3 = getConf('S3'), S4 = getConf('S4');
+    const H1 = getConf('H1'), H2 = getConf('H2'), H3 = getConf('H3'), H4 = getConf('H4');
+    const I1 = getConf('I1'), I2 = getConf('I2'), I3 = getConf('I3');
+    const I4 = getConf('I4'), I5 = getConf('I5');
+
+    const lastConfigObj = {
+      H1, H2, H3, H4, I1, I2, I3, I4, I5,
+      Jc, Jmax, Jmin, S1, S2, S3, S4,
+      allowed_ips: ['0.0.0.0/0', '::/0'],
+      clientId: clientPrivKey,
+      client_ip: clientIp,
+      client_priv_key: clientPrivKey,
+      client_pub_key: clientPrivKey,
+      config: conf,
+      hostName,
+      mtu: '1376',
+      persistent_keep_alive: '25',
+      port: parseInt(port) || 0,
+      psk_key: presharedKey,
+      server_pub_key: serverPubKey,
+    };
+
     containerData = {
-      container: 'amnezia-awg',
+      container: 'amnezia-awg2',
       awg: {
-        last_config: conf,
-        Jc:   get('Jc'),
-        Jmin: get('Jmin'),
-        Jmax: get('Jmax'),
-        S1:   get('S1'),
-        S2:   get('S2'),
-        S3:   get('S3'),
-        S4:   get('S4'),
-        H1:   get('H1'),
-        H2:   get('H2'),
-        H3:   get('H3'),
-        H4:   get('H4'),
+        H1, H2, H3, H4, I1, I2, I3, I4, I5,
+        Jc, Jmax, Jmin, S1, S2, S3, S4,
+        last_config: JSON.stringify(lastConfigObj, null, 4) + '\n',
+        port: String(port),
+        protocol_version: '2',
+        subnet_address: '10.8.1.0',
+        transport_proto: 'udp',
       },
     };
+
   } else if (protocol.type === 'wireguard') {
+    const clientPrivKey = getConf('PrivateKey');
+    const clientAddr    = getConf('Address');
+    const clientIp      = clientAddr.split('/')[0];
+    const serverPubKey  = getConf('PublicKey');
+    const presharedKey  = getConf('PresharedKey');
+    const endpoint      = getConf('Endpoint');
+    const port          = endpoint.split(':').pop();
+    const hostName      = server?.host || endpoint.split(':')[0] || '';
+
+    const lastConfigObj = {
+      allowed_ips: ['0.0.0.0/0', '::/0'],
+      clientId: clientPrivKey,
+      client_ip: clientIp,
+      client_priv_key: clientPrivKey,
+      client_pub_key: clientPrivKey,
+      config: conf,
+      hostName,
+      mtu: '1420',
+      persistent_keep_alive: '25',
+      port: parseInt(port) || 0,
+      psk_key: presharedKey,
+      server_pub_key: serverPubKey,
+    };
+
     containerData = {
       container: 'amnezia-wireguard',
       wireguard: {
-        last_config: conf,
+        last_config: JSON.stringify(lastConfigObj, null, 4) + '\n',
+        port: String(port),
+        subnet_address: '10.8.1.0',
+        transport_proto: 'udp',
       },
     };
+
   } else if (protocol.type === 'xray') {
     let xrayCfg = {};
     if (parts[1]) { try { xrayCfg = JSON.parse(parts[1]); } catch {} }
@@ -70,19 +124,15 @@ function buildAmneziaExportJson(client, protocol, server) {
     };
   }
 
-  const exportObj = {
-    containers:       [containerData],
+  return JSON.stringify({
+    containers: [containerData],
     defaultContainer: containerData.container,
-    description:      client.name,
-    dns1:             '1.1.1.1',
-    dns2:             '8.8.8.8',
-    hostName:         server?.host || '',
-    port:             protocol?.port || 0,
-    splitTunnelSites: [],
-    splitTunnelType:  0,
-  };
-
-  return JSON.stringify(exportObj);
+    description: client.name,
+    dns1: '1.1.1.1',
+    dns2: '1.0.0.1',
+    hostName: server?.host || '',
+    nameOverriddenByUser: true,
+  });
 }
 
 // Генерация vpn:// URI — официальный Amnezia формат
