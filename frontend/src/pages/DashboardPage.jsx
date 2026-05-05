@@ -6,6 +6,8 @@ function AddServerModal({ onClose, onAdded }) {
   const [form, setForm] = useState({ name: '', host: '', port: 22, username: 'root', auth_type: 'password', password: '', private_key: '' });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [step, setStep] = useState('form'); // 'form' | 'scanning'
+  const navigate = useNavigate();
 
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
 
@@ -15,9 +17,10 @@ function AddServerModal({ onClose, onAdded }) {
     try {
       const r = await serversApi.create(form);
       onAdded(r.data);
+      // Переходим на страницу сервера — там покажем результаты сканирования
+      navigate(`/server/${r.data.id}?scan=1`);
     } catch (e) {
       setError(e.response?.data?.error || 'Failed to add server');
-    } finally {
       setLoading(false);
     }
   };
@@ -64,11 +67,14 @@ function AddServerModal({ onClose, onAdded }) {
               <textarea className="input input-mono" rows={5} placeholder="-----BEGIN RSA PRIVATE KEY-----" value={form.private_key} onChange={e => set('private_key', e.target.value)} />
             </div>
           )}
+          <div className="notice notice-info" style={{ fontSize: 11 }}>
+            After adding, the server will be automatically scanned for existing Amnezia protocols.
+          </div>
         </div>
         <div className="modal-actions">
           <button className="btn btn-outline" onClick={onClose}>Cancel</button>
           <button className="btn btn-primary" onClick={submit} disabled={loading}>
-            {loading ? <span className="spinner" /> : 'Add Server'}
+            {loading ? <><span className="spinner" /> Adding…</> : 'Add & Scan Server'}
           </button>
         </div>
       </div>

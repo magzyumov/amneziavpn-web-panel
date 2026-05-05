@@ -6,7 +6,6 @@ import {
   installAWG2, installXray, installWireGuard,
   getContainerStatus, startContainer, stopContainer,
   removeContainer, getContainerLogs, PROTOCOLS,
-  importExistingProtocol,
 } from '../services/protocols.js';
 
 const router = Router();
@@ -40,37 +39,6 @@ router.post('/server/:serverId', async (req, res) => {
   );
 
   res.json({ id, type, containerName: result.containerName, port: result.port, config: result.config });
-});
-
-// POST /api/protocols/server/:serverId/import — импорт существующего протокола (найденного при сканировании)
-router.post('/server/:serverId/import', async (req, res) => {
-  await getDb();
-  const server = queryOne('SELECT * FROM servers WHERE id = ?', [req.params.serverId]);
-  if (!server) return res.status(404).json({ error: 'Server not found' });
-
-  const { type, containerName } = req.body;
-  if (!type || !containerName) return res.status(400).json({ error: 'type and containerName required' });
-
-  try {
-    const result = await importExistingProtocol(server, type, containerName);
-
-    // Проверяем что такого протокола ещё нет в базе
-    const existing = queryOne('SELECT id FROM protocols WHERE server_id = ? AND container_name = ?', [server.id, containerName]);
-    if (existing) {
-      return res.json({ id: existing.id, type, containerName, port: result.port, config: result.config, alreadyExists: true });
-    }
-
-    const id = uuidv4();
-    const status = await getContainerStatus(server, containerName);
-    run(
-      'INSERT INTO protocols (id, server_id, type, name, container_name, port, config, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-      [id, server.id, type, PROTOCOLS[type]?.name || type, containerName, result.port, JSON.stringify(result.config), status || 'running']
-    );
-
-    res.json({ id, type, containerName, port: result.port, config: result.config, status });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
 });
 
 router.delete('/:id', async (req, res) => {

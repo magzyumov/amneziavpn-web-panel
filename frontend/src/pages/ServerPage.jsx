@@ -3,7 +3,140 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { serversApi, protocolsApi, clientsApi } from '../api.js';
 import { subscriptionsApi } from '../api.js';
 
-// ── Install Protocol Modal ──────────────────────────────
+// ── Scan Existing Protocols Modal ───────────────────────────────────────────
+function ScanProtocolsModal({ serverId, existingProtocols, onClose, onImported }) {
+  const [scanning, setScanning] = useState(false);
+  const [found, setFound] = useState(null);
+  const [importing, setImporting] = useState({});
+  const [imported, setImported] = useState({});
+  const [error, setError] = useState('');
+
+  const typeIcons = { awg2: '🛡️', wireguard: '🔒', xray: '⚡' };
+  const typeNames = { awg2: 'AmneziaWG 2.0', wireguard: 'WireGuard', xray: 'Xray VLESS Reality' };
+
+  const scan = async () => {
+    setScanning(true);
+    setError('');
+    setFound(null);
+    try {
+      const r = await serversApi.scanProtocols(serverId);
+      setFound(r.data.found || []);
+    } catch (e) {
+      setError(e.response?.data?.error || e.message);
+    } finally {
+      setScanning(false);
+    }
+  };
+
+  useEffect(() => { scan(); }, []);
+
+  const alreadyImported = (containerName) =>
+    existingProtocols.some(p => p.container_name === containerName);
+
+  const doImport = async (proto) => {
+    setImporting(s => ({ ...s, [proto.containerName]: true }));
+    try {
+      const r = await serversApi.importProtocol(serverId, {
+        type: proto.type,
+        containerName: proto.containerName,
+        port: proto.port,
+        config: proto.config,
+      });
+      setImported(s => ({ ...s, [proto.containerName]: true }));
+      onImported(r.data);
+    } catch (e) {
+      setError(e.response?.data?.error || e.message);
+    } finally {
+      setImporting(s => ({ ...s, [proto.containerName]: false }));
+    }
+  };
+
+  return (
+    <div className="modal-overlay" onClick={e => e.target === e.currentTarget && !scanning && onClose()}>
+      <div className="modal" style={{ width: 560 }}>
+        <div className="modal-title">🔍 Scan Server for Existing Protocols</div>
+
+        {scanning && (
+          <div style={{ textAlign: 'center', padding: '32px 0' }}>
+            <span className="spinner" style={{ width: 24, height: 24 }} />
+            <div className="text-muted" style={{ marginTop: 12, fontSize: 13 }}>Scanning server for Amnezia containers…</div>
+          </div>
+        )}
+
+        {error && <div className="notice notice-error" style={{ marginBottom: 12 }}>{error}</div>}
+
+        {found !== null && !scanning && (
+          found.length === 0 ? (
+            <div className="notice notice-info">No Amnezia protocols found on this server.</div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+              <div className="notice notice-info" style={{ fontSize: 12 }}>
+                Found <b>{found.length}</b> protocol{found.length !== 1 ? 's' : ''} on the server.
+                Import them to manage clients and configurations.
+              </div>
+              {found.map(proto => {
+                const alreadyIn = alreadyImported(proto.containerName);
+                const isImporting = importing[proto.containerName];
+                const isImported = imported[proto.containerName];
+                return (
+                  <div key={proto.containerName} style={{
+                    background: 'var(--surface2)',
+                    borderRadius: 8,
+                    padding: '12px 16px',
+                    border: '1px solid var(--border)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    gap: 12,
+                  }}>
+                    <div>
+                      <div style={{ fontWeight: 600, fontSize: 14 }}>
+                        {typeIcons[proto.type]} {typeNames[proto.type] || proto.type}
+                      </div>
+                      <div className="mono text-muted" style={{ fontSize: 11, marginTop: 4 }}>
+                        {proto.containerName} · port {proto.port || '?'} · <span style={{
+                          color: proto.status === 'running' ? 'var(--green)' : 'var(--text-muted)'
+                        }}>{proto.status}</span>
+                      </div>
+                      {proto.existingPeers?.length > 0 && (
+                        <div className="text-muted" style={{ fontSize: 11, marginTop: 2 }}>
+                          {proto.existingPeers.length} existing peer{proto.existingPeers.length !== 1 ? 's' : ''} on server
+                          {' '}(will not be auto-imported as clients)
+                        </div>
+                      )}
+                    </div>
+                    <div>
+                      {alreadyIn || isImported ? (
+                        <span className="badge badge-running">✓ Imported</span>
+                      ) : (
+                        <button
+                          className="btn btn-primary btn-sm"
+                          onClick={() => doImport(proto)}
+                          disabled={isImporting}
+                        >
+                          {isImporting ? <span className="spinner" style={{ width: 12, height: 12 }} /> : '⬇ Import'}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )
+        )}
+
+        <div className="modal-actions" style={{ marginTop: 20 }}>
+          <button className="btn btn-outline" onClick={scan} disabled={scanning}>
+            {scanning ? <><span className="spinner" /> Scanning…</> : '↻ Re-scan'}
+          </button>
+          <button className="btn btn-primary" onClick={onClose}>Close</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
 function InstallProtocolModal({ serverId, onClose, onInstalled }) {
   const [type, setType] = useState('awg2');
   const [opts, setOpts] = useState({});
@@ -125,136 +258,15 @@ function InstallProtocolModal({ serverId, onClose, onInstalled }) {
   );
 }
 
-// ── Scan Protocols Modal ───────────────────────────────
-function ScanProtocolsModal({ serverId, onClose, onImported }) {
-  const [scanning, setScanning] = useState(false);
-  const [found, setFound] = useState([]);
-  const [importing, setImporting] = useState({});
-  const [error, setError] = useState('');
-  const [imported, setImported] = useState([]);
-
-  useEffect(() => { scan(); }, []);
-
-  const scan = async () => {
-    setScanning(true);
-    setError('');
-    try {
-      const r = await serversApi.scanProtocols(serverId);
-      setFound(r.data);
-    } catch (e) {
-      setError(e.response?.data?.error || e.message);
-    } finally {
-      setScanning(false);
-    }
-  };
-
-  const doImport = async (item) => {
-    setImporting(p => ({ ...p, [item.containerName]: true }));
-    try {
-      const r = await protocolsApi.importExisting(serverId, {
-        type: item.type,
-        containerName: item.containerName,
-      });
-      setImported(p => [...p, item.containerName]);
-      onImported(r.data);
-    } catch (e) {
-      setError(e.response?.data?.error || e.message);
-    } finally {
-      setImporting(p => ({ ...p, [item.containerName]: false }));
-    }
-  };
-
-  const icons = { awg2: '🛡️', xray: '⚡', wireguard: '🔒' };
-  const typeNames = { awg2: 'AmneziaWG 2.0', xray: 'Xray VLESS', wireguard: 'WireGuard' };
-
-  return (
-    <div className="modal-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
-      <div className="modal" style={{ width: 560 }}>
-        <div className="modal-title">🔍 Scan Existing Protocols</div>
-        <div className="notice notice-info" style={{ marginBottom: 16, fontSize: 11 }}>
-          Сканирование найдёт уже установленные контейнеры и конфигурации AmneziaVPN на сервере.
-          Найденные протоколы можно импортировать в панель для управления.
-        </div>
-
-        {scanning && (
-          <div style={{ textAlign: 'center', padding: 32 }}>
-            <span className="spinner" style={{ width: 24, height: 24 }} />
-            <div className="text-muted mono" style={{ marginTop: 12, fontSize: 12 }}>Scanning server...</div>
-          </div>
-        )}
-
-        {error && <div className="notice notice-error" style={{ marginBottom: 12 }}>{error}</div>}
-
-        {!scanning && found.length === 0 && (
-          <div className="empty-state" style={{ padding: 24 }}>
-            <div className="empty-icon">○</div>
-            <div className="empty-text">No existing AmneziaVPN protocols found on this server.</div>
-          </div>
-        )}
-
-        {!scanning && found.length > 0 && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-            {found.map(item => {
-              const isImported = imported.includes(item.containerName);
-              const isImporting = importing[item.containerName];
-              return (
-                <div key={item.containerName} className="card" style={{ padding: 12 }}>
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-8">
-                      <span style={{ fontSize: 20 }}>{icons[item.type]}</span>
-                      <div>
-                        <div style={{ fontWeight: 600, fontSize: 13 }}>{typeNames[item.type]}</div>
-                        <div className="mono text-muted" style={{ fontSize: 11 }}>
-                          {item.containerName} · :{item.port || '?'} · {item.status}
-                          {item.source === 'config' && ' (config only)'}
-                        </div>
-                      </div>
-                    </div>
-                    <div>
-                      {isImported ? (
-                        <span className="badge badge-running">Imported</span>
-                      ) : (
-                        <button
-                          className="btn btn-primary btn-sm"
-                          onClick={() => doImport(item)}
-                          disabled={isImporting}
-                        >
-                          {isImporting ? <span className="spinner" style={{ width: 12, height: 12 }} /> : '↗ Import'}
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
-
-        <div className="modal-actions">
-          <button className="btn btn-outline" onClick={scan} disabled={scanning}>↺ Rescan</button>
-          <button className="btn btn-outline" onClick={onClose}>Close</button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 // ── Client Modal ────────────────────────────────────────
 function ClientModal({ client, protocolType, onClose }) {
   const [qr, setQr] = useState(null);
   const [config, setConfig] = useState('');
-  const [configJson, setConfigJson] = useState(null);
-  const [vpnUrl, setVpnUrl] = useState(null);
   const [tab, setTab] = useState('qr');
-  const [downloading, setDownloading] = useState(false);
 
   useEffect(() => {
     clientsApi.qr(client.id).then(r => setQr(r.data.qr)).catch(() => setQr(null));
-    clientsApi.configText(client.id).then(r => {
-      setConfig(r.data.config);
-      setConfigJson(r.data.configJson || null);
-      setVpnUrl(r.data.vpnUrl || null);
-    });
+    clientsApi.configText(client.id).then(r => setConfig(r.data.config));
   }, [client.id]);
 
   const isXray = protocolType === 'xray';
@@ -262,52 +274,8 @@ function ClientModal({ client, protocolType, onClose }) {
   const tabs = [
     { id: 'qr', label: 'QR' },
     { id: 'cfg', label: isXray ? 'VLESS URI' : 'Config' },
+    { id: 'amnezia', label: 'Amnezia JSON' },
   ];
-  // Показываем вкладку vpn:// ключа если есть
-  if (vpnUrl) {
-    tabs.push({ id: 'vpn', label: 'vpn://' });
-  }
-
-  const handleDownload = async () => {
-    setDownloading(true);
-    try {
-      if (tab === 'vpn') {
-        // Скачиваем vpn:// ключ
-        const blob = new Blob([vpnUrl], { type: 'text/plain' });
-        const url = window.URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `${client.name}.vpn`;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        window.URL.revokeObjectURL(url);
-      } else if (tab === 'cfg') {
-        // На вкладке Config/VLESS URI скачиваем нативный конфиг
-        if (isXray) {
-          const blob = new Blob([config], { type: 'text/plain' });
-          const url = window.URL.createObjectURL(blob);
-          const a = document.createElement('a');
-          a.href = url;
-          a.download = `${client.name}.txt`;
-          document.body.appendChild(a);
-          a.click();
-          document.body.removeChild(a);
-          window.URL.revokeObjectURL(url);
-        } else {
-          // WG/AWG: скачиваем .conf файл через API
-          await clientsApi.downloadConfig(client.id);
-        }
-      } else {
-        // QR вкладка: скачиваем конфиг через API
-        await clientsApi.downloadConfig(client.id);
-      }
-    } catch (e) {
-      alert('Download failed: ' + e.message);
-    } finally {
-      setDownloading(false);
-    }
-  };
 
   return (
     <div className="modal-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
@@ -326,14 +294,16 @@ function ClientModal({ client, protocolType, onClose }) {
         {tab === 'qr' && (
           <div style={{ textAlign: 'center' }}>
             {qr
-              ? <img src={qr} alt="QR" className="qr-img" width={320} />
+              ? <img src={qr} alt="QR" className="qr-img" width={280} />
               : <div style={{ padding: 40 }}><span className="spinner" style={{ width: 24, height: 24 }} /></div>
             }
             <div className="text-muted mono" style={{ marginTop: 12, fontSize: 11 }}>
-              Сканируйте в AmneziaVPN десктоп/мобильное приложение
+              {isXray
+                ? 'Scan with FLClash, v2rayNG or compatible client'
+                : 'Scan with AmneziaVPN client'}
             </div>
           </div>
-        )
+        )}
 
         {tab === 'cfg' && (
           <div>
@@ -346,22 +316,27 @@ function ClientModal({ client, protocolType, onClose }) {
           </div>
         )}
 
-        {tab === 'vpn' && vpnUrl && (
+        {tab === 'amnezia' && (
           <div>
             <div className="notice notice-info" style={{ marginBottom: 10, fontSize: 11 }}>
-              vpn:// ключ — скопируйте и вставьте в AmneziaVPN десктоп (Импорт → Текстовый ключ)
+              Amnezia JSON — для импорта в десктопный AmneziaVPN
             </div>
-            <div className="config-box" style={{ fontSize: 10, wordBreak: 'break-all' }}>
-              {vpnUrl}
+            <div className="config-box" style={{ fontSize: 10 }}>
+              Скачайте файл и импортируйте через AmneziaVPN → Import config
             </div>
           </div>
-        )
+        )}
 
         <div className="modal-actions" style={{ marginTop: 16 }}>
           <button className="btn btn-outline" onClick={onClose}>Close</button>
-          <button className="btn btn-primary" onClick={handleDownload} disabled={downloading}>
-            {downloading ? <><span className="spinner" style={{ width: 12, height: 12 }} /> Downloading…</> : '⬇ Download'}
-          </button>
+          {tab === 'amnezia'
+            ? <button className="btn btn-primary" onClick={() => window.open(clientsApi.configAmneziaUrl(client.id), '_blank')}>
+                ⬇ Download JSON
+              </button>
+            : <button className="btn btn-primary" onClick={() => window.open(clientsApi.configDownloadUrl(client.id), '_blank')}>
+                ⬇ Download
+              </button>
+          }
         </div>
       </div>
     </div>
@@ -634,6 +609,13 @@ export default function ServerPage() {
     ]).then(([sr, pr]) => {
       setServer(sr.data.find(s => s.id === id));
       setProtocols(pr.data);
+      // Auto-open scan if redirected from "Add Server"
+      const params = new URLSearchParams(window.location.search);
+      if (params.get('scan') === '1') {
+        setShowScan(true);
+        // Clean URL
+        window.history.replaceState({}, '', window.location.pathname);
+      }
     }).finally(() => setLoading(false));
   }, [id]);
 
@@ -656,15 +638,6 @@ export default function ServerPage() {
     setProtocols(p => p.filter(x => x.id !== pid));
   };
 
-  const handleProtocolImported = (data) => {
-    // Обновляем список протоколов
-    if (!data.alreadyExists) {
-      setProtocols(prev => [...prev, data]);
-    }
-    // Перезагружаем список с сервера для корректности
-    protocolsApi.byServer(id).then(r => setProtocols(r.data));
-  };
-
   if (loading) return <div style={{ padding: 48, textAlign: 'center' }}><span className="spinner" style={{ width: 24, height: 24 }} /></div>;
   if (!server) return <div style={{ padding: 48 }}>Server not found</div>;
 
@@ -680,12 +653,10 @@ export default function ServerPage() {
             <div className="page-sub mono">// {server.username}@{server.host}:{server.port}</div>
           </div>
           <div className="flex gap-8">
-            <button className="btn btn-outline" onClick={() => setShowScan(true)}>
-              🔍 Scan Protocols
-            </button>
             <button className="btn btn-outline" onClick={ensureDocker} disabled={installingDocker}>
               {installingDocker ? <><span className="spinner" /> Installing Docker…</> : '🐳 Ensure Docker'}
             </button>
+            <button className="btn btn-outline" onClick={() => setShowScan(true)}>🔍 Scan Server</button>
             <button className="btn btn-primary" onClick={() => setShowInstall(true)}>+ Install Protocol</button>
           </div>
         </div>
@@ -702,14 +673,9 @@ export default function ServerPage() {
           <div className="empty-state">
             <div className="empty-icon">◈</div>
             <div className="empty-text">No protocols installed yet.</div>
-            <div style={{ display: 'flex', gap: 8, justifyContent: 'center', marginTop: 16 }}>
-              <button className="btn btn-outline" onClick={() => setShowScan(true)}>
-                🔍 Scan for existing
-              </button>
-              <button className="btn btn-primary" onClick={() => setShowInstall(true)}>
-                + Install First Protocol
-              </button>
-            </div>
+            <button className="btn btn-primary" style={{ marginTop: 16 }} onClick={() => setShowInstall(true)}>
+              + Install First Protocol
+            </button>
           </div>
         ) : (
           <div className="grid" style={{ gap: 16 }}>
@@ -727,12 +693,17 @@ export default function ServerPage() {
           onInstalled={p => { setProtocols(prev => [...prev, p]); setShowInstall(false); }}
         />
       )}
-
       {showScan && (
         <ScanProtocolsModal
           serverId={id}
+          existingProtocols={protocols}
           onClose={() => setShowScan(false)}
-          onImported={handleProtocolImported}
+          onImported={p => {
+            setProtocols(prev => {
+              if (prev.some(x => x.id === p.id || x.container_name === p.containerName)) return prev;
+              return [...prev, p];
+            });
+          }}
         />
       )}
     </>

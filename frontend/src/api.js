@@ -35,13 +35,13 @@ export const serversApi = {
   ensureDocker: (id) => api.post(`/servers/${id}/ensure-docker`),
   containers: (id) => api.get(`/servers/${id}/containers`),
   scanProtocols: (id) => api.post(`/servers/${id}/scan-protocols`),
+  importProtocol: (id, data) => api.post(`/servers/${id}/import-protocol`, data),
 };
 
 export const protocolsApi = {
   list: () => api.get('/protocols'),
   byServer: (serverId) => api.get(`/protocols/server/${serverId}`),
   install: (serverId, data) => api.post(`/protocols/server/${serverId}`, data),
-  importExisting: (serverId, data) => api.post(`/protocols/server/${serverId}/import`, data),
   delete: (id) => api.delete(`/protocols/${id}`),
   start: (id) => api.post(`/protocols/${id}/start`),
   stop: (id) => api.post(`/protocols/${id}/stop`),
@@ -55,52 +55,15 @@ export const clientsApi = {
   delete: (id) => api.delete(`/clients/${id}`),
   qr: (id) => api.get(`/clients/${id}/qr`),
   configText: (id) => api.get(`/clients/${id}/config-text`),
+  configDownloadUrl: (id) => {
+    const token = localStorage.getItem('token');
+    return `/api/clients/${id}/config${token ? `?token=${encodeURIComponent(token)}` : ''}`;
+  },
+  configAmneziaUrl: (id) => {
+    const token = localStorage.getItem('token');
+    return `/api/clients/${id}/config-amnezia${token ? `?token=${encodeURIComponent(token)}` : ''}`;
+  },
   subscription: (id) => api.get(`/clients/${id}/subscription`),
-
-  // Скачивание конфига через JS fetch с авторизацией
-  // AWG2/WireGuard: сервер отдаёт Amnezia JSON (.json)
-  // Xray: сервер отдаёт VLESS URI (.txt)
-  downloadConfig: async (id, filename) => {
-    const token = localStorage.getItem('token');
-    const response = await fetch(`/api/clients/${id}/config`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    if (!response.ok) throw new Error('Download failed');
-    // Получаем имя файла из Content-Disposition заголовка
-    const disposition = response.headers.get('Content-Disposition');
-    let serverFilename = filename;
-    if (disposition) {
-      const match = disposition.match(/filename="?(.+?)"?$/);
-      if (match) serverFilename = match[1];
-    }
-    const blob = await response.blob();
-    const url = window.URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = serverFilename;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    window.URL.revokeObjectURL(url);
-  },
-
-  // Скачивание Amnezia JSON конфига через JS fetch с авторизацией
-  downloadConfigAmnezia: async (id, filename) => {
-    const token = localStorage.getItem('token');
-    const response = await fetch(`/api/clients/${id}/config-amnezia`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    if (!response.ok) throw new Error('Download failed');
-    const blob = await response.blob();
-    const url = window.URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    window.URL.revokeObjectURL(url);
-  },
 };
 
 export const subscriptionsApi = {

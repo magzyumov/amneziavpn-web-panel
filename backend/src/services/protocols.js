@@ -23,7 +23,6 @@
 
 import { exec, execSudo } from './ssh.js';
 import { v4 as uuidv4 } from 'uuid';
-import zlib from 'zlib';
 
 // ─── Dockerfile'ы (вшиты в бинарник Amnezia, восстановлены) ─────────────────
 
@@ -407,254 +406,87 @@ AllowedIPs = 0.0.0.0/0, ::/0
 Endpoint = $SERVER_IP_ADDRESS:$WIREGUARD_SERVER_PORT
 PersistentKeepalive = 25`;
 
-// ─── Функции генерации Amnezia JSON (формат десктопного клиента) ─────────────
-//
-// Формат основан на исходном коде AmneziaVPN десктоп (github.com/amnezia-vpn/amnezia-client)
-// Изучено: importController.cpp, exportController.cpp, serverConfig.cpp, containerConfig.cpp
-//
-// КЛЮЧЕВЫЕ ОТЛИЧИЯ ОТ ПРЕДЫДУЩЕЙ ВЕРСИИ:
-// 1. Добавлено поле isThirdPartyConfig: true (обязательно для десктопного клиента)
-// 2. allowed_ips — СТРОКА "0.0.0.0/0, ::/0", а не массив (Qt .toString() вернёт пустую строку для массива)
-// 3. Серверные поля (protocol_version, subnet_address, subnet_cidr) убраны — десктоп их не ожидает
-// 4. Компактный JSON (без pretty-printing) для уменьшения размера QR
-// 5. last_config внутри — компактный JSON (без пробелов)
-
-/**
- * Генерирует Amnezia JSON для клиента AWG (AmneziaWG).
- * Формат совместим с десктопным AmneziaVPN для импорта через QR и файл.
- *
- * При QR импорте десктопный клиент:
- *   1. Base64URL-декодирует данные QR
- *   2. Проверяет магический код 1984 (chunked формат)
- *   3. Вызывает extractConfigFromQr() → JSON parse → qUncompress
- * Поэтому QR данные ДОЛЖНЫ быть Base64URL-закодированы!
- */
-function buildAmneziaAwgJson(params) {
-  const {
-    serverHost, port, clientIp, clientPrivKey, clientPubKey, serverPubKey, presharedKey,
-    nativeConfig, jc, jmin, jmax, s1, s2, s3, s4, h1, h2, h3, h4, i1, i2, i3, i4, i5,
-  } = params;
-
-  // last_config — JSON-строка с конфигом клиента (AwgClientConfig)
-  // ВАЖНО: allowed_ips — СТРОКА, не массив! Qt .toString() для массива вернёт ""
-  const lastConfigObj = {
-    config: nativeConfig,  // nativeConfig — полный .conf текст
-    hostName: serverHost,
-    port: String(port),
-    client_ip: `${clientIp}/32`,
-    client_priv_key: clientPrivKey,
-    client_pub_key: clientPubKey,
-    server_pub_key: serverPubKey,
-    psk_key: presharedKey,
-    allowed_ips: '0.0.0.0/0, ::/0',
-    persistent_keep_alive: '25',
-    Jc: String(jc),
-    Jmin: String(jmin),
-    Jmax: String(jmax),
-    S1: String(s1),
-    S2: String(s2),
-    S3: String(s3),
-    S4: String(s4),
-    H1: String(h1),
-    H2: String(h2),
-    H3: String(h3),
-    H4: String(h4),
-    I1: String(i1),
-    I2: String(i2),
-    I3: String(i3),
-    I4: String(i4),
-    I5: String(i5),
-  };
-
-  // Объект протокола awg — только поля, ожидаемые десктопным клиентом
-  const awgObj = {
-    last_config: JSON.stringify(lastConfigObj),
-    isThirdPartyConfig: true,
-    port: String(port),
-    transport_proto: 'udp',
-  };
-
-  // Container object
-  const containerObj = {
-    container: 'amnezia-awg',
-    awg: awgObj,
-  };
-
-  // Корневой объект (SelfHostedServerConfig)
-  const rootObj = {
-    hostName: serverHost,
-    containers: [containerObj],
-    defaultContainer: 'amnezia-awg',
-    dns1: '1.1.1.1',
-    dns2: '8.8.8.8',
-  };
-
-  return JSON.stringify(rootObj);  // Компактный JSON — без pretty-printing
-}
-
-/**
- * Генерирует Amnezia JSON для клиента WireGuard.
- */
-function buildAmneziaWireGuardJson(params) {
-  const {
-    serverHost, port, clientIp, clientPrivKey, clientPubKey, serverPubKey, presharedKey,
-    nativeConfig,
-  } = params;
-
-  // last_config — JSON-строка с конфигом клиента (WireGuardClientConfig)
-  // ВАЖНО: allowed_ips — СТРОКА, не массив!
-  const lastConfigObj = {
-    config: nativeConfig,
-    hostName: serverHost,
-    port: String(port),
-    client_ip: `${clientIp}/32`,
-    client_priv_key: clientPrivKey,
-    client_pub_key: clientPubKey,
-    server_pub_key: serverPubKey,
-    psk_key: presharedKey,
-    allowed_ips: '0.0.0.0/0, ::/0',
-    persistent_keep_alive: '25',
-  };
-
-  // Объект протокола wireguard — только поля, ожидаемые десктопным клиентом
-  const wgObj = {
-    last_config: JSON.stringify(lastConfigObj),
-    isThirdPartyConfig: true,
-    port: String(port),
-    transport_proto: 'udp',
-  };
-
-  // Container object
-  const containerObj = {
-    container: 'amnezia-wireguard',
-    wireguard: wgObj,
-  };
-
-  const rootObj = {
-    hostName: serverHost,
-    containers: [containerObj],
-    defaultContainer: 'amnezia-wireguard',
-    dns1: '1.1.1.1',
-    dns2: '8.8.8.8',
-  };
-
-  return JSON.stringify(rootObj);  // Компактный JSON
-}
-
-/**
- * Генерирует Amnezia JSON для клиента Xray.
- */
-function buildAmneziaXrayJson(params) {
-  const {
-    serverHost, port, clientId, sni, publicKey, shortId,
-  } = params;
-
-  // Xray native config (полный JSON конфиг Xray клиента)
-  const xrayNativeConfig = {
-    log: { loglevel: 'error' },
-    inbounds: [{
-      listen: '127.0.0.1',
-      port: 10808,
-      protocol: 'socks',
-      settings: { udp: true },
+// Block #9 — Xray клиент JSON (для импорта в AmneziaVPN)
+const XRAY_CLIENT_TEMPLATE = `{
+    "log": { "loglevel": "error" },
+    "inbounds": [{
+        "listen": "127.0.0.1",
+        "port": 10808,
+        "protocol": "socks",
+        "settings": { "udp": true }
     }],
-    outbounds: [{
-      protocol: 'vless',
-      settings: {
-        vnext: [{
-          address: serverHost,
-          port: port,
-          users: [{
-            id: clientId,
-            flow: 'xtls-rprx-vision',
-            encryption: 'none',
-          }],
-        }],
-      },
-      streamSettings: {
-        network: 'tcp',
-        security: 'reality',
-        realitySettings: {
-          fingerprint: 'chrome',
-          serverName: sni,
-          publicKey: publicKey,
-          shortId: shortId,
-          spiderX: '',
+    "outbounds": [{
+        "protocol": "vless",
+        "settings": {
+            "vnext": [{
+                "address": "$SERVER_IP_ADDRESS",
+                "port": $XRAY_SERVER_PORT,
+                "users": [{
+                    "id": "$XRAY_CLIENT_ID",
+                    "flow": "xtls-rprx-vision",
+                    "encryption": "none"
+                }]
+            }]
         },
-      },
-    }],
-  };
+        "streamSettings": {
+            "network": "tcp",
+            "security": "reality",
+            "realitySettings": {
+                "fingerprint": "chrome",
+                "serverName": "$XRAY_SITE_NAME",
+                "publicKey": "$XRAY_PUBLIC_KEY",
+                "shortId": "$XRAY_SHORT_ID",
+                "spiderX": ""
+            }
+        }
+    }]
+}`;
 
-  // last_config — JSON-строка с конфигом клиента (XrayClientConfig)
-  const lastConfigObj = {
-    config: JSON.stringify(xrayNativeConfig),
-    hostName: serverHost,
-    port: String(port),
-  };
+// Amnezia JSON для AWG2 (импорт в десктопный AmneziaVPN)
+const AWG2_CLIENT_JSON_TEMPLATE = `{
+    "container": "amnezia-awg2",
+    "host": "$SERVER_IP_ADDRESS",
+    "port": "$AWG_SERVER_PORT",
+    "type": "awg2",
+    "config": {
+        "address": "$WIREGUARD_CLIENT_IP/32",
+        "dns": "$PRIMARY_DNS, $SECONDARY_DNS",
+        "private_key": "$WIREGUARD_CLIENT_PRIVATE_KEY",
+        "public_key": "$WIREGUARD_SERVER_PUBLIC_KEY",
+        "psk": "$WIREGUARD_PSK",
+        "jc": "$JUNK_PACKET_COUNT",
+        "jmin": "$JUNK_PACKET_MIN_SIZE",
+        "jmax": "$JUNK_PACKET_MAX_SIZE",
+        "s1": "$INIT_PACKET_JUNK_SIZE",
+        "s2": "$RESPONSE_PACKET_JUNK_SIZE",
+        "s3": "$COOKIE_REPLY_PACKET_JUNK_SIZE",
+        "s4": "$TRANSPORT_PACKET_JUNK_SIZE",
+        "h1": "$INIT_PACKET_MAGIC_HEADER",
+        "h2": "$RESPONSE_PACKET_MAGIC_HEADER",
+        "h3": "$UNDERLOAD_PACKET_MAGIC_HEADER",
+        "h4": "$TRANSPORT_PACKET_MAGIC_HEADER",
+        "i1": "$SPECIAL_JUNK_1",
+        "i2": "$SPECIAL_JUNK_2",
+        "i3": "$SPECIAL_JUNK_3",
+        "i4": "$SPECIAL_JUNK_4",
+        "i5": "$SPECIAL_JUNK_5"
+    }
+}`;
 
-  // Объект протокола xray
-  const xrayObj = {
-    last_config: JSON.stringify(lastConfigObj),
-    isThirdPartyConfig: true,
-    port: String(port),
-    transport_proto: 'tcp',
-    site: sni,
-  };
-
-  // Container object
-  const containerObj = {
-    container: 'amnezia-xray',
-    xray: xrayObj,
-  };
-
-  const rootObj = {
-    hostName: serverHost,
-    containers: [containerObj],
-    defaultContainer: 'amnezia-xray',
-    dns1: '1.1.1.1',
-    dns2: '8.8.8.8',
-  };
-
-  return JSON.stringify(rootObj);  // Компактный JSON
-}
-
-// ─── Утилиты для QR кодов и vpn:// формата ──────────────────────────────────
-
-/**
- * Кодирует Amnezia JSON в формат, совместимый с QR-сканером десктопного AmneziaVPN.
- *
- * Десктопный клиент при сканировании QR:
- *   1. Base64URL-декодирует текст QR кода
- *   2. Проверяет магический код 1984 (chunked формат)
- *   3. Если не chunked — вызывает extractConfigFromQr(decodedBytes)
- *   4. extractConfigFromQr: JSON parse → если не получилось → qUncompress
- *
- * Qt qCompress формат: [4 байта BE несжатая длина][zlib данные]
- * Мы кодируем в этом формате и Base64URL-кодируем для QR.
- */
-export function encodeAmneziaQrPayload(jsonString) {
-  const jsonBuf = Buffer.from(jsonString, 'utf8');
-
-  // Qt qCompress формат: 4 байта BE длина + zlib
-  const lenBuf = Buffer.alloc(4);
-  lenBuf.writeUInt32BE(jsonBuf.length, 0);
-  const compressed = zlib.deflateSync(jsonBuf, { level: 8 });
-  const qtPayload = Buffer.concat([lenBuf, compressed]);
-
-  // Base64URL кодирование (без padding)
-  return qtPayload.toString('base64url');
-}
-
-/**
- * Кодирует Amnezia JSON в vpn:// формат для импорта через файл/текстовый ключ.
- *
- * vpn:// формат десктопного клиента:
- *   vpn:// + Base64URL(Qt qCompress(JSON))
- */
-export function encodeVpnUrl(jsonString) {
-  const b64 = encodeAmneziaQrPayload(jsonString);
-  return `vpn://${b64}`;
-}
+// Amnezia JSON для WireGuard (импорт в десктопный AmneziaVPN)
+const WG_CLIENT_JSON_TEMPLATE = `{
+    "container": "amnezia-wireguard",
+    "host": "$SERVER_IP_ADDRESS",
+    "port": "$WIREGUARD_SERVER_PORT",
+    "type": "wireguard",
+    "config": {
+        "address": "$WIREGUARD_CLIENT_IP/32",
+        "dns": "$PRIMARY_DNS, $SECONDARY_DNS",
+        "private_key": "$WIREGUARD_CLIENT_PRIVATE_KEY",
+        "public_key": "$WIREGUARD_SERVER_PUBLIC_KEY",
+        "psk": "$WIREGUARD_PSK"
+    }
+}`;
 
 // ─── Хелперы ─────────────────────────────────────────────────────────────────
 
@@ -705,15 +537,9 @@ async function buildImage(server, imageName, buildDir, dockerfile) {
 }
 
 // Подстановка переменных в шаблон
-// ВАЖНО: сортируем по длине ключа по убыванию, чтобы более длинные имена
-// заменялись первыми. Это предотвращает коллизии, когда одно имя является
-// префиксом другого: $WIREGUARD_SERVER_PORT_NUM должен замениться ДО
-// $WIREGUARD_SERVER_PORT, иначе получится <port>_NUM вместо числа.
 function renderTemplate(template, vars) {
-  return Object.entries(vars)
-    .sort((a, b) => b[0].length - a[0].length)
-    .reduce((str, [k, v]) =>
-      str.replaceAll(`$${k}`, String(v)), template);
+  return Object.entries(vars).reduce((str, [k, v]) =>
+    str.replaceAll(`$${k}`, String(v)), template);
 }
 
 // ─── AWG 2.0 ─────────────────────────────────────────────────────────────────
@@ -735,16 +561,15 @@ export async function installAWG2(server, options = {}) {
   const s2   = options.s2   ?? randInt(100, 200);
   const s3   = options.s3   ?? randInt(30, 100);
   const s4   = options.s4   ?? randInt(10, 50);
-  // H и I параметры — это целые числа, не диапазоны
-  const h1   = options.h1   ?? randInt(600000000, 1500000000);
-  const h2   = options.h2   ?? randInt(1500000000, 1900000000);
-  const h3   = options.h3   ?? randInt(1800000000, 2100000000);
-  const h4   = options.h4   ?? randInt(2100000000, 2139000000);
-  const i1   = options.i1   ?? randInt(600000000, 1500000000);
-  const i2   = options.i2   ?? randInt(1500000000, 1900000000);
-  const i3   = options.i3   ?? randInt(600000000, 1500000000);
-  const i4   = options.i4   ?? randInt(1500000000, 1900000000);
-  const i5   = options.i5   ?? randInt(600000000, 1500000000);
+  const h1   = options.h1   ?? randRange(600000000, 1500000000);
+  const h2   = options.h2   ?? randRange(1500000000, 1900000000);
+  const h3   = options.h3   ?? randRange(1800000000, 2100000000);
+  const h4   = options.h4   ?? randRange(2100000000, 2139000000);
+  const i1   = options.i1   ?? randRange(600000000, 1500000000);
+  const i2   = options.i2   ?? randRange(1500000000, 1900000000);
+  const i3   = options.i3   ?? randRange(600000000, 1500000000);
+  const i4   = options.i4   ?? randRange(1500000000, 1900000000);
+  const i5   = options.i5   ?? randRange(600000000, 1500000000);
 
   // 1. Собираем образ если нет
   await buildImage(server, imageName, buildDir, DOCKERFILES.awg2);
@@ -863,31 +688,18 @@ export async function addAWG2Client(server, protocol, clientName) {
   const peerCount = parseInt(peersRes.stdout.trim()) || 0;
   const clientIp = `10.8.1.${peerCount + 2}`;
 
-  // Способ 1 (предпочтительный): добавляем peer в работающий интерфейс через `awg set`
-  // Это не требует перезапуска интерфейса и не вызывает "Protocol not supported"
-  const pskTmp = `/tmp/.awgpsk_${Date.now()}`;
-  await execSudo(server, `echo '${presharedKey}' > ${pskTmp} && docker cp ${pskTmp} ${cn}:${pskTmp} && rm -f ${pskTmp}`);
-  const addPeerRes = await execSudo(server, `docker exec ${cn} sh -c "awg set awg0 peer ${clientPubKey} preshared-key ${pskTmp} allowed-ips ${clientIp}/32; rm -f ${pskTmp}"`);
-
+  // Добавляем peer в живой интерфейс
+  // Пишем PSK прямо внутрь контейнера через docker exec
+  const pskTmp = `/tmp/.psk_${Date.now()}`;
+  const pskB64 = Buffer.from(presharedKey, 'utf8').toString('base64');
+  await execSudo(server, `docker exec ${cn} sh -c "echo '${pskB64}' | base64 -d > ${pskTmp}"`);
+  const addPeerRes = await execSudo(server, `docker exec ${cn} sh -c "awg set awg0 peer ${clientPubKey} preshared-key ${pskTmp} allowed-ips ${clientIp}/32 && rm -f ${pskTmp}"`);
   if (addPeerRes.code !== 0) {
-    // Способ 2 (резервный): перезапуск интерфейса через awg-quick down/up
-    // Сначала дописываем peer в конфиг файл
-    await execSudo(server, `printf '\\n[Peer]\\nPublicKey = ${clientPubKey}\\nPresharedKey = ${presharedKey}\\nAllowedIPs = ${clientIp}/32\\n' >> /opt/amnezia/awg/awg0.conf`);
-    const reloadRes = await execSudo(server, `docker exec ${cn} sh -c "awg-quick down awg0 2>/dev/null; awg-quick up /opt/amnezia/awg/awg0.conf"`);
-    if (reloadRes.code !== 0) {
-      // Способ 3: перезапуск всего контейнера
-      await execSudo(server, `docker restart ${cn}`);
-      // Ждём пока контейнер поднимется
-      await new Promise(r => setTimeout(r, 3000));
-      const statusAfterRestart = await exec(server, `docker inspect --format='{{.State.Status}}' ${cn} 2>/dev/null || echo ''`);
-      if (statusAfterRestart.stdout.trim() !== 'running') {
-        throw new Error(`Failed to add AWG2 peer and restart container. awg set error: ${addPeerRes.stderr}; awg-quick error: ${reloadRes.stderr}`);
-      }
-    }
-  } else {
-    // awg set прошёл успешно — дописываем peer в конфиг файл для сохранения
-    await execSudo(server, `printf '\\n[Peer]\\nPublicKey = ${clientPubKey}\\nPresharedKey = ${presharedKey}\\nAllowedIPs = ${clientIp}/32\\n' >> /opt/amnezia/awg/awg0.conf`);
+    throw new Error(`Failed to add AWG2 peer: ${addPeerRes.stderr || addPeerRes.stdout}`);
   }
+
+  // Дописываем peer в серверный конфиг
+  await execSudo(server, `printf '\\n[Peer]\\nPublicKey = ${clientPubKey}\\nPresharedKey = ${presharedKey}\\nAllowedIPs = ${clientIp}/32\\n' >> /opt/amnezia/awg/awg0.conf`);
 
   // Общие параметры шаблона
   const templateVars = {
@@ -902,56 +714,24 @@ export async function addAWG2Client(server, protocol, clientName) {
     RESPONSE_PACKET_JUNK_SIZE: c.s2 ?? randInt(100, 200),
     COOKIE_REPLY_PACKET_JUNK_SIZE: c.s3 ?? randInt(30, 100),
     TRANSPORT_PACKET_JUNK_SIZE: c.s4 ?? randInt(10, 50),
-    INIT_PACKET_MAGIC_HEADER: c.h1 ?? randInt(600000000, 1500000000),
-    RESPONSE_PACKET_MAGIC_HEADER: c.h2 ?? randInt(1500000000, 1900000000),
-    UNDERLOAD_PACKET_MAGIC_HEADER: c.h3 ?? randInt(1800000000, 2100000000),
-    TRANSPORT_PACKET_MAGIC_HEADER: c.h4 ?? randInt(2100000000, 2139000000),
-    SPECIAL_JUNK_1: c.i1 ?? randInt(600000000, 1500000000),
-    SPECIAL_JUNK_2: c.i2 ?? randInt(1500000000, 1900000000),
-    SPECIAL_JUNK_3: c.i3 ?? randInt(600000000, 1500000000),
-    SPECIAL_JUNK_4: c.i4 ?? randInt(1500000000, 1900000000),
-    SPECIAL_JUNK_5: c.i5 ?? randInt(600000000, 1500000000),
+    INIT_PACKET_MAGIC_HEADER: c.h1 ?? randRange(600000000, 1500000000),
+    RESPONSE_PACKET_MAGIC_HEADER: c.h2 ?? randRange(1500000000, 1900000000),
+    UNDERLOAD_PACKET_MAGIC_HEADER: c.h3 ?? randRange(1800000000, 2100000000),
+    TRANSPORT_PACKET_MAGIC_HEADER: c.h4 ?? randRange(2100000000, 2139000000),
+    SPECIAL_JUNK_1: c.i1 ?? randRange(600000000, 1500000000),
+    SPECIAL_JUNK_2: c.i2 ?? randRange(1500000000, 1900000000),
+    SPECIAL_JUNK_3: c.i3 ?? randRange(600000000, 1500000000),
+    SPECIAL_JUNK_4: c.i4 ?? randRange(1500000000, 1900000000),
+    SPECIAL_JUNK_5: c.i5 ?? randRange(600000000, 1500000000),
     WIREGUARD_SERVER_PUBLIC_KEY: c.serverPubKey,
     WIREGUARD_PSK: presharedKey,
     SERVER_IP_ADDRESS: server.host,
     AWG_SERVER_PORT: c.port,
   };
 
-  // Генерируем .conf (стандартный WireGuard формат)
+  // Генерируем .conf для WireGuard клиентов и Amnezia JSON для десктопного приложения
   const clientConf = renderTemplate(AWG2_CLIENT_TEMPLATE, templateVars);
-
-  // Генерируем Amnezia JSON (формат десктопного клиента AmneziaVPN)
-  const jcVal = c.jc ?? randInt(3, 10);
-  const jminVal = c.jmin ?? randInt(10, 50);
-  const jmaxVal = c.jmax ?? randInt(200, 1000);
-  const s1Val = c.s1 ?? randInt(100, 200);
-  const s2Val = c.s2 ?? randInt(100, 200);
-  const s3Val = c.s3 ?? randInt(30, 100);
-  const s4Val = c.s4 ?? randInt(10, 50);
-  const h1Val = parseInt(String(c.h1 ?? randInt(600000000, 1500000000))) || randInt(600000000, 1500000000);
-  const h2Val = parseInt(String(c.h2 ?? randInt(1500000000, 1900000000))) || randInt(1500000000, 1900000000);
-  const h3Val = parseInt(String(c.h3 ?? randInt(1800000000, 2100000000))) || randInt(1800000000, 2100000000);
-  const h4Val = parseInt(String(c.h4 ?? randInt(2100000000, 2139000000))) || randInt(2100000000, 2139000000);
-  const i1Val = parseInt(String(c.i1 ?? randInt(600000000, 1500000000))) || randInt(600000000, 1500000000);
-  const i2Val = parseInt(String(c.i2 ?? randInt(1500000000, 1900000000))) || randInt(1500000000, 1900000000);
-  const i3Val = parseInt(String(c.i3 ?? randInt(600000000, 1500000000))) || randInt(600000000, 1500000000);
-  const i4Val = parseInt(String(c.i4 ?? randInt(1500000000, 1900000000))) || randInt(1500000000, 1900000000);
-  const i5Val = parseInt(String(c.i5 ?? randInt(600000000, 1500000000))) || randInt(600000000, 1500000000);
-
-  const configJson = buildAmneziaAwgJson({
-    serverHost: server.host,
-    port: c.port,
-    clientIp,
-    clientPrivKey,
-    clientPubKey,
-    serverPubKey: c.serverPubKey,
-    presharedKey,
-    nativeConfig: clientConf,
-    jc: jcVal, jmin: jminVal, jmax: jmaxVal,
-    s1: s1Val, s2: s2Val, s3: s3Val, s4: s4Val,
-    h1: h1Val, h2: h2Val, h3: h3Val, h4: h4Val,
-    i1: i1Val, i2: i2Val, i3: i3Val, i4: i4Val, i5: i5Val,
-  });
+  const configJson = renderTemplate(AWG2_CLIENT_JSON_TEMPLATE, templateVars);
 
   return { config: clientConf, configJson, type: 'awg2' };
 }
@@ -1075,20 +855,20 @@ export async function addXrayClient(server, protocol, clientName) {
     throw new Error('Xray protocol config is incomplete (missing port/sni/publicKey/shortId). Reinstall the protocol.');
   }
 
-  // VLESS URI для FLClash / v2rayNG
+  // VLESS URI для AmneziaVPN / FLClash
   const vlessUrl = `vless://${clientId}@${server.host}:${port}?type=tcp&security=reality&pbk=${pubKey}&fp=chrome&sni=${sni}&sid=${shortId}&flow=xtls-rprx-vision#${safeName}`;
 
-  // Amnezia JSON (формат десктопного клиента AmneziaVPN)
-  const configJson = buildAmneziaXrayJson({
-    serverHost: server.host,
-    port,
-    clientId,
-    sni,
-    publicKey: pubKey,
-    shortId,
+  // JSON конфиг (формат Amnezia)
+  const clientJson = renderTemplate(XRAY_CLIENT_TEMPLATE, {
+    SERVER_IP_ADDRESS: server.host,
+    XRAY_SERVER_PORT: port,
+    XRAY_CLIENT_ID: clientId,
+    XRAY_SITE_NAME: sni,
+    XRAY_PUBLIC_KEY: pubKey,
+    XRAY_SHORT_ID: shortId,
   });
 
-  return { config: vlessUrl, configJson, type: 'xray' };
+  return { config: vlessUrl, configJson: clientJson, type: 'xray' };
 }
 
 // ─── WireGuard classic ────────────────────────────────────────────────────────
@@ -1189,12 +969,13 @@ export async function addWireGuardClient(server, protocol, clientName) {
   const peerCount = parseInt(peersRes.stdout.trim()) || 0;
   const clientIp = `10.8.1.${peerCount + 2}`;
 
-  // Копируем psk во временный файл внутри контейнера
+  // Пишем PSK прямо внутрь контейнера через docker exec
   const pskTmp = `/tmp/.psk_${Date.now()}`;
-  await execSudo(server, `echo '${presharedKey}' > ${pskTmp} && docker cp ${pskTmp} ${cn}:${pskTmp} && rm -f ${pskTmp}`);
+  const pskB64 = Buffer.from(presharedKey, 'utf8').toString('base64');
+  await execSudo(server, `docker exec ${cn} sh -c "echo '${pskB64}' | base64 -d > ${pskTmp}"`);
   const addPeerRes = await execSudo(server, `docker exec ${cn} sh -c "wg set wg0 peer ${clientPubKey} preshared-key ${pskTmp} allowed-ips ${clientIp}/32 && rm -f ${pskTmp}"`);
   if (addPeerRes.code !== 0) {
-    throw new Error(`Failed to add WireGuard peer: ${addPeerRes.stderr}`);
+    throw new Error(`Failed to add WireGuard peer: ${addPeerRes.stderr || addPeerRes.stdout}`);
   }
 
   await execSudo(server, `printf '\\n[Peer]\\nPublicKey = ${clientPubKey}\\nPresharedKey = ${presharedKey}\\nAllowedIPs = ${clientIp}/32\\n' >> /opt/amnezia/wireguard/wg0.conf`);
@@ -1211,18 +992,7 @@ export async function addWireGuardClient(server, protocol, clientName) {
   };
 
   const clientConf = renderTemplate(WG_CLIENT_TEMPLATE, templateVars);
-
-  // Amnezia JSON (формат десктопного клиента AmneziaVPN)
-  const configJson = buildAmneziaWireGuardJson({
-    serverHost: server.host,
-    port: c.port,
-    clientIp,
-    clientPrivKey,
-    clientPubKey,
-    serverPubKey: c.serverPubKey,
-    presharedKey,
-    nativeConfig: clientConf,
-  });
+  const configJson = renderTemplate(WG_CLIENT_JSON_TEMPLATE, templateVars);
 
   return { config: clientConf, configJson, type: 'wireguard' };
 }
@@ -1261,6 +1031,110 @@ export async function ensureDocker(server) {
   return true;
 }
 
+// ─── Сканирование уже установленных протоколов Amnezia ────────────────────────
+// Проверяет наличие контейнеров amnezia-awg2, amnezia-xray, amnezia-wireguard
+// и считывает их конфигурацию из /opt/amnezia/<proto>/*.key и конфигов
+export async function scanExistingProtocols(server) {
+  const found = [];
+
+  // Проверяем каждый известный контейнер
+  const candidates = [
+    { type: 'awg2',      containerName: 'amnezia-awg2',      confDir: '/opt/amnezia/awg' },
+    { type: 'wireguard', containerName: 'amnezia-wireguard',  confDir: '/opt/amnezia/wireguard' },
+    { type: 'xray',      containerName: 'amnezia-xray',       confDir: '/opt/amnezia/xray' },
+  ];
+
+  for (const c of candidates) {
+    const statusRes = await exec(server, `docker inspect --format='{{.State.Status}}' ${c.containerName} 2>/dev/null || echo 'not_found'`);
+    const status = statusRes.stdout.trim();
+    if (status === 'not_found') continue;
+
+    let config = {};
+    let port = null;
+
+    if (c.type === 'awg2') {
+      const pubKey  = await readRemoteFile(server, `${c.confDir}/wireguard_server_public_key.key`);
+      const confRaw = await readRemoteFile(server, `${c.confDir}/awg0.conf`);
+      if (!pubKey && !confRaw) continue;
+      // Парсим порт из конфига
+      const portMatch = confRaw.match(/ListenPort\s*=\s*(\d+)/);
+      port = portMatch ? parseInt(portMatch[1]) : null;
+      // Парсим параметры обфускации
+      const getConf = (key) => { const m = confRaw.match(new RegExp(`^${key}\\s*=\\s*(.+)$`, 'm')); return m ? m[1].trim() : null; };
+      config = {
+        port,
+        subnetIp: '10.8.1.0', subnetCidr: '24',
+        serverPubKey: pubKey,
+        jc: getConf('Jc'), jmin: getConf('Jmin'), jmax: getConf('Jmax'),
+        s1: getConf('S1'), s2: getConf('S2'), s3: getConf('S3'), s4: getConf('S4'),
+        h1: getConf('H1'), h2: getConf('H2'), h3: getConf('H3'), h4: getConf('H4'),
+        i1: getConf('I1') || '', i2: getConf('I2') || '', i3: getConf('I3') || '',
+        i4: getConf('I4') || '', i5: getConf('I5') || '',
+      };
+    } else if (c.type === 'wireguard') {
+      const pubKey  = await readRemoteFile(server, `${c.confDir}/wireguard_server_public_key.key`);
+      const confRaw = await readRemoteFile(server, `${c.confDir}/wg0.conf`);
+      if (!pubKey && !confRaw) continue;
+      const portMatch = confRaw.match(/ListenPort\s*=\s*(\d+)/);
+      port = portMatch ? parseInt(portMatch[1]) : null;
+      config = { port, subnetIp: '10.8.1.0', subnetCidr: '24', serverPubKey: pubKey };
+    } else if (c.type === 'xray') {
+      let serverJson = null;
+      try {
+        const confRaw = await readRemoteFile(server, `${c.confDir}/server.json`);
+        serverJson = JSON.parse(confRaw);
+      } catch { continue; }
+      const pubKey  = await readRemoteFile(server, `${c.confDir}/xray_public.key`);
+      const shortId = await readRemoteFile(server, `${c.confDir}/xray_short_id.key`);
+      const uuid    = await readRemoteFile(server, `${c.confDir}/xray_uuid.key`);
+      port = serverJson?.inbounds?.[0]?.port || null;
+      const sni = serverJson?.inbounds?.[0]?.streamSettings?.realitySettings?.dest?.replace(/:443$/, '') || '';
+      config = { port, sni, publicKey: pubKey, shortId, firstUuid: uuid };
+    }
+
+    // Сканируем существующих пиров (клиентов) из конфига
+    let existingPeers = [];
+    if (c.type === 'awg2' || c.type === 'wireguard') {
+      const confFile = c.type === 'awg2' ? `${c.confDir}/awg0.conf` : `${c.confDir}/wg0.conf`;
+      const psk = await readRemoteFile(server, `${c.confDir}/wireguard_psk.key`);
+      const confRaw = await readRemoteFile(server, confFile);
+      // Парсим все [Peer] блоки
+      const peerBlocks = confRaw.split('[Peer]').slice(1);
+      for (let i = 0; i < peerBlocks.length; i++) {
+        const block = peerBlocks[i];
+        const pubKeyMatch = block.match(/PublicKey\s*=\s*(.+)/);
+        const allowedIpsMatch = block.match(/AllowedIPs\s*=\s*(.+)/);
+        if (pubKeyMatch) {
+          existingPeers.push({
+            index: i,
+            pubKey: pubKeyMatch[1].trim(),
+            allowedIps: allowedIpsMatch ? allowedIpsMatch[1].trim() : '',
+          });
+        }
+      }
+    } else if (c.type === 'xray') {
+      // Для Xray — список клиентов из server.json
+      try {
+        const confRaw = await readRemoteFile(server, `${c.confDir}/server.json`);
+        const sj = JSON.parse(confRaw);
+        const clients = sj?.inbounds?.[0]?.settings?.clients || [];
+        existingPeers = clients.map((cl, i) => ({ index: i, uuid: cl.id }));
+      } catch {}
+    }
+
+    found.push({
+      type: c.type,
+      containerName: c.containerName,
+      status,
+      port,
+      config,
+      existingPeers,
+    });
+  }
+
+  return found;
+}
+
 // ─── UI описания ──────────────────────────────────────────────────────────────
 
 export const PROTOCOLS = {
@@ -1268,181 +1142,3 @@ export const PROTOCOLS = {
   xray:      { name: 'Xray VLESS Reality', description: 'VLESS + Reality — имитирует TLS трафик',  icon: '⚡' },
   wireguard: { name: 'WireGuard',          description: 'Классический WireGuard без обфускации',   icon: '🔒' },
 };
-
-// ─── Сканирование и импорт существующих протоколов ─────────────────────────────
-
-// Маппинг имён контейнеров Amnezia на типы протоколов
-const CONTAINER_TYPE_MAP = {
-  'amnezia-awg2': 'awg2',
-  'amnezia-wireguard': 'wireguard',
-  'amnezia-xray': 'xray',
-};
-
-/**
- * Сканирует сервер на наличие установленных протоколов AmneziaVPN.
- * Проверяет:
- * 1. Запущенные Docker контейнеры с именами amnezia-*
- * 2. Конфигурационные файлы в /opt/amnezia/
- * 3. Собранные Docker образы amnezia-*
- */
-export async function scanExistingProtocols(server) {
-  const found = [];
-
-  // 1. Проверяем запущенные и остановленные контейнеры amnezia-*
-  const containersRes = await exec(server, `docker ps -a --format '{{.Names}}\t{{.Status}}\t{{.Image}}\t{{.Ports}}' 2>/dev/null || true`);
-  if (containersRes.stdout.trim()) {
-    const lines = containersRes.stdout.trim().split('\n');
-    for (const line of lines) {
-      const [name, status, image, ports] = line.split('\t').map(s => (s || '').trim());
-      const type = CONTAINER_TYPE_MAP[name];
-      if (!type) continue;
-
-      // Извлекаем порт из строки портов (например "0.0.0.0:51820->51820/udp")
-      let port = null;
-      if (ports) {
-        const portMatch = ports.match(/:(\d+)/);
-        if (portMatch) port = parseInt(portMatch[1]);
-      }
-
-      found.push({
-        type,
-        containerName: name,
-        status: status.includes('Up') ? 'running' : 'stopped',
-        image,
-        port,
-        source: 'container',
-      });
-    }
-  }
-
-  // 2. Проверяем конфигурационные директории /opt/amnezia/<proto>/
-  // Это обнаружит протоколы, чьи контейнеры были удалены но конфиги остались
-  const configDirs = [
-    { path: '/opt/amnezia/awg', type: 'awg2', container: 'amnezia-awg2', configFile: 'awg0.conf' },
-    { path: '/opt/amnezia/wireguard', type: 'wireguard', container: 'amnezia-wireguard', configFile: 'wg0.conf' },
-    { path: '/opt/amnezia/xray', type: 'xray', container: 'amnezia-xray', configFile: 'server.json' },
-  ];
-
-  for (const dir of configDirs) {
-    // Проверяем существование конфига
-    const checkRes = await execSudo(server, `test -f ${dir.path}/${dir.configFile} && echo 'exists' || echo ''`);
-    if (checkRes.stdout.trim() !== 'exists') continue;
-
-    // Проверяем что этот контейнер ещё не найден в шаге 1
-    const alreadyFound = found.some(f => f.containerName === dir.container);
-    if (alreadyFound) continue;
-
-    // Определяем порт из конфига
-    let port = null;
-    if (dir.type === 'awg2') {
-      const portRes = await execSudo(server, `grep -E '^ListenPort' ${dir.path}/awg0.conf 2>/dev/null || true`);
-      const m = portRes.stdout.match(/ListenPort\s*=\s*(\d+)/);
-      if (m) port = parseInt(m[1]);
-    } else if (dir.type === 'wireguard') {
-      const portRes = await execSudo(server, `grep -E '^ListenPort' ${dir.path}/wg0.conf 2>/dev/null || true`);
-      const m = portRes.stdout.match(/ListenPort\s*=\s*(\d+)/);
-      if (m) port = parseInt(m[1]);
-    } else if (dir.type === 'xray') {
-      const portRes = await execSudo(server, `grep -E '"port"' ${dir.path}/server.json 2>/dev/null | head -1 || true`);
-      const m = portRes.stdout.match(/"port"\s*:\s*(\d+)/);
-      if (m) port = parseInt(m[1]);
-    }
-
-    found.push({
-      type: dir.type,
-      containerName: dir.container,
-      status: 'config_only', // Конфиг есть, контейнера нет
-      port,
-      source: 'config',
-    });
-  }
-
-  return found;
-}
-
-/**
- * Импортирует существующий протокол Amnezia с сервера в панель.
- * Читает конфигурацию из файлов на VPS и создаёт запись в БД.
- */
-export async function importExistingProtocol(server, type, containerName) {
-  let port = null;
-  let config = {};
-
-  if (type === 'awg2') {
-    // Читаем порт из конфига
-    const portRes = await execSudo(server, `grep -E '^ListenPort' /opt/amnezia/awg/awg0.conf 2>/dev/null || true`);
-    const portMatch = portRes.stdout.match(/ListenPort\s*=\s*(\d+)/);
-    port = portMatch ? parseInt(portMatch[1]) : null;
-
-    // Читаем серверный публичный ключ
-    const serverPubKey = await readRemoteFile(server, '/opt/amnezia/awg/wireguard_server_public_key.key');
-
-    // Читаем параметры обфускации из awg0.conf
-    const confContent = await readRemoteFile(server, '/opt/amnezia/awg/awg0.conf');
-    const getConfValue = (key) => {
-      const m = confContent.match(new RegExp(`^${key}\\s*=\\s*(.+)$`, 'm'));
-      return m ? m[1].trim() : null;
-    };
-
-    config = {
-      port: port || 51820,
-      subnetIp: '10.8.1.0',
-      subnetCidr: '24',
-      serverPubKey: serverPubKey || '',
-      jc: parseInt(getConfValue('Jc')) || 3,
-      jmin: parseInt(getConfValue('Jmin')) || 10,
-      jmax: parseInt(getConfValue('Jmax')) || 50,
-      s1: parseInt(getConfValue('S1')) || 100,
-      s2: parseInt(getConfValue('S2')) || 100,
-      s3: parseInt(getConfValue('S3')) || 30,
-      s4: parseInt(getConfValue('S4')) || 10,
-      h1: getConfValue('H1') || '0',
-      h2: getConfValue('H2') || '0',
-      h3: getConfValue('H3') || '0',
-      h4: getConfValue('H4') || '0',
-    };
-
-    if (!port) port = config.port;
-
-  } else if (type === 'wireguard') {
-    // Читаем порт из конфига
-    const portRes = await execSudo(server, `grep -E '^ListenPort' /opt/amnezia/wireguard/wg0.conf 2>/dev/null || true`);
-    const portMatch = portRes.stdout.match(/ListenPort\s*=\s*(\d+)/);
-    port = portMatch ? parseInt(portMatch[1]) : 51820;
-
-    // Читаем серверный публичный ключ
-    const serverPubKey = await readRemoteFile(server, '/opt/amnezia/wireguard/wireguard_server_public_key.key');
-
-    config = {
-      port,
-      subnetIp: '10.8.1.0',
-      subnetCidr: '24',
-      serverPubKey: serverPubKey || '',
-    };
-
-  } else if (type === 'xray') {
-    // Читаем порт из server.json
-    const confRes = await execSudo(server, `cat /opt/amnezia/xray/server.json 2>/dev/null || true`);
-    if (confRes.stdout.trim()) {
-      try {
-        const serverJson = JSON.parse(confRes.stdout);
-        port = serverJson.inbounds?.[0]?.port || 443;
-        config = {
-          port,
-          sni: serverJson.inbounds?.[0]?.streamSettings?.realitySettings?.serverNames?.[0] || 'www.googletagmanager.com',
-          publicKey: await readRemoteFile(server, '/opt/amnezia/xray/xray_public.key') || '',
-          shortId: await readRemoteFile(server, '/opt/amnezia/xray/xray_short_id.key') || '',
-          firstUuid: await readRemoteFile(server, '/opt/amnezia/xray/xray_uuid.key') || '',
-        };
-      } catch (e) {
-        throw new Error(`Failed to parse Xray server.json: ${e.message}`);
-      }
-    } else {
-      throw new Error('Xray server.json not found on the server');
-    }
-  } else {
-    throw new Error(`Unknown protocol type: ${type}`);
-  }
-
-  return { containerName, port, config };
-}
