@@ -37,10 +37,10 @@ function buildAmneziaExportJson(client, protocol, server) {
 
   if (protocol.type === 'awg2') {
     const clientPrivKey = getConf('PrivateKey');
+    const clientPubKey  = getConf('PublicKey');
     const clientAddr    = getConf('Address');
     const clientIp      = clientAddr.split('/')[0];
-    const serverPubKey  = getConf('PublicKey');
-    const presharedKey  = getConf('PresharedKey');
+    const serverPubKey  = getConf('PublicKey'); const presharedKey  = getConf('PresharedKey');
     const endpoint      = getConf('Endpoint');
     const port          = endpoint.split(':').pop();
     const hostName      = server?.host || endpoint.split(':')[0] || '';
@@ -57,7 +57,7 @@ function buildAmneziaExportJson(client, protocol, server) {
       clientId: clientPrivKey,
       client_ip: clientIp,
       client_priv_key: clientPrivKey,
-      client_pub_key: clientPrivKey,
+      client_pub_key: clientPubKey,
       config: conf,
       hostName,
       mtu: '1376',
@@ -82,6 +82,7 @@ function buildAmneziaExportJson(client, protocol, server) {
 
   } else if (protocol.type === 'wireguard') {
     const clientPrivKey = getConf('PrivateKey');
+    const clientPubKey  = getConf('PublicKey');
     const clientAddr    = getConf('Address');
     const clientIp      = clientAddr.split('/')[0];
     const serverPubKey  = getConf('PublicKey');
@@ -95,7 +96,7 @@ function buildAmneziaExportJson(client, protocol, server) {
       clientId: clientPrivKey,
       client_ip: clientIp,
       client_priv_key: clientPrivKey,
-      client_pub_key: clientPrivKey,
+      client_pub_key: clientPubKey,
       config: conf,
       hostName,
       mtu: '1420',
