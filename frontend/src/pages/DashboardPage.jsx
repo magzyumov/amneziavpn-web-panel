@@ -6,8 +6,15 @@ function AddServerModal({ onClose, onAdded }) {
   const [form, setForm] = useState({ name: '', host: '', port: 22, username: 'root', auth_type: 'password', password: '', private_key: '' });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  const [step, setStep] = useState('form'); // 'form' | 'scanning'
   const navigate = useNavigate();
+
+  // Автоопределение IP текущего сервера (откуда открыта панель)
+  useEffect(() => {
+    const detectedHost = window.location.hostname;
+    if (detectedHost && detectedHost !== 'localhost' && detectedHost !== '127.0.0.1') {
+      setForm(f => ({ ...f, host: detectedHost }));
+    }
+  }, []);
 
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
 

@@ -1,12 +1,121 @@
 import { Router } from 'express';
 import { v4 as uuidv4 } from 'uuid';
 import QRCode from 'qrcode';
+import jwt from 'jsonwebtoken';
 import { getDb, query, queryOne, run } from '../services/db.js';
-import { authMiddleware } from '../middleware/auth.js';
+import { authMiddleware, JWT_SECRET } from '../middleware/auth.js';
 import { addAWG2Client, addXrayClient, addWireGuardClient } from '../services/protocols.js';
 import { createSubscription, getVpsHost } from '../services/subscription.js';
 
 const router = Router();
+
+// ─── Маршруты, доступные по токену в query-параметре (для window.open / QR) ────
+// Должны быть ДО router.use(authMiddleware) !
+
+function verifyQueryToken(req, res) {
+  const token = req.query.token
+    || (req.headers.authorization?.startsWith('Bearer ') ? req.headers.authorization.slice(7) : null);
+  if (!token) { res.status(401).json({ error: 'Unauthorized' }); return null; }
+  try {
+    return jwt.verify(token, JWT_SECRET);
+  } catch {
+    res.status(401).json({ error: 'Invalid token' }); return null;
+  }
+}
+
+// Сборка Amnezia-совместимого JSON для импорта в приложение AmneziaVPN
+// Официальный формат: https://github.com/amnezia-vpn/amnezia-client
+function buildAmneziaExportJson(client, protocol, server) {
+  const parts = client.config.split('\n---AMNEZIA_JSON---\n');
+  const conf = parts[0]; // .conf текст
+
+  let containerData = {};
+
+  if (protocol.type === 'awg2' || protocol.type === 'wireguard') {
+    // Парсим .conf файл
+    const get = (key) => {
+      const m = conf.match(new RegExp(`^${key}\\s*=\\s*(.+)$`, 'mi'));
+      return m ? m[1].trim() : '';
+    };
+
+    if (protocol.type === 'awg2') {
+      containerData = {
+        container: 'amnezia-awg',
+        awg: {
+          last_config: conf,
+          Jc: get('Jc'), Jmin: get('Jmin'), Jmax: get('Jmax'),
+          S1: get('S1'), S2: get('S2'), S3: get('S3'), S4: get('S4'),
+          H1: get('H1'), H2: get('H2'), H3: get('H3'), H4: get('H4'),
+        },
+      };
+    } else {
+      containerData = {
+        container: 'amnezia-wireguard',
+        wireguard: {
+          last_config: conf,
+        },
+      };
+    }
+  } else if (protocol.type === 'xray') {
+    // Для Xray — берём клиентский JSON конфиг
+    let xrayCfg = {};
+    if (parts[1]) {
+      try { xrayCfg = JSON.parse(parts[1]); } catch {}
+    }
+    containerData = {
+      container: 'amnezia-xray',
+      xray: {
+        last_config: JSON.stringify(xrayCfg),
+      },
+    };
+  }
+
+  // Официальная обёртка Amnezia
+  const exportObj = {
+    containers: [containerData],
+    defaultContainer: containerData.container,
+    description: client.name,
+    dns1: '1.1.1.1',
+    dns2: '8.8.8.8',
+    hostName: server?.host || '',
+    port: protocol.port || 0,
+    splitTunnelSites: [],
+    splitTunnelType: 0,
+  };
+
+  return JSON.stringify(exportObj);
+}
+
+// GET /api/clients/:id/config — скачать .conf (WireGuard / AWG)
+router.get('/:id/config', async (req, res) => {
+  if (!verifyQueryToken(req, res)) return;
+  await getDb();
+  const client = queryOne('SELECT * FROM clients WHERE id = ?', [req.params.id]);
+  if (!client) return res.status(404).json({ error: 'Not found' });
+  const protocol = queryOne('SELECT type FROM protocols WHERE id = ?', [client.protocol_id]);
+  const ext = protocol?.type === 'xray' ? 'txt' : 'conf';
+  const config = client.config.split('\n---AMNEZIA_JSON---\n')[0];
+  res.setHeader('Content-Disposition', `attachment; filename="${client.name}.${ext}"`);
+  res.setHeader('Content-Type', 'text/plain');
+  res.send(config);
+});
+
+// GET /api/clients/:id/config-amnezia — скачать Amnezia JSON (правильный формат)
+router.get('/:id/config-amnezia', async (req, res) => {
+  if (!verifyQueryToken(req, res)) return;
+  await getDb();
+  const client = queryOne('SELECT * FROM clients WHERE id = ?', [req.params.id]);
+  if (!client) return res.status(404).json({ error: 'Not found' });
+  const protocol = queryOne('SELECT type FROM protocols WHERE id = ?', [client.protocol_id]);
+  const server = queryOne('SELECT * FROM servers WHERE id = ?', [client.server_id]);
+
+  const amneziaJson = buildAmneziaExportJson(client, protocol, server);
+  res.setHeader('Content-Disposition', `attachment; filename="${client.name}_amnezia.json"`);
+  res.setHeader('Content-Type', 'application/json');
+  res.send(amneziaJson);
+});
+
+// ─── Остальные маршруты требуют Bearer токена ────────────────────────────────
 router.use(authMiddleware);
 
 router.get('/protocol/:protocolId', async (req, res) => {
@@ -63,47 +172,23 @@ router.post('/', async (req, res) => {
   res.json({ id, name: safeName, config: result.config, type: result.type, subscriptionSlug });
 });
 
-router.get('/:id/config', async (req, res) => {
-  await getDb();
-  // Support token via query param for direct download links (window.open doesn't send Bearer header)
-  const token = req.query.token || (req.headers.authorization?.startsWith('Bearer ') ? req.headers.authorization.slice(7) : null);
-  if (!token) return res.status(401).json({ error: 'Unauthorized' });
-  try {
-    const jwt = await import('jsonwebtoken');
-    const { JWT_SECRET } = await import('../middleware/auth.js');
-    jwt.default.verify(token, JWT_SECRET);
-  } catch {
-    return res.status(401).json({ error: 'Invalid token' });
-  }
-
-  const client = queryOne('SELECT * FROM clients WHERE id = ?', [req.params.id]);
-  if (!client) return res.status(404).json({ error: 'Not found' });
-  const protocol = queryOne('SELECT type FROM protocols WHERE id = ?', [client.protocol_id]);
-  const ext = protocol?.type === 'xray' ? 'txt' : 'conf';
-  // Отдаём только основной конфиг (vless URI или .conf), без JSON части
-  const config = client.config.split('\n---AMNEZIA_JSON---\n')[0];
-  res.setHeader('Content-Disposition', `attachment; filename="${client.name}.${ext}"`);
-  res.setHeader('Content-Type', 'text/plain');
-  res.send(config);
-});
-
 router.get('/:id/qr', async (req, res) => {
   await getDb();
   const client = queryOne('SELECT * FROM clients WHERE id = ?', [req.params.id]);
   if (!client) return res.status(404).json({ error: 'Not found' });
   const protocol = queryOne('SELECT type FROM protocols WHERE id = ?', [client.protocol_id]);
+  const server = queryOne('SELECT * FROM servers WHERE id = ?', [client.server_id]);
 
   let configForQr;
   if (protocol?.type === 'xray') {
-    // Для Xray: VLESS URI (первая часть до разделителя) — совместимо с FLClash/v2rayNG
+    // Для Xray: VLESS URI — совместимо с FLClash/v2rayNG
     configForQr = client.config.split('\n---AMNEZIA_JSON---\n')[0];
   } else {
-    // Для AWG2/WireGuard: Amnezia JSON (вторая часть после разделителя) — нужно для импорта в AmneziaVPN
-    const parts = client.config.split('\n---AMNEZIA_JSON---\n');
-    configForQr = parts[1] || parts[0];
+    // Для AWG2/WireGuard: используем правильный Amnezia JSON формат с containers[]
+    configForQr = buildAmneziaExportJson(client, protocol, server);
   }
 
-  const qr = await QRCode.toDataURL(configForQr, { width: 300, margin: 2 });
+  const qr = await QRCode.toDataURL(configForQr, { width: 400, margin: 2, errorCorrectionLevel: 'L' });
   res.json({ qr });
 });
 
@@ -111,46 +196,20 @@ router.get('/:id/config-text', async (req, res) => {
   await getDb();
   const client = queryOne('SELECT * FROM clients WHERE id = ?', [req.params.id]);
   if (!client) return res.status(404).json({ error: 'Not found' });
-  // Возвращаем только vless URI (до разделителя)
   const config = client.config.split('\n---AMNEZIA_JSON---\n')[0];
   res.json({ config, name: client.name });
-});
-
-// GET /api/clients/:id/config-amnezia — JSON конфиг для AmneziaVPN
-router.get('/:id/config-amnezia', async (req, res) => {
-  await getDb();
-  // Support token via query param for direct download links
-  const token = req.query.token || (req.headers.authorization?.startsWith('Bearer ') ? req.headers.authorization.slice(7) : null);
-  if (!token) return res.status(401).json({ error: 'Unauthorized' });
-  try {
-    const jwt = await import('jsonwebtoken');
-    const { JWT_SECRET } = await import('../middleware/auth.js');
-    jwt.default.verify(token, JWT_SECRET);
-  } catch {
-    return res.status(401).json({ error: 'Invalid token' });
-  }
-
-  const client = queryOne('SELECT * FROM clients WHERE id = ?', [req.params.id]);
-  if (!client) return res.status(404).json({ error: 'Not found' });
-  const parts = client.config.split('\n---AMNEZIA_JSON---\n');
-  if (parts.length < 2) return res.status(404).json({ error: 'No Amnezia JSON config' });
-  res.setHeader('Content-Disposition', `attachment; filename="${client.name}_amnezia.json"`);
-  res.setHeader('Content-Type', 'application/json');
-  res.send(parts[1]);
 });
 
 router.delete('/:id', async (req, res) => {
   await getDb();
   run('DELETE FROM clients WHERE id = ?', [req.params.id]);
-  // Подписка удалится автоматически через CASCADE
   res.json({ ok: true });
 });
 
-// GET /api/clients/:id/subscription — получить slug подписки клиента
+// GET /api/clients/:id/subscription
 router.get('/:id/subscription', async (req, res) => {
   await getDb();
-  const { query: dbQuery } = await import('../services/db.js');
-  const subs = dbQuery('SELECT slug FROM subscriptions WHERE client_id = ?', [req.params.id]);
+  const subs = query('SELECT slug FROM subscriptions WHERE client_id = ?', [req.params.id]);
   if (!subs.length) return res.json({ slug: null });
   res.json({ slug: subs[0].slug });
 });
