@@ -85,14 +85,19 @@ function buildAmneziaExportJson(client, protocol, server) {
   return JSON.stringify(exportObj);
 }
 
-// Генерация vpn:// URI — официальный Amnezia deep-link формат
-// vpn://AAA + base64url(zlib_deflate(json_utf8))
+// Генерация vpn:// URI — официальный Amnezia формат
+// Формат: "vpn://" + base64( uint32BE(uncompressedSize) + zlib_deflate(json_utf8) )
+// Это Qt qCompress формат — первые 4 байта = размер несжатых данных (big-endian)
+// Qt fromBase64 использует стандартный base64 (не url-safe, без замены +/-)
 function buildVpnUriSync(amneziaJson) {
-  const jsonBuf    = Buffer.from(amneziaJson, 'utf8');
+  const jsonBuf = Buffer.from(amneziaJson, 'utf8');
+  // Qt qCompress: 4 байта big-endian = исходный размер, затем zlib deflate
+  const sizeBuf = Buffer.alloc(4);
+  sizeBuf.writeUInt32BE(jsonBuf.length, 0);
   const compressed = deflateSync(jsonBuf, { level: 9 });
-  const b64url     = compressed.toString('base64')
-    .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-  return `vpn://AAA${b64url}`;
+  const result = Buffer.concat([sizeBuf, compressed]);
+  // Стандартный base64 (Qt fromBase64 без флага Base64UrlEncoding)
+  return `vpn://${result.toString('base64')}`;
 }
 
 // ─── Публичные endpoints (token via query param) ──────────────────────────────
