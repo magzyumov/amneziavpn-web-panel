@@ -722,6 +722,7 @@ function ProtocolCard({ protocol, server, onDelete, dragHandleProps }) {
   const [logs, setLogs] = useState('');
   const [showClients, setShowClients] = useState(false);
   const [showConfig, setShowConfig] = useState(false);
+  const [search, setSearch] = useState('');
 
   const icons = { awg2: '🛡️', xray: '⚡', wireguard: '🔒' };
 
@@ -835,17 +836,12 @@ function ProtocolCard({ protocol, server, onDelete, dragHandleProps }) {
       <div style={{ borderTop: '1px solid var(--border)', paddingTop: 12 }}>
         <div className="flex justify-between items-center" style={{ marginBottom: showClients ? 10 : 0 }}>
           <button
-            onClick={() => setShowClients(s => !s)}
-            style={{
-              display: 'flex', alignItems: 'center', gap: 6,
-              background: 'none', border: 'none', cursor: 'pointer', padding: 0,
-            }}
+            onClick={() => { setShowClients(s => !s); setSearch(''); }}
+            style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}
           >
             <span style={{
-              fontSize: 9, display: 'inline-block',
-              transition: 'transform 0.15s',
-              transform: showClients ? 'rotate(90deg)' : 'rotate(0deg)',
-              color: 'var(--text-muted)',
+              fontSize: 9, display: 'inline-block', transition: 'transform 0.15s',
+              transform: showClients ? 'rotate(90deg)' : 'rotate(0deg)', color: 'var(--text-muted)',
             }}>▶</span>
             <span className="input-label" style={{ margin: 0, cursor: 'pointer' }}>
               Clients ({loadingClients ? '…' : clients.length})
@@ -859,43 +855,77 @@ function ProtocolCard({ protocol, server, onDelete, dragHandleProps }) {
             <span className="spinner" style={{ width: 14, height: 14 }} />
           ) : clients.length === 0 ? (
             <div className="text-muted mono" style={{ fontSize: 11 }}>No clients yet</div>
-          ) : (
-            <div>
-              {/* header */}
-              <div style={{ display: 'flex', alignItems: 'center', padding: '0 0 6px 0', borderBottom: '1px solid var(--border)' }}>
-                <span className="col-name" style={{ fontSize: 11, color: 'var(--text-dim)', fontFamily: 'var(--font-mono)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Name</span>
-                <div style={{ flex: 1, display: 'flex', alignItems: 'center' }}>
-                  <span className="col-date-hdr">Created</span>
-                  <span className="col-actions-hdr"></span>
+          ) : (() => {
+            const q = search.trim().toLowerCase();
+            const filtered = q ? clients.filter(c => c.name.toLowerCase().includes(q)) : clients;
+            return (
+              <div>
+                {/* search */}
+                <div style={{ position: 'relative', marginBottom: 10 }}>
+                  <span style={{ position: 'absolute', left: 9, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)', fontSize: 12, pointerEvents: 'none' }}>⌕</span>
+                  <input
+                    className="input input-mono"
+                    style={{ paddingLeft: 28, fontSize: 12, height: 30 }}
+                    placeholder="Search clients…"
+                    value={search}
+                    onChange={e => setSearch(e.target.value)}
+                  />
+                  {search && (
+                    <button onClick={() => setSearch('')} style={{
+                      position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)',
+                      background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: 14, lineHeight: 1, padding: 0,
+                    }}>×</button>
+                  )}
                 </div>
+
+                {/* count hint when filtering */}
+                {q && (
+                  <div className="mono text-muted" style={{ fontSize: 11, marginBottom: 8 }}>
+                    {filtered.length} из {clients.length}
+                    {filtered.length === 0 && ' — ничего не найдено'}
+                  </div>
+                )}
+
+                {filtered.length > 0 && (
+                  <>
+                    {/* header */}
+                    <div style={{ display: 'flex', alignItems: 'center', padding: '0 0 6px 0', borderBottom: '1px solid var(--border)' }}>
+                      <span className="col-name" style={{ fontSize: 11, color: 'var(--text-dim)', fontFamily: 'var(--font-mono)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Name</span>
+                      <div style={{ flex: 1, display: 'flex', alignItems: 'center' }}>
+                        <span className="col-date-hdr">Created</span>
+                        <span className="col-actions-hdr"></span>
+                      </div>
+                    </div>
+                    {/* rows */}
+                    {filtered.map(c => (
+                      <div key={c.id} style={{ display: 'flex', alignItems: 'center', padding: '7px 0', borderBottom: '1px solid var(--border)' }}
+                        onMouseEnter={e => e.currentTarget.style.background = 'var(--surface2)'}
+                        onMouseLeave={e => e.currentTarget.style.background = ''}>
+                        <div className="col-name" style={{ fontWeight: 500, paddingRight: 8 }}>
+                          {c.name}
+                          {!c.has_config && (
+                            <span className="mono text-muted" style={{ fontSize: 10, marginLeft: 6 }}>[без конфига]</span>
+                          )}
+                        </div>
+                        <div style={{ flex: 1, display: 'flex', alignItems: 'center' }}>
+                          <div className="col-date mono text-muted">
+                            {c.created_at ? new Date(c.created_at.replace(' ', 'T')).toLocaleDateString() : '—'}
+                          </div>
+                          <div className="col-actions">
+                            <button className="btn btn-ghost btn-sm" onClick={() => setSelectedClient(c)}>⬡ View</button>
+                            {protocol.type === 'xray' && c.has_config && (
+                              <CopySubButton clientId={c.id} />
+                            )}
+                            <button className="btn btn-danger btn-sm" onClick={() => delClient(c.id)}>✕</button>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </>
+                )}
               </div>
-              {/* rows */}
-              {clients.map(c => (
-                <div key={c.id} style={{ display: 'flex', alignItems: 'center', padding: '7px 0', borderBottom: '1px solid var(--border)' }}
-                  onMouseEnter={e => e.currentTarget.style.background = 'var(--surface2)'}
-                  onMouseLeave={e => e.currentTarget.style.background = ''}>
-                  <div className="col-name" style={{ fontWeight: 500, paddingRight: 8 }}>
-                    {c.name}
-                    {!c.has_config && (
-                      <span className="mono text-muted" style={{ fontSize: 10, marginLeft: 6 }}>[без конфига]</span>
-                    )}
-                  </div>
-                  <div style={{ flex: 1, display: 'flex', alignItems: 'center' }}>
-                    <div className="col-date mono text-muted">
-                      {c.created_at ? new Date(c.created_at.replace(' ', 'T')).toLocaleDateString() : '—'}
-                    </div>
-                    <div className="col-actions">
-                      <button className="btn btn-ghost btn-sm" onClick={() => setSelectedClient(c)}>⬡ View</button>
-                      {protocol.type === 'xray' && c.has_config && (
-                        <CopySubButton clientId={c.id} />
-                      )}
-                      <button className="btn btn-danger btn-sm" onClick={() => delClient(c.id)}>✕</button>
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )
+            );
+          })()
         )}
       </div>
 
