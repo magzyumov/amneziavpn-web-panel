@@ -645,7 +645,7 @@ function ProtocolCard({ protocol, server, onDelete }) {
   const cfg = typeof protocol.config === 'string' ? JSON.parse(protocol.config) : protocol.config;
 
   return (
-    <div className="card">
+    <div className="card" style={{ minWidth: 0, overflow: 'hidden' }}>
       {/* Header */}
       <div className="flex items-center justify-between" style={{ marginBottom: 12 }}>
         <div className="flex items-center gap-8">
@@ -669,13 +669,21 @@ function ProtocolCard({ protocol, server, onDelete }) {
 
       {/* Config summary */}
       {cfg && (
-        <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 12 }}>
-          {Object.entries(cfg).filter(([k]) => !['privateKey'].includes(k)).map(([k, v]) => (
-            <div key={k} style={{ background: 'var(--surface2)', borderRadius: 4, padding: '2px 8px' }}>
-              <span className="text-muted mono" style={{ fontSize: 10 }}>{k}: </span>
-              <span className="mono" style={{ fontSize: 11 }}>{String(v)}</span>
-            </div>
-          ))}
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 12, minWidth: 0 }}>
+          {Object.entries(cfg)
+            .filter(([k]) => !['privateKey', 'i1', 'i2', 'i3', 'i4', 'i5'].includes(k))
+            .map(([k, v]) => {
+              const str = String(v);
+              const truncated = str.length > 40 ? str.slice(0, 40) + '…' : str;
+              return (
+                <div key={k} title={str}
+                  style={{ background: 'var(--surface2)', borderRadius: 4, padding: '2px 8px',
+                           maxWidth: '100%', overflow: 'hidden' }}>
+                  <span className="text-muted mono" style={{ fontSize: 10 }}>{k}: </span>
+                  <span className="mono" style={{ fontSize: 11, wordBreak: 'break-all' }}>{truncated}</span>
+                </div>
+              );
+            })}
         </div>
       )}
 
@@ -838,7 +846,7 @@ export default function ServerPage() {
             </button>
           </div>
         ) : (
-          <div className="grid" style={{ gap: 16 }}>
+          <div className="grid" style={{ gap: 16, minWidth: 0, overflow: 'hidden' }}>
             {protocols.map(p => (
               <ProtocolCard key={p.id} protocol={p} server={server} onDelete={delProtocol} />
             ))}
