@@ -258,7 +258,7 @@ router.get('/:id/qr', async (req, res) => {
     try {
       const amneziaJson = buildAmneziaExportJson(client, protocol, server);
       vpnUri = buildVpnUriSync(amneziaJson);
-      amneziaQr = await QRCode.toDataURL(vpnUri, { width: 400, margin: 2, errorCorrectionLevel: 'L' });
+      amneziaQr = await QRCode.toDataURL(vpnUri, { width: 1000, margin: 2, errorCorrectionLevel: 'L' });
     } catch (e) {
       console.error('vpn:// QR error:', e.message);
     }

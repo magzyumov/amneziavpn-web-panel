@@ -388,7 +388,7 @@ function ClientModal({ client, protocolType, onClose }) {
               {loadingQr ? (
                 <div style={{ padding: 60 }}><span className="spinner" style={{ width: 28, height: 28 }} /></div>
               ) : activeQr ? (
-                <img src={activeQr} alt="QR" style={{ width: 280, height: 280, borderRadius: 8 }} />
+                <img src={activeQr} alt="QR" style={{ width: 360, height: 360, borderRadius: 8 }} />
               ) : (
                 <div className="notice notice-error">Не удалось сгенерировать QR</div>
               )}
