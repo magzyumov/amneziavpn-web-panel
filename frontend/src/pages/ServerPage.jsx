@@ -288,6 +288,7 @@ function ClientModal({ client, protocolType, onClose }) {
 
   const isXray = protocolType === 'xray';
   const hasAmnezia = protocolType === 'awg2' || protocolType === 'wireguard';
+  const hasAmneziaQr = hasAmnezia || isXray;  // все протоколы поддерживают Amnezia chunked QR
 
   useEffect(() => {
     if (!client.has_config) { setLoadingQr(false); return; }
@@ -306,8 +307,9 @@ function ClientModal({ client, protocolType, onClose }) {
   }, [client.id]);
 
   // Автоперелистывание — запускается только когда видна вкладка QR в Amnezia-формате
-  const totalParts = amneziaQrParts?.length ?? 1;
-  const autoActive = hasAmnezia && format === 'amnezia' && tab === 'qr' && totalParts > 1 && !loadingQr;
+  const showAmnezia  = hasAmneziaQr && format === 'amnezia';
+  const totalParts   = amneziaQrParts?.length ?? 1;
+  const autoActive   = showAmnezia && tab === 'qr' && totalParts > 1 && !loadingQr;
 
   useEffect(() => {
     if (!autoActive) return;
@@ -315,22 +317,21 @@ function ClientModal({ client, protocolType, onClose }) {
       setQrPartIdx(i => (i + 1) % totalParts);
     }, QR_AUTO_INTERVAL);
     return () => clearInterval(timer);
-  }, [autoActive, totalParts, qrPartIdx]); // qrPartIdx в deps → таймер сбрасывается при ручной навигации
+  }, [autoActive, totalParts, qrPartIdx]);
 
   // Активные значения в зависимости от выбранного формата
   const amneziaQr    = amneziaQrParts?.[qrPartIdx] ?? null;
-  const activeQr     = (hasAmnezia && format === 'amnezia') ? amneziaQr : origQr;
-  const activeConfig = (hasAmnezia && format === 'amnezia') ? (vpnUri || '') : origConf;
-  const activeHint   = hasAmnezia && format === 'amnezia'
+  const activeQr     = showAmnezia ? amneziaQr : origQr;
+  const activeConfig = showAmnezia ? (vpnUri || '') : origConf;
+  const activeHint   = showAmnezia
     ? (totalParts > 1
         ? `Часть ${qrPartIdx + 1} из ${totalParts} — сканируйте по очереди в AmneziaVPN`
         : 'Сканируйте в приложении AmneziaVPN')
-    : isXray ? 'Сканируйте в FLClash, v2rayNG или совместимом клиенте' : 'Сканируйте в стандартном WireGuard клиенте';
+    : isXray ? 'Сканируйте в FLClash, v2rayNG или совместимом клиенте'
+             : 'Сканируйте в стандартном WireGuard клиенте';
 
-  const activeDownloadUrl  = (hasAmnezia && format === 'amnezia')
-    ? clientsApi.configAmneziaUrl(client.id)
-    : clientsApi.configDownloadUrl(client.id);
-  const activeDownloadLabel = (hasAmnezia && format === 'amnezia') ? '⬇ JSON для Amnezia' : '⬇ Скачать .conf';
+  const activeDownloadUrl   = showAmnezia ? clientsApi.configAmneziaUrl(client.id) : clientsApi.configDownloadUrl(client.id);
+  const activeDownloadLabel = showAmnezia ? '⬇ JSON для Amnezia' : isXray ? '⬇ Скачать .txt' : '⬇ Скачать .conf';
 
   const tabs = [
     { id: 'qr',  label: 'QR-код' },
@@ -360,8 +361,8 @@ function ClientModal({ client, protocolType, onClose }) {
           </div>
         )}
 
-        {/* Переключатель формата (только для AWG и WireGuard) */}
-        {hasAmnezia && client.has_config && (
+        {/* Переключатель формата (AWG, WireGuard, Xray) */}
+        {hasAmneziaQr && client.has_config && (
           <div style={{
             display: 'flex', gap: 0, marginBottom: 16,
             border: '1px solid var(--border)', borderRadius: 8, overflow: 'hidden',
@@ -386,7 +387,7 @@ function ClientModal({ client, protocolType, onClose }) {
               }}
               onClick={() => setFormat('original')}
             >
-              📄 Оригинальный формат
+              {isXray ? '📡 VLESS URI' : '📄 Оригинальный формат'}
             </button>
           </div>
         )}
@@ -411,7 +412,7 @@ function ClientModal({ client, protocolType, onClose }) {
                   <img src={activeQr} alt="QR" style={{ width: 360, height: 360, borderRadius: 8 }} />
 
                   {/* Многочастный QR: прогресс-бар + навигация */}
-                  {hasAmnezia && format === 'amnezia' && totalParts > 1 && (
+                  {showAmnezia && totalParts > 1 && (
                     <div style={{ marginTop: 12 }}>
                       {/* Индикаторы-точки */}
                       <div style={{ display: 'flex', justifyContent: 'center', gap: 6, marginBottom: 8 }}>
@@ -459,7 +460,7 @@ function ClientModal({ client, protocolType, onClose }) {
           {/* Текст конфига / URI */}
           {tab === 'cfg' && (
             <div>
-              {hasAmnezia && format === 'amnezia' ? (
+              {showAmnezia ? (
                 <>
                   <div className="notice notice-info" style={{ marginBottom: 8, fontSize: 11 }}>
                     <b>vpn://</b> ссылка — вставьте или отсканируйте в AmneziaVPN (iOS / Android / Desktop)

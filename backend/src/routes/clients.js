@@ -295,11 +295,11 @@ router.get('/:id/qr', async (req, res) => {
   const origConfig = client.config.split('\n---AMNEZIA_JSON---\n')[0];
   const origQr = await QRCode.toDataURL(origConfig, { width: 400, margin: 2, errorCorrectionLevel: 'L' });
 
-  // Amnezia QR — chunked binary format для сканирования камерой.
+  // Amnezia QR — chunked binary format для сканирования камерой (все протоколы).
   // vpnUri — текстовый vpn:// URI для clipboard-импорта.
-  let amneziaQrParts = null;  // массив QR-изображений (один или несколько кусков)
+  let amneziaQrParts = null;
   let vpnUri = null;
-  if (protocol?.type === 'awg2' || protocol?.type === 'wireguard') {
+  if (protocol?.type === 'awg2' || protocol?.type === 'wireguard' || protocol?.type === 'xray') {
     try {
       const amneziaJson = buildAmneziaExportJson(client, protocol, server);
       vpnUri = buildVpnUriSync(amneziaJson);
