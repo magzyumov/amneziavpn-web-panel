@@ -227,7 +227,7 @@ router.post('/', async (req, res) => {
     } catch (e) { console.error('Failed to create subscription:', e.message); }
   }
 
-  res.json({ id, name: safeName, config: result.config, type: result.type, subscriptionSlug });
+  res.json({ id, name: safeName, config: result.config, type: result.type, subscriptionSlug, has_config: 1 });
 });
 
 // GET /api/clients/:id/qr — QR для оригинального формата (.conf / VLESS URI)
