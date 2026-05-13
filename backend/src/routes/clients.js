@@ -146,17 +146,60 @@ function buildAmneziaExportJson(client, protocol, server) {
   });
 }
 
-// Генерация vpn:// URI — официальный Amnezia формат
-// Формат: "vpn://" + base64url( uint32BE(uncompressedSize) + zlib_deflate(json_utf8) )
-// Qt qCompress: первые 4 байта big-endian = исходный размер данных, затем zlib deflate
-// AmneziaVPN декодирует через QByteArray::fromBase64(..., Base64UrlEncoding) — URL-safe base64
-function buildVpnUriSync(amneziaJson) {
+// Строит сжатый блок в формате qCompress (4 байта big-endian размер + zlib data).
+// Используется и для vpn:// URI (текст), и как источник данных для chunked QR.
+function buildQCompressedData(amneziaJson) {
   const jsonBuf = Buffer.from(amneziaJson, 'utf8');
   const sizeBuf = Buffer.alloc(4);
   sizeBuf.writeUInt32BE(jsonBuf.length, 0);
   const compressed = deflateSync(jsonBuf, { level: 9 });
-  const result = Buffer.concat([sizeBuf, compressed]);
-  return `vpn://${result.toString('base64url')}`;
+  return Buffer.concat([sizeBuf, compressed]);
+}
+
+// Генерация vpn:// URI для текстового/clipboard импорта.
+// AmneziaVPN декодирует через QByteArray::fromBase64(..., Base64UrlEncoding).
+function buildVpnUriSync(amneziaJson) {
+  return `vpn://${buildQCompressedData(amneziaJson).toString('base64url')}`;
+}
+
+// Генерация chunked QR-кодов — официальный QR-формат AmneziaVPN.
+//
+// Протокол: сжатые данные режутся на куски по CHUNK_SIZE байт.
+// Каждый кусок оборачивается в бинарный QDataStream-заголовок (big-endian):
+//   qint16  magic       = 0x07C0 (1984)
+//   quint8  totalChunks
+//   quint8  chunkIndex  (0-based)
+//   uint32  dataLength  (QByteArray length prefix)
+//   bytes   data
+// Результат base64url-кодируется и становится содержимым QR-кода.
+// Источник: amnezia-client/client/core/utils/qrCodeUtils.cpp
+const QR_MAGIC  = 0x07C0;   // 1984
+const CHUNK_SIZE = 850;
+
+async function buildChunkedAmneziaQr(amneziaJson) {
+  const compressed = buildQCompressedData(amneziaJson);
+  const chunks = [];
+  for (let i = 0; i < compressed.length; i += CHUNK_SIZE) {
+    chunks.push(compressed.slice(i, i + CHUNK_SIZE));
+  }
+
+  const qrImages = [];
+  for (let i = 0; i < chunks.length; i++) {
+    const data = chunks[i];
+    // QDataStream big-endian: qint16 + quint8 + quint8 + uint32 + bytes
+    const buf = Buffer.alloc(2 + 1 + 1 + 4 + data.length);
+    let off = 0;
+    buf.writeInt16BE(QR_MAGIC, off);   off += 2;
+    buf.writeUInt8(chunks.length, off); off += 1;
+    buf.writeUInt8(i, off);             off += 1;
+    buf.writeUInt32BE(data.length, off); off += 4;
+    data.copy(buf, off);
+
+    const b64 = buf.toString('base64url');
+    const img = await QRCode.toDataURL(b64, { width: 600, margin: 2, errorCorrectionLevel: 'L' });
+    qrImages.push(img);
+  }
+  return qrImages;
 }
 
 // ─── Публичные endpoints (token via query param) ──────────────────────────────
@@ -251,20 +294,23 @@ router.get('/:id/qr', async (req, res) => {
   const origConfig = client.config.split('\n---AMNEZIA_JSON---\n')[0];
   const origQr = await QRCode.toDataURL(origConfig, { width: 400, margin: 2, errorCorrectionLevel: 'L' });
 
-  // Amnezia QR — vpn:// URI (только для WG и AWG)
-  let amneziaQr = null;
+  // Amnezia QR — chunked binary format для сканирования камерой.
+  // vpnUri — текстовый vpn:// URI для clipboard-импорта.
+  let amneziaQrParts = null;  // массив QR-изображений (один или несколько кусков)
   let vpnUri = null;
   if (protocol?.type === 'awg2' || protocol?.type === 'wireguard') {
     try {
       const amneziaJson = buildAmneziaExportJson(client, protocol, server);
       vpnUri = buildVpnUriSync(amneziaJson);
-      amneziaQr = await QRCode.toDataURL(vpnUri, { width: 1000, margin: 2, errorCorrectionLevel: 'L' });
+      amneziaQrParts = await buildChunkedAmneziaQr(amneziaJson);
     } catch (e) {
-      console.error('vpn:// QR error:', e.message);
+      console.error('Amnezia QR error:', e.message);
     }
   }
 
-  res.json({ qr: origQr, amneziaQr, vpnUri });
+  // amneziaQr оставляем для обратной совместимости (первая часть)
+  const amneziaQr = amneziaQrParts?.[0] ?? null;
+  res.json({ qr: origQr, amneziaQr, amneziaQrParts, vpnUri });
 });
 
 // GET /api/clients/:id/config-text — текст оригинального конфига

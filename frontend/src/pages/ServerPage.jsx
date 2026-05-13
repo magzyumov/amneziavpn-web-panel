@@ -277,11 +277,12 @@ function ClientModal({ client, protocolType, onClose }) {
   const [format, setFormat] = useState('amnezia');
   const [tab, setTab]       = useState('qr');
 
-  const [origQr,    setOrigQr]    = useState(null);
-  const [amneziaQr, setAmneziaQr] = useState(null);
-  const [vpnUri,    setVpnUri]    = useState('');
-  const [origConf,  setOrigConf]  = useState('');
-  const [loadingQr, setLoadingQr] = useState(true);
+  const [origQr,         setOrigQr]         = useState(null);
+  const [amneziaQrParts, setAmneziaQrParts] = useState(null);  // массив QR-кусков
+  const [qrPartIdx,      setQrPartIdx]      = useState(0);     // текущая часть
+  const [vpnUri,         setVpnUri]         = useState('');
+  const [origConf,       setOrigConf]       = useState('');
+  const [loadingQr,      setLoadingQr]      = useState(true);
 
   const isXray = protocolType === 'xray';
   const hasAmnezia = protocolType === 'awg2' || protocolType === 'wireguard';
@@ -291,7 +292,8 @@ function ClientModal({ client, protocolType, onClose }) {
     setLoadingQr(true);
     clientsApi.qr(client.id).then(r => {
       setOrigQr(r.data.qr);
-      setAmneziaQr(r.data.amneziaQr || null);
+      setAmneziaQrParts(r.data.amneziaQrParts || (r.data.amneziaQr ? [r.data.amneziaQr] : null));
+      setQrPartIdx(0);
       setVpnUri(r.data.vpnUri || '');
     }).catch(() => setOrigQr(null)).finally(() => setLoadingQr(false));
 
@@ -302,10 +304,14 @@ function ClientModal({ client, protocolType, onClose }) {
   }, [client.id]);
 
   // Активные значения в зависимости от выбранного формата
-  const activeQr     = (hasAmnezia && format === 'amnezia') ? amneziaQr   : origQr;
+  const amneziaQr    = amneziaQrParts?.[qrPartIdx] ?? null;
+  const activeQr     = (hasAmnezia && format === 'amnezia') ? amneziaQr : origQr;
   const activeConfig = (hasAmnezia && format === 'amnezia') ? (vpnUri || '') : origConf;
+  const totalParts   = amneziaQrParts?.length ?? 1;
   const activeHint   = hasAmnezia && format === 'amnezia'
-    ? 'Сканируйте в приложении AmneziaVPN (поддерживает vpn:// ссылки)'
+    ? (totalParts > 1
+        ? `Часть ${qrPartIdx + 1} из ${totalParts} — сканируйте по очереди в AmneziaVPN`
+        : 'Сканируйте в приложении AmneziaVPN')
     : isXray ? 'Сканируйте в FLClash, v2rayNG или совместимом клиенте' : 'Сканируйте в стандартном WireGuard клиенте';
 
   const activeDownloadUrl  = (hasAmnezia && format === 'amnezia')
@@ -388,11 +394,27 @@ function ClientModal({ client, protocolType, onClose }) {
               {loadingQr ? (
                 <div style={{ padding: 60 }}><span className="spinner" style={{ width: 28, height: 28 }} /></div>
               ) : activeQr ? (
-                <img src={activeQr} alt="QR" style={{ width: 360, height: 360, borderRadius: 8 }} />
+                <>
+                  <img src={activeQr} alt="QR" style={{ width: 360, height: 360, borderRadius: 8 }} />
+                  {/* Навигация для multi-part QR */}
+                  {hasAmnezia && format === 'amnezia' && totalParts > 1 && (
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 12, marginTop: 10 }}>
+                      <button className="btn btn-outline btn-sm"
+                        onClick={() => setQrPartIdx(i => Math.max(0, i - 1))}
+                        disabled={qrPartIdx === 0}>‹ Пред</button>
+                      <span className="mono text-dim" style={{ fontSize: 12 }}>
+                        {qrPartIdx + 1} / {totalParts}
+                      </span>
+                      <button className="btn btn-primary btn-sm"
+                        onClick={() => setQrPartIdx(i => Math.min(totalParts - 1, i + 1))}
+                        disabled={qrPartIdx === totalParts - 1}>След ›</button>
+                    </div>
+                  )}
+                </>
               ) : (
                 <div className="notice notice-error">Не удалось сгенерировать QR</div>
               )}
-              <div className="text-muted" style={{ marginTop: 12, fontSize: 11 }}>{activeHint}</div>
+              <div className="text-muted" style={{ marginTop: 8, fontSize: 11 }}>{activeHint}</div>
             </div>
           )}
 
