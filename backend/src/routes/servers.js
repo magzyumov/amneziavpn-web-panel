@@ -4,6 +4,7 @@ import { getDb, query, queryOne, run } from '../services/db.js';
 import { authMiddleware } from '../middleware/auth.js';
 import { testConnection, disconnect } from '../services/ssh.js';
 import { listAmneziaContainers, ensureDocker, scanExistingProtocols } from '../services/protocols.js';
+import { createSubscription, getVpsHost } from '../services/subscription.js';
 
 const router = Router();
 router.use(authMiddleware);
@@ -83,13 +84,13 @@ router.post('/:id/scan-protocols', async (req, res) => {
 });
 
 // POST /api/servers/:id/import-protocol
-// Импортирует найденный протокол в БД (после сканирования)
+// Импортирует найденный протокол в БД (после сканирования) и создаёт записи клиентов
 router.post('/:id/import-protocol', async (req, res) => {
   await getDb();
   const server = queryOne('SELECT * FROM servers WHERE id = ?', [req.params.id]);
   if (!server) return res.status(404).json({ error: 'Server not found' });
 
-  const { type, containerName, port, config } = req.body;
+  const { type, containerName, port, config, clients = [] } = req.body;
   if (!type || !containerName) return res.status(400).json({ error: 'type and containerName required' });
 
   // Проверяем не импортирован ли уже этот контейнер
@@ -97,13 +98,50 @@ router.post('/:id/import-protocol', async (req, res) => {
   if (existing) return res.status(409).json({ error: 'Protocol already imported', id: existing.id });
 
   const names = { awg2: 'AmneziaWG 2.0', wireguard: 'WireGuard', xray: 'Xray VLESS Reality' };
-  const id = uuidv4();
+  const protocolId = uuidv4();
   run(
     'INSERT INTO protocols (id, server_id, type, name, port, container_name, status, config) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-    [id, server.id, type, names[type] || type, port, containerName, 'running', JSON.stringify(config || {})]
+    [protocolId, server.id, type, names[type] || type, port, containerName, 'running', JSON.stringify(config || {})]
   );
 
-  res.json({ id, type, name: names[type] || type, port, containerName, status: 'running', config: JSON.stringify(config || {}) });
+  // Импортируем клиентов
+  let importedClients = 0;
+  const vpsHost = getVpsHost() || server.host;
+
+  for (const cl of clients) {
+    if (!cl.clientId || !cl.name) continue;
+    const clientId = uuidv4();
+    let clientConfig = null;
+
+    if (type === 'xray' && config) {
+      // Для Xray восстанавливаем VLESS URI из UUID + серверного конфига
+      const { port: xrayPort, publicKey, shortId, sni } = config;
+      clientConfig = `vless://${cl.clientId}@${server.host}:${xrayPort}?type=tcp&security=reality&pbk=${publicKey}&fp=chrome&sni=${sni}&sid=${shortId}&flow=xtls-rprx-vision#${encodeURIComponent(cl.name)}`;
+      try {
+        createSubscription({ clientId, clientName: cl.name, serverHost: vpsHost, vlessUrl: clientConfig });
+      } catch (e) {
+        console.error('[import-protocol] subscription error:', e.message);
+      }
+    }
+    // AWG/WireGuard: clientConfig остаётся null — приватный ключ клиента не хранится на сервере
+
+    run(
+      'INSERT INTO clients (id, protocol_id, server_id, name, config) VALUES (?, ?, ?, ?, ?)',
+      [clientId, protocolId, server.id, cl.name, clientConfig]
+    );
+    importedClients++;
+  }
+
+  res.json({
+    id: protocolId,
+    type,
+    name: names[type] || type,
+    port,
+    containerName,
+    status: 'running',
+    config: JSON.stringify(config || {}),
+    importedClients,
+  });
 });
 
 export default router;

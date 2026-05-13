@@ -1100,35 +1100,16 @@ export async function scanExistingProtocols(server) {
       config = { port, sni, publicKey: pubKey, shortId, firstUuid: uuid };
     }
 
-    // Сканируем существующих пиров (клиентов) из конфига
-    let existingPeers = [];
-    if (c.type === 'awg2' || c.type === 'wireguard') {
-      const confFile = c.type === 'awg2' ? `${c.confDir}/awg0.conf` : `${c.confDir}/wg0.conf`;
-      const psk = await readContainerFile(server, c.containerName, `${c.confDir}/wireguard_psk.key`);
-      const confRaw = await readContainerFile(server, c.containerName, confFile);
-      // Парсим все [Peer] блоки
-      const peerBlocks = confRaw.split('[Peer]').slice(1);
-      for (let i = 0; i < peerBlocks.length; i++) {
-        const block = peerBlocks[i];
-        const pubKeyMatch = block.match(/PublicKey\s*=\s*(.+)/);
-        const allowedIpsMatch = block.match(/AllowedIPs\s*=\s*(.+)/);
-        if (pubKeyMatch) {
-          existingPeers.push({
-            index: i,
-            pubKey: pubKeyMatch[1].trim(),
-            allowedIps: allowedIpsMatch ? allowedIpsMatch[1].trim() : '',
-          });
-        }
-      }
-    } else if (c.type === 'xray') {
-      // Для Xray — список клиентов из server.json
-      try {
-        const confRaw = await readContainerFile(server, c.containerName, `${c.confDir}/server.json`);
-        const sj = JSON.parse(confRaw);
-        const clients = sj?.inbounds?.[0]?.settings?.clients || [];
-        existingPeers = clients.map((cl, i) => ({ index: i, uuid: cl.id }));
-      } catch {}
-    }
+    // Читаем clientsTable из контейнера — источник истины по именам клиентов
+    let clients = [];
+    try {
+      const raw = await readContainerFile(server, c.containerName, `${c.confDir}/clientsTable`);
+      const table = JSON.parse(raw);
+      clients = table.map(e => ({
+        clientId: e.clientId,
+        name: e.userData?.clientName || `client-${String(e.clientId).slice(0, 8)}`,
+      }));
+    } catch {}
 
     found.push({
       type: c.type,
@@ -1136,7 +1117,7 @@ export async function scanExistingProtocols(server) {
       status,
       port,
       config,
-      existingPeers,
+      clients,
     });
   }
 

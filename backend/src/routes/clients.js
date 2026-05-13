@@ -159,6 +159,7 @@ router.get('/:id/config', async (req, res) => {
   await getDb();
   const client = queryOne('SELECT * FROM clients WHERE id = ?', [req.params.id]);
   if (!client) return res.status(404).json({ error: 'Not found' });
+  if (!client.config) return res.status(409).json({ error: 'Config unavailable: client was imported from an existing server and the original private key is not stored' });
   const protocol = queryOne('SELECT type FROM protocols WHERE id = ?', [client.protocol_id]);
   const ext = protocol?.type === 'xray' ? 'txt' : 'conf';
   const config = client.config.split('\n---AMNEZIA_JSON---\n')[0];
@@ -173,6 +174,7 @@ router.get('/:id/config-amnezia', async (req, res) => {
   await getDb();
   const client = queryOne('SELECT * FROM clients WHERE id = ?', [req.params.id]);
   if (!client) return res.status(404).json({ error: 'Not found' });
+  if (!client.config) return res.status(409).json({ error: 'Config unavailable: client was imported from an existing server and the original private key is not stored' });
   const protocol = queryOne('SELECT type FROM protocols WHERE id = ?', [client.protocol_id]);
   const server   = queryOne('SELECT * FROM servers WHERE id = ?', [client.server_id]);
   const amneziaJson = buildAmneziaExportJson(client, protocol, server);
@@ -186,7 +188,10 @@ router.use(authMiddleware);
 
 router.get('/protocol/:protocolId', async (req, res) => {
   await getDb();
-  const clients = query('SELECT id, name, created_at FROM clients WHERE protocol_id = ?', [req.params.protocolId]);
+  const clients = query(
+    'SELECT id, name, created_at, (config IS NOT NULL) as has_config FROM clients WHERE protocol_id = ?',
+    [req.params.protocolId]
+  );
   res.json(clients);
 });
 
@@ -230,6 +235,7 @@ router.get('/:id/qr', async (req, res) => {
   await getDb();
   const client   = queryOne('SELECT * FROM clients WHERE id = ?', [req.params.id]);
   if (!client) return res.status(404).json({ error: 'Not found' });
+  if (!client.config) return res.json({ qr: null, amneziaQr: null, vpnUri: null, noConfig: true });
   const protocol = queryOne('SELECT type FROM protocols WHERE id = ?', [client.protocol_id]);
   const server   = queryOne('SELECT * FROM servers WHERE id = ?', [client.server_id]);
 
@@ -258,6 +264,7 @@ router.get('/:id/config-text', async (req, res) => {
   await getDb();
   const client = queryOne('SELECT * FROM clients WHERE id = ?', [req.params.id]);
   if (!client) return res.status(404).json({ error: 'Not found' });
+  if (!client.config) return res.json({ config: null, vpnUri: null, name: client.name, noConfig: true });
   const protocol = queryOne('SELECT type FROM protocols WHERE id = ?', [client.protocol_id]);
   const server   = queryOne('SELECT * FROM servers WHERE id = ?', [client.server_id]);
   const origConfig = client.config.split('\n---AMNEZIA_JSON---\n')[0];
