@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { serversApi, protocolsApi, clientsApi, downloadWithAuth } from '../api.js';
 import { subscriptionsApi } from '../api.js';
 import {
-  DndContext, closestCenter, PointerSensor, useSensor, useSensors,
+  DndContext, closestCenter, PointerSensor, TouchSensor, useSensor, useSensors,
 } from '@dnd-kit/core';
 import {
   SortableContext, verticalListSortingStrategy, useSortable, arrayMove,
@@ -971,7 +971,10 @@ export default function ServerPage() {
   const [installingDocker, setInstallingDocker] = useState(false);
   const [dockerMsg, setDockerMsg] = useState('');
 
-  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(TouchSensor,   { activationConstraint: { delay: 250, tolerance: 5 } }),
+  );
   const protocolsLoadedRef = useRef(false);
 
   useEffect(() => {
