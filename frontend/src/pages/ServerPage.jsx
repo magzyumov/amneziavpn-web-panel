@@ -271,6 +271,8 @@ function InstallProtocolModal({ serverId, onClose, onInstalled }) {
   );
 }
 
+const QR_AUTO_INTERVAL = 3000; // мс между автосменой QR-частей
+
 // ── Client Modal ────────────────────────────────────────
 function ClientModal({ client, protocolType, onClose }) {
   // format: 'amnezia' | 'original'  (только для awg2/wireguard)
@@ -303,11 +305,22 @@ function ClientModal({ client, protocolType, onClose }) {
     });
   }, [client.id]);
 
+  // Автоперелистывание — запускается только когда видна вкладка QR в Amnezia-формате
+  const totalParts = amneziaQrParts?.length ?? 1;
+  const autoActive = hasAmnezia && format === 'amnezia' && tab === 'qr' && totalParts > 1 && !loadingQr;
+
+  useEffect(() => {
+    if (!autoActive) return;
+    const timer = setInterval(() => {
+      setQrPartIdx(i => (i + 1) % totalParts);
+    }, QR_AUTO_INTERVAL);
+    return () => clearInterval(timer);
+  }, [autoActive, totalParts, qrPartIdx]); // qrPartIdx в deps → таймер сбрасывается при ручной навигации
+
   // Активные значения в зависимости от выбранного формата
   const amneziaQr    = amneziaQrParts?.[qrPartIdx] ?? null;
   const activeQr     = (hasAmnezia && format === 'amnezia') ? amneziaQr : origQr;
   const activeConfig = (hasAmnezia && format === 'amnezia') ? (vpnUri || '') : origConf;
-  const totalParts   = amneziaQrParts?.length ?? 1;
   const activeHint   = hasAmnezia && format === 'amnezia'
     ? (totalParts > 1
         ? `Часть ${qrPartIdx + 1} из ${totalParts} — сканируйте по очереди в AmneziaVPN`
@@ -396,18 +409,43 @@ function ClientModal({ client, protocolType, onClose }) {
               ) : activeQr ? (
                 <>
                   <img src={activeQr} alt="QR" style={{ width: 360, height: 360, borderRadius: 8 }} />
-                  {/* Навигация для multi-part QR */}
+
+                  {/* Многочастный QR: прогресс-бар + навигация */}
                   {hasAmnezia && format === 'amnezia' && totalParts > 1 && (
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 12, marginTop: 10 }}>
-                      <button className="btn btn-outline btn-sm"
-                        onClick={() => setQrPartIdx(i => Math.max(0, i - 1))}
-                        disabled={qrPartIdx === 0}>‹ Пред</button>
-                      <span className="mono text-dim" style={{ fontSize: 12 }}>
-                        {qrPartIdx + 1} / {totalParts}
-                      </span>
-                      <button className="btn btn-primary btn-sm"
-                        onClick={() => setQrPartIdx(i => Math.min(totalParts - 1, i + 1))}
-                        disabled={qrPartIdx === totalParts - 1}>След ›</button>
+                    <div style={{ marginTop: 12 }}>
+                      {/* Индикаторы-точки */}
+                      <div style={{ display: 'flex', justifyContent: 'center', gap: 6, marginBottom: 8 }}>
+                        {Array.from({ length: totalParts }).map((_, i) => (
+                          <button key={i}
+                            onClick={() => setQrPartIdx(i)}
+                            style={{
+                              width: 10, height: 10, borderRadius: '50%', border: 'none', cursor: 'pointer',
+                              padding: 0,
+                              background: i === qrPartIdx ? 'var(--accent)' : 'var(--border)',
+                              transition: 'background 0.2s',
+                            }}
+                          />
+                        ))}
+                      </div>
+                      {/* Прогресс-бар автосмены */}
+                      <div style={{ height: 3, background: 'var(--border)', borderRadius: 2, overflow: 'hidden', margin: '0 auto', width: 360 }}>
+                        <div key={`pb-${qrPartIdx}`} style={{
+                          height: '100%', background: 'var(--accent)', borderRadius: 2,
+                          animation: `qr-progress ${QR_AUTO_INTERVAL}ms linear`,
+                        }} />
+                      </div>
+                      {/* Кнопки */}
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10, marginTop: 8 }}>
+                        <button className="btn btn-outline btn-sm"
+                          onClick={() => setQrPartIdx(i => Math.max(0, i - 1))}
+                          disabled={qrPartIdx === 0}>‹</button>
+                        <span className="mono text-dim" style={{ fontSize: 11, minWidth: 48 }}>
+                          {qrPartIdx + 1} / {totalParts}
+                        </span>
+                        <button className="btn btn-outline btn-sm"
+                          onClick={() => setQrPartIdx(i => Math.min(totalParts - 1, i + 1))}
+                          disabled={qrPartIdx === totalParts - 1}>›</button>
+                      </div>
                     </div>
                   )}
                 </>
