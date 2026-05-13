@@ -33,17 +33,25 @@ function buildAmneziaExportJson(client, protocol, server) {
     return m ? m[1].trim() : '';
   };
 
+  // Клиентский публичный ключ хранится в parts[1] (сохраняется при создании клиента).
+  // Для старых клиентов (без parts[1]) вместо clientPubKey остаётся пустая строка.
+  const getSavedPubKey = () => {
+    if (!parts[1]) return '';
+    try { return JSON.parse(parts[1]).client_pub_key || ''; } catch { return ''; }
+  };
+
   let containerData = {};
 
   if (protocol.type === 'awg2') {
-    const clientPrivKey = getConf('PrivateKey');
-    const clientPubKey  = getConf('PublicKey');
-    const clientAddr    = getConf('Address');
-    const clientIp      = clientAddr.split('/')[0];
-    const serverPubKey  = getConf('PublicKey'); const presharedKey  = getConf('PresharedKey');
-    const endpoint      = getConf('Endpoint');
-    const port          = endpoint.split(':').pop();
-    const hostName      = server?.host || endpoint.split(':')[0] || '';
+    const clientPrivKey  = getConf('PrivateKey');
+    const clientPubKey   = getSavedPubKey();   // сохранённый при создании клиента
+    const serverPubKey   = getConf('PublicKey');  // [Peer].PublicKey — серверный ключ
+    const presharedKey   = getConf('PresharedKey');
+    const clientAddr     = getConf('Address');
+    const clientIp       = clientAddr.split('/')[0];
+    const endpoint       = getConf('Endpoint');
+    const port           = endpoint.split(':').pop();
+    const hostName       = server?.host || endpoint.split(':')[0] || '';
     const Jc = getConf('Jc'), Jmin = getConf('Jmin'), Jmax = getConf('Jmax');
     const S1 = getConf('S1'), S2 = getConf('S2'), S3 = getConf('S3'), S4 = getConf('S4');
     const H1 = getConf('H1'), H2 = getConf('H2'), H3 = getConf('H3'), H4 = getConf('H4');
@@ -54,7 +62,7 @@ function buildAmneziaExportJson(client, protocol, server) {
       H1, H2, H3, H4, I1, I2, I3, I4, I5,
       Jc, Jmax, Jmin, S1, S2, S3, S4,
       allowed_ips: ['0.0.0.0/0', '::/0'],
-      clientId: clientPrivKey,
+      clientId: clientPubKey || clientPrivKey,  // pub key; fallback на priv для старых клиентов
       client_ip: clientIp,
       client_priv_key: clientPrivKey,
       client_pub_key: clientPubKey,
@@ -81,19 +89,19 @@ function buildAmneziaExportJson(client, protocol, server) {
     };
 
   } else if (protocol.type === 'wireguard') {
-    const clientPrivKey = getConf('PrivateKey');
-    const clientPubKey  = getConf('PublicKey');
-    const clientAddr    = getConf('Address');
-    const clientIp      = clientAddr.split('/')[0];
-    const serverPubKey  = getConf('PublicKey');
-    const presharedKey  = getConf('PresharedKey');
-    const endpoint      = getConf('Endpoint');
-    const port          = endpoint.split(':').pop();
-    const hostName      = server?.host || endpoint.split(':')[0] || '';
+    const clientPrivKey  = getConf('PrivateKey');
+    const clientPubKey   = getSavedPubKey();
+    const serverPubKey   = getConf('PublicKey');
+    const presharedKey   = getConf('PresharedKey');
+    const clientAddr     = getConf('Address');
+    const clientIp       = clientAddr.split('/')[0];
+    const endpoint       = getConf('Endpoint');
+    const port           = endpoint.split(':').pop();
+    const hostName       = server?.host || endpoint.split(':')[0] || '';
 
     const lastConfigObj = {
       allowed_ips: ['0.0.0.0/0', '::/0'],
-      clientId: clientPrivKey,
+      clientId: clientPubKey || clientPrivKey,
       client_ip: clientIp,
       client_priv_key: clientPrivKey,
       client_pub_key: clientPubKey,
@@ -137,18 +145,16 @@ function buildAmneziaExportJson(client, protocol, server) {
 }
 
 // Генерация vpn:// URI — официальный Amnezia формат
-// Формат: "vpn://" + base64( uint32BE(uncompressedSize) + zlib_deflate(json_utf8) )
-// Это Qt qCompress формат — первые 4 байта = размер несжатых данных (big-endian)
-// Qt fromBase64 использует стандартный base64 (не url-safe, без замены +/-)
+// Формат: "vpn://" + base64url( uint32BE(uncompressedSize) + zlib_deflate(json_utf8) )
+// Qt qCompress: первые 4 байта big-endian = исходный размер данных, затем zlib deflate
+// AmneziaVPN декодирует через QByteArray::fromBase64(..., Base64UrlEncoding) — URL-safe base64
 function buildVpnUriSync(amneziaJson) {
   const jsonBuf = Buffer.from(amneziaJson, 'utf8');
-  // Qt qCompress: 4 байта big-endian = исходный размер, затем zlib deflate
   const sizeBuf = Buffer.alloc(4);
   sizeBuf.writeUInt32BE(jsonBuf.length, 0);
   const compressed = deflateSync(jsonBuf, { level: 9 });
   const result = Buffer.concat([sizeBuf, compressed]);
-  // Стандартный base64 (Qt fromBase64 без флага Base64UrlEncoding)
-  return `vpn://${result.toString('base64')}`;
+  return `vpn://${result.toString('base64url')}`;
 }
 
 // ─── Публичные endpoints (token via query param) ──────────────────────────────

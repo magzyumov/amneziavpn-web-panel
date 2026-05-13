@@ -448,6 +448,7 @@ const AWG2_CLIENT_JSON_TEMPLATE = `{
     "host": "$SERVER_IP_ADDRESS",
     "port": "$AWG_SERVER_PORT",
     "type": "awg2",
+    "client_pub_key": "$WIREGUARD_CLIENT_PUBLIC_KEY",
     "config": {
         "address": "$WIREGUARD_CLIENT_IP/32",
         "dns": "$PRIMARY_DNS, $SECONDARY_DNS",
@@ -479,6 +480,7 @@ const WG_CLIENT_JSON_TEMPLATE = `{
     "host": "$SERVER_IP_ADDRESS",
     "port": "$WIREGUARD_SERVER_PORT",
     "type": "wireguard",
+    "client_pub_key": "$WIREGUARD_CLIENT_PUBLIC_KEY",
     "config": {
         "address": "$WIREGUARD_CLIENT_IP/32",
         "dns": "$PRIMARY_DNS, $SECONDARY_DNS",
@@ -713,6 +715,7 @@ export async function addAWG2Client(server, protocol, clientName) {
     PRIMARY_DNS: '1.1.1.1',
     SECONDARY_DNS: '8.8.8.8',
     WIREGUARD_CLIENT_PRIVATE_KEY: clientPrivKey,
+    WIREGUARD_CLIENT_PUBLIC_KEY: clientPubKey,
     JUNK_PACKET_COUNT: c.jc ?? randInt(3, 10),
     JUNK_PACKET_MIN_SIZE: c.jmin ?? randInt(10, 50),
     JUNK_PACKET_MAX_SIZE: c.jmax ?? randInt(200, 1000),
@@ -991,6 +994,7 @@ export async function addWireGuardClient(server, protocol, clientName) {
     PRIMARY_DNS: '1.1.1.1',
     SECONDARY_DNS: '8.8.8.8',
     WIREGUARD_CLIENT_PRIVATE_KEY: clientPrivKey,
+    WIREGUARD_CLIENT_PUBLIC_KEY: clientPubKey,
     WIREGUARD_SERVER_PUBLIC_KEY: c.serverPubKey,
     WIREGUARD_PSK: presharedKey,
     SERVER_IP_ADDRESS: server.host,
