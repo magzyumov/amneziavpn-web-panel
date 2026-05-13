@@ -519,6 +519,12 @@ async function readRemoteFile(server, remotePath) {
   return res.stdout.trim();
 }
 
+// Чтение файла из внутренности Docker-контейнера
+async function readContainerFile(server, containerName, remotePath) {
+  const res = await execSudo(server, `docker exec ${containerName} cat ${remotePath} 2>/dev/null`);
+  return res.stdout.trim();
+}
+
 // Проверяем что образ уже собран
 async function imageExists(server, imageName) {
   const res = await exec(server, `docker image inspect ${imageName} --format='exists' 2>/dev/null || echo ""`);
@@ -1045,7 +1051,8 @@ export async function scanExistingProtocols(server) {
   ];
 
   for (const c of candidates) {
-    const statusRes = await exec(server, `docker inspect --format='{{.State.Status}}' ${c.containerName} 2>/dev/null || echo 'not_found'`);
+    // execSudo чтобы гарантировать доступ к docker даже без прав группы docker у SSH-пользователя
+    const statusRes = await execSudo(server, `docker inspect --format='{{.State.Status}}' ${c.containerName} 2>/dev/null || echo 'not_found'`);
     const status = statusRes.stdout.trim();
     if (status === 'not_found') continue;
 
@@ -1053,8 +1060,9 @@ export async function scanExistingProtocols(server) {
     let port = null;
 
     if (c.type === 'awg2') {
-      const pubKey  = await readRemoteFile(server, `${c.confDir}/wireguard_server_public_key.key`);
-      const confRaw = await readRemoteFile(server, `${c.confDir}/awg0.conf`);
+      // Конфиги хранятся внутри контейнера, не на хосте
+      const pubKey  = await readContainerFile(server, c.containerName, `${c.confDir}/wireguard_server_public_key.key`);
+      const confRaw = await readContainerFile(server, c.containerName, `${c.confDir}/awg0.conf`);
       if (!pubKey && !confRaw) continue;
       // Парсим порт из конфига
       const portMatch = confRaw.match(/ListenPort\s*=\s*(\d+)/);
@@ -1072,8 +1080,8 @@ export async function scanExistingProtocols(server) {
         i4: getConf('I4') || '', i5: getConf('I5') || '',
       };
     } else if (c.type === 'wireguard') {
-      const pubKey  = await readRemoteFile(server, `${c.confDir}/wireguard_server_public_key.key`);
-      const confRaw = await readRemoteFile(server, `${c.confDir}/wg0.conf`);
+      const pubKey  = await readContainerFile(server, c.containerName, `${c.confDir}/wireguard_server_public_key.key`);
+      const confRaw = await readContainerFile(server, c.containerName, `${c.confDir}/wg0.conf`);
       if (!pubKey && !confRaw) continue;
       const portMatch = confRaw.match(/ListenPort\s*=\s*(\d+)/);
       port = portMatch ? parseInt(portMatch[1]) : null;
@@ -1081,12 +1089,12 @@ export async function scanExistingProtocols(server) {
     } else if (c.type === 'xray') {
       let serverJson = null;
       try {
-        const confRaw = await readRemoteFile(server, `${c.confDir}/server.json`);
+        const confRaw = await readContainerFile(server, c.containerName, `${c.confDir}/server.json`);
         serverJson = JSON.parse(confRaw);
       } catch { continue; }
-      const pubKey  = await readRemoteFile(server, `${c.confDir}/xray_public.key`);
-      const shortId = await readRemoteFile(server, `${c.confDir}/xray_short_id.key`);
-      const uuid    = await readRemoteFile(server, `${c.confDir}/xray_uuid.key`);
+      const pubKey  = await readContainerFile(server, c.containerName, `${c.confDir}/xray_public.key`);
+      const shortId = await readContainerFile(server, c.containerName, `${c.confDir}/xray_short_id.key`);
+      const uuid    = await readContainerFile(server, c.containerName, `${c.confDir}/xray_uuid.key`);
       port = serverJson?.inbounds?.[0]?.port || null;
       const sni = serverJson?.inbounds?.[0]?.streamSettings?.realitySettings?.dest?.replace(/:443$/, '') || '';
       config = { port, sni, publicKey: pubKey, shortId, firstUuid: uuid };
@@ -1096,8 +1104,8 @@ export async function scanExistingProtocols(server) {
     let existingPeers = [];
     if (c.type === 'awg2' || c.type === 'wireguard') {
       const confFile = c.type === 'awg2' ? `${c.confDir}/awg0.conf` : `${c.confDir}/wg0.conf`;
-      const psk = await readRemoteFile(server, `${c.confDir}/wireguard_psk.key`);
-      const confRaw = await readRemoteFile(server, confFile);
+      const psk = await readContainerFile(server, c.containerName, `${c.confDir}/wireguard_psk.key`);
+      const confRaw = await readContainerFile(server, c.containerName, confFile);
       // Парсим все [Peer] блоки
       const peerBlocks = confRaw.split('[Peer]').slice(1);
       for (let i = 0; i < peerBlocks.length; i++) {
@@ -1115,7 +1123,7 @@ export async function scanExistingProtocols(server) {
     } else if (c.type === 'xray') {
       // Для Xray — список клиентов из server.json
       try {
-        const confRaw = await readRemoteFile(server, `${c.confDir}/server.json`);
+        const confRaw = await readContainerFile(server, c.containerName, `${c.confDir}/server.json`);
         const sj = JSON.parse(confRaw);
         const clients = sj?.inbounds?.[0]?.settings?.clients || [];
         existingPeers = clients.map((cl, i) => ({ index: i, uuid: cl.id }));
