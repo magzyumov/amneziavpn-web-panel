@@ -17,6 +17,7 @@
     "node-ssh": "^13.2.0",
     "qrcode": "^1.5.3",
     "sql.js": "^1.14.1",
-    "uuid": "^9.0.1"
+    "uuid": "^9.0.1",
+    "express-rate-limit": "^7.4.0"
   }
 }

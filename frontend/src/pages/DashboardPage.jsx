@@ -109,12 +109,12 @@ function ServerCard({ server, onDelete }) {
 
   return (
     <div className="card" style={{ cursor: 'pointer' }} onClick={() => navigate(`/server/${server.id}`)}>
-      <div className="flex items-center justify-between">
-        <div>
-          <div style={{ fontWeight: 600 }}>{server.name}</div>
-          <div className="mono text-dim mt-4">{server.username}@{server.host}:{server.port}</div>
+      <div className="flex items-center justify-between page-header-row" style={{ gap: 8 }}>
+        <div style={{ minWidth: 0 }}>
+          <div style={{ fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{server.name}</div>
+          <div className="mono text-dim mt-4" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{server.username}@{server.host}:{server.port}</div>
         </div>
-        <div className="flex gap-8" onClick={e => e.stopPropagation()}>
+        <div className="flex gap-8" style={{ flexShrink: 0 }} onClick={e => e.stopPropagation()}>
           <button className="btn btn-ghost btn-sm" onClick={test} disabled={testing}>
             {testing ? <span className="spinner" style={{ width: 12, height: 12 }} /> : '⚡ Test'}
           </button>
@@ -148,7 +148,7 @@ export default function DashboardPage() {
   return (
     <>
       <div className="page-header">
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between page-header-row">
           <div>
             <div className="page-title">Servers</div>
             <div className="page-sub">// manage vpn infrastructure</div>

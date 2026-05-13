@@ -30,6 +30,27 @@ router.post('/', async (req, res) => {
   res.json({ id, name, host, port, username, auth_type });
 });
 
+// PUT /api/servers/:id
+router.put('/:id', async (req, res) => {
+  await getDb();
+  const server = queryOne('SELECT * FROM servers WHERE id = ?', [req.params.id]);
+  if (!server) return res.status(404).json({ error: 'Server not found' });
+
+  const { name, host, port, username, auth_type, password, private_key } = req.body;
+  if (!name || !host || !username) return res.status(400).json({ error: 'name, host, username required' });
+
+  run(
+    'UPDATE servers SET name=?, host=?, port=?, username=?, auth_type=?, password=?, private_key=? WHERE id=?',
+    [name, host, port ?? server.port, username, auth_type ?? server.auth_type,
+     password || null, private_key || null, req.params.id]
+  );
+
+  // Сбрасываем SSH-соединение чтобы подключиться с новыми данными
+  disconnect(req.params.id);
+
+  res.json({ id: req.params.id, name, host, port: port ?? server.port, username, auth_type: auth_type ?? server.auth_type });
+});
+
 // DELETE /api/servers/:id
 router.delete('/:id', async (req, res) => {
   await getDb();
