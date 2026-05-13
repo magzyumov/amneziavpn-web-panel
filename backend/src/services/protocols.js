@@ -828,15 +828,15 @@ export async function addXrayClient(server, protocol, clientName) {
   }
   const clientId = uuidRes.stdout.trim();
 
-  // Читаем и обновляем server.json
-  const confRes = await execSudo(server, `cat /opt/amnezia/xray/server.json`);
-  if (confRes.code !== 0 || !confRes.stdout.trim()) {
+  // Читаем server.json из контейнера (файл хранится внутри, не на хосте)
+  const confRaw = await readContainerFile(server, cn, '/opt/amnezia/xray/server.json');
+  if (!confRaw) {
     throw new Error('Xray server.json not found on VPS. The protocol may not have been configured correctly. Reinstall the protocol.');
   }
 
   let serverJson;
   try {
-    serverJson = JSON.parse(confRes.stdout);
+    serverJson = JSON.parse(confRaw);
   } catch (e) {
     throw new Error(`Failed to parse Xray server.json: ${e.message}. File content may be corrupted. Reinstall the protocol.`);
   }
@@ -846,7 +846,10 @@ export async function addXrayClient(server, protocol, clientName) {
   }
 
   serverJson.inbounds[0].settings.clients.push({ id: clientId, flow: 'xtls-rprx-vision' });
-  await writeRemoteFile(server, `/opt/amnezia/xray/server.json`, JSON.stringify(serverJson, null, 4));
+
+  // Пишем обновлённый server.json обратно в контейнер
+  const jsonB64 = Buffer.from(JSON.stringify(serverJson, null, 4)).toString('base64');
+  await execSudo(server, `echo '${jsonB64}' | base64 -d | docker exec -i ${cn} sh -c 'cat > /opt/amnezia/xray/server.json'`);
 
   // Перезапускаем контейнер для применения изменений
   const restartRes = await execSudo(server, `docker restart ${cn}`);
