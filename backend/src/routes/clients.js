@@ -28,8 +28,10 @@ function buildAmneziaExportJson(client, protocol, server) {
   const parts = client.config.split('\n---AMNEZIA_JSON---\n');
   const conf = parts[0]; // оригинальный .conf текст
 
+  // [ \t]* вместо \s* — не захватываем \n, иначе пустые строки поглощают следующую
+  // .* вместо .+ — разрешаем пустые значения (I1-I5 могут быть пустыми)
   const getConf = (key) => {
-    const m = conf.match(new RegExp(`^${key}\\s*=\\s*(.+)$`, 'mi'));
+    const m = conf.match(new RegExp(`^${key}[ \\t]*=[ \\t]*(.*)$`, 'm'));
     return m ? m[1].trim() : '';
   };
 
