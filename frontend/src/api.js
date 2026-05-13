@@ -34,6 +34,7 @@ export const serversApi = {
   test: (id) => api.post(`/servers/${id}/test`),
   ensureDocker: (id) => api.post(`/servers/${id}/ensure-docker`),
   containers: (id) => api.get(`/servers/${id}/containers`),
+  update: (id, data) => api.put(`/servers/${id}`, data),
   scanProtocols: (id) => api.post(`/servers/${id}/scan-protocols`),
   importProtocol: (id, data) => api.post(`/servers/${id}/import-protocol`, data),
 };
@@ -46,6 +47,7 @@ export const protocolsApi = {
   start: (id) => api.post(`/protocols/${id}/start`),
   stop: (id) => api.post(`/protocols/${id}/stop`),
   status: (id) => api.get(`/protocols/${id}/status`),
+  health: (serverId) => api.get(`/protocols/server/${serverId}/health`),
   logs: (id, lines) => api.get(`/protocols/${id}/logs`, { params: { lines } }),
 };
 
@@ -55,16 +57,25 @@ export const clientsApi = {
   delete: (id) => api.delete(`/clients/${id}`),
   qr: (id) => api.get(`/clients/${id}/qr`),          // returns { qr, amneziaQr, vpnUri }
   configText: (id) => api.get(`/clients/${id}/config-text`), // returns { config, vpnUri, name }
-  configDownloadUrl: (id) => {
-    const token = localStorage.getItem('token');
-    return `/api/clients/${id}/config${token ? `?token=${encodeURIComponent(token)}` : ''}`;
-  },
-  configAmneziaUrl: (id) => {
-    const token = localStorage.getItem('token');
-    return `/api/clients/${id}/config-amnezia${token ? `?token=${encodeURIComponent(token)}` : ''}`;
-  },
+  configDownloadUrl: (id) => `/api/clients/${id}/config`,
+  configAmneziaUrl: (id) => `/api/clients/${id}/config-amnezia`,
   subscription: (id) => api.get(`/clients/${id}/subscription`),
 };
+
+export async function downloadWithAuth(url, filename) {
+  const token = localStorage.getItem('token');
+  const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+  if (!res.ok) throw new Error(`Download failed: ${res.status}`);
+  const blob = await res.blob();
+  const objectUrl = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = objectUrl;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(objectUrl);
+}
 
 export const subscriptionsApi = {
   list: () => api.get('/subscriptions'),

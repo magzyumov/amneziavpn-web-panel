@@ -1018,6 +1018,22 @@ export async function getContainerStatus(server, containerName) {
   const res = await exec(server, `docker inspect --format='{{.State.Status}}' ${containerName} 2>/dev/null || echo "not_found"`);
   return res.stdout.trim();
 }
+
+export async function getContainersHealth(server, containerNames) {
+  if (!containerNames.length) return {};
+  const list = containerNames.map(c => `"${c}"`).join(' ');
+  const cmd = `for c in ${list}; do echo "$c:$(docker inspect --format='{{.State.Status}}' $c 2>/dev/null || echo 'not_found')"; done`;
+  const res = await exec(server, cmd);
+  const result = {};
+  for (const line of res.stdout.trim().split('\n')) {
+    const idx = line.lastIndexOf(':');
+    if (idx === -1) continue;
+    const name = line.slice(0, idx).trim();
+    const status = line.slice(idx + 1).trim() || 'not_found';
+    if (name) result[name] = status;
+  }
+  return result; // { containerName: status }
+}
 export async function startContainer(server, containerName) {
   return execSudo(server, `docker start ${containerName}`);
 }

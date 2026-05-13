@@ -21,6 +21,9 @@ process.on('unhandledRejection', (reason) => {
 const app = express();
 const PORT = process.env.PORT || 3001;
 
+// Доверяем первому proxy (nginx внутри docker network)
+app.set('trust proxy', 1);
+
 app.use(cors());
 app.use(express.json({ limit: '2mb' }));
 

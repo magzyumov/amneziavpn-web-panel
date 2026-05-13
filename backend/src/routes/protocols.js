@@ -4,7 +4,7 @@ import { getDb, query, queryOne, run } from '../services/db.js';
 import { authMiddleware } from '../middleware/auth.js';
 import {
   installAWG2, installXray, installWireGuard,
-  getContainerStatus, startContainer, stopContainer,
+  getContainerStatus, getContainersHealth, startContainer, stopContainer,
   removeContainer, getContainerLogs, PROTOCOLS,
 } from '../services/protocols.js';
 
@@ -17,6 +17,26 @@ router.get('/server/:serverId', async (req, res) => {
   await getDb();
   const protocols = query('SELECT * FROM protocols WHERE server_id = ?', [req.params.serverId]);
   res.json(protocols.map(p => ({ ...p, config: p.config ? JSON.parse(p.config) : {} })));
+});
+
+// GET /api/protocols/server/:serverId/health — реальные статусы всех контейнеров за один SSH-вызов
+router.get('/server/:serverId/health', async (req, res) => {
+  await getDb();
+  const protocols = query('SELECT id, container_name FROM protocols WHERE server_id = ?', [req.params.serverId]);
+  if (!protocols.length) return res.json({});
+
+  const server = queryOne('SELECT * FROM servers WHERE id = ?', [req.params.serverId]);
+  if (!server) return res.status(404).json({ error: 'Server not found' });
+
+  const statusMap = await getContainersHealth(server, protocols.map(p => p.container_name));
+
+  const result = {};
+  for (const p of protocols) {
+    const status = statusMap[p.container_name] ?? 'not_found';
+    run('UPDATE protocols SET status = ? WHERE id = ?', [status, p.id]);
+    result[p.id] = status;
+  }
+  res.json(result); // { protocolId: 'running'|'exited'|'not_found'|... }
 });
 
 router.post('/server/:serverId', async (req, res) => {

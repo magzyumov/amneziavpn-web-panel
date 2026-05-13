@@ -1,10 +1,21 @@
 import { Router } from 'express';
 import bcrypt from 'bcryptjs';
 import { v4 as uuidv4 } from 'uuid';
+import rateLimit from 'express-rate-limit';
 import { getDb, query, queryOne, run } from '../services/db.js';
 import { signToken } from '../middleware/auth.js';
 
 const router = Router();
+
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 минут
+  max: 10,                   // не более 10 попыток с одного IP
+  skipSuccessfulRequests: true, // успешный вход не считается
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  message: { error: 'Too many login attempts. Try again in 15 minutes.' },
+  keyGenerator: (req) => req.ip || req.socket?.remoteAddress || 'unknown',
+});
 
 // POST /api/auth/setup — первичная регистрация (только если нет юзеров)
 router.post('/setup', async (req, res) => {
@@ -29,7 +40,7 @@ router.get('/status', async (req, res) => {
 });
 
 // POST /api/auth/login
-router.post('/login', async (req, res) => {
+router.post('/login', loginLimiter, async (req, res) => {
   await getDb();
   const { username, password } = req.body;
   const user = queryOne('SELECT * FROM users WHERE username = ?', [username]);

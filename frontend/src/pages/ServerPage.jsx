@@ -1,7 +1,14 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { serversApi, protocolsApi, clientsApi } from '../api.js';
+import { serversApi, protocolsApi, clientsApi, downloadWithAuth } from '../api.js';
 import { subscriptionsApi } from '../api.js';
+import {
+  DndContext, closestCenter, PointerSensor, TouchSensor, useSensor, useSensors,
+} from '@dnd-kit/core';
+import {
+  SortableContext, verticalListSortingStrategy, useSortable, arrayMove,
+} from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
 
 // ── Scan Existing Protocols Modal ───────────────────────────────────────────
 function ScanProtocolsModal({ serverId, existingProtocols, onClose, onImported }) {
@@ -149,6 +156,89 @@ function ScanProtocolsModal({ serverId, existingProtocols, onClose, onImported }
   );
 }
 
+
+// ── Edit Server Modal ────────────────────────────────────
+function EditServerModal({ server, onClose, onSaved }) {
+  const [form, setForm] = useState({
+    name: server.name,
+    host: server.host,
+    port: server.port,
+    username: server.username,
+    auth_type: server.auth_type || 'password',
+    password: '',
+    private_key: '',
+  });
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
+
+  const submit = async () => {
+    setLoading(true);
+    setError('');
+    try {
+      const r = await serversApi.update(server.id, form);
+      onSaved(r.data);
+    } catch (e) {
+      setError(e.response?.data?.error || 'Failed to update server');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="modal-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
+      <div className="modal">
+        <div className="modal-title">Edit Server</div>
+        {error && <div className="notice notice-error" style={{ marginBottom: 16 }}>{error}</div>}
+        <div className="modal-form">
+          <div className="input-group">
+            <label className="input-label">Name</label>
+            <input className="input" value={form.name} onChange={e => set('name', e.target.value)} />
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 80px', gap: 8 }}>
+            <div className="input-group">
+              <label className="input-label">Host / IP</label>
+              <input className="input input-mono" value={form.host} onChange={e => set('host', e.target.value)} />
+            </div>
+            <div className="input-group">
+              <label className="input-label">Port</label>
+              <input className="input input-mono" type="number" value={form.port} onChange={e => set('port', +e.target.value)} />
+            </div>
+          </div>
+          <div className="input-group">
+            <label className="input-label">Username</label>
+            <input className="input input-mono" value={form.username} onChange={e => set('username', e.target.value)} />
+          </div>
+          <div className="input-group">
+            <label className="input-label">Auth Type</label>
+            <select className="input" value={form.auth_type} onChange={e => set('auth_type', e.target.value)}>
+              <option value="password">Password</option>
+              <option value="key">SSH Key</option>
+            </select>
+          </div>
+          {form.auth_type === 'password' ? (
+            <div className="input-group">
+              <label className="input-label">Password <span className="text-muted">(оставьте пустым чтобы не менять)</span></label>
+              <input className="input" type="password" placeholder="••••••••" value={form.password} onChange={e => set('password', e.target.value)} />
+            </div>
+          ) : (
+            <div className="input-group">
+              <label className="input-label">Private Key (PEM) <span className="text-muted">(оставьте пустым чтобы не менять)</span></label>
+              <textarea className="input input-mono" rows={5} placeholder="-----BEGIN RSA PRIVATE KEY-----" value={form.private_key} onChange={e => set('private_key', e.target.value)} />
+            </div>
+          )}
+        </div>
+        <div className="modal-actions">
+          <button className="btn btn-outline" onClick={onClose}>Cancel</button>
+          <button className="btn btn-primary" onClick={submit} disabled={loading}>
+            {loading ? <><span className="spinner" /> Saving…</> : '✓ Save'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 function InstallProtocolModal({ serverId, onClose, onInstalled }) {
   const [type, setType] = useState('awg2');
@@ -330,8 +420,11 @@ function ClientModal({ client, protocolType, onClose }) {
     : isXray ? 'Сканируйте в FLClash, v2rayNG или совместимом клиенте'
              : 'Сканируйте в стандартном WireGuard клиенте';
 
-  const activeDownloadUrl   = showAmnezia ? clientsApi.configAmneziaUrl(client.id) : clientsApi.configDownloadUrl(client.id);
-  const activeDownloadLabel = showAmnezia ? '⬇ JSON для Amnezia' : isXray ? '⬇ Скачать .txt' : '⬇ Скачать .conf';
+  const activeDownloadUrl      = showAmnezia ? clientsApi.configAmneziaUrl(client.id) : clientsApi.configDownloadUrl(client.id);
+  const activeDownloadLabel    = showAmnezia ? '⬇ JSON для Amnezia' : isXray ? '⬇ Скачать .txt' : '⬇ Скачать .conf';
+  const activeDownloadFilename = showAmnezia
+    ? `${client.name}_amnezia.json`
+    : isXray ? `${client.name}.txt` : `${client.name}.conf`;
 
   const tabs = [
     { id: 'qr',  label: 'QR-код' },
@@ -362,7 +455,7 @@ function ClientModal({ client, protocolType, onClose }) {
         )}
 
         {/* Переключатель формата (AWG, WireGuard, Xray) */}
-        {hasAmneziaQr && client.has_config && (
+        {hasAmneziaQr && !!client.has_config && (
           <div style={{
             display: 'flex', gap: 0, marginBottom: 16,
             border: '1px solid var(--border)', borderRadius: 8, overflow: 'hidden',
@@ -392,7 +485,7 @@ function ClientModal({ client, protocolType, onClose }) {
           </div>
         )}
 
-        {client.has_config && (<>
+        {!!client.has_config && (<>
           {/* Вкладки QR / текст */}
           <div style={{ display: 'flex', gap: 4, marginBottom: 16 }}>
             {tabs.map(t => (
@@ -488,8 +581,8 @@ function ClientModal({ client, protocolType, onClose }) {
         {/* Кнопки */}
         <div className="modal-actions" style={{ marginTop: 16 }}>
           <button className="btn btn-outline" onClick={onClose}>Закрыть</button>
-          {client.has_config && (
-            <button className="btn btn-primary" onClick={() => window.open(activeDownloadUrl, '_blank')}>
+          {!!client.has_config && (
+            <button className="btn btn-primary" onClick={() => downloadWithAuth(activeDownloadUrl, activeDownloadFilename)}>
               {activeDownloadLabel}
             </button>
           )}
@@ -599,16 +692,37 @@ function CopySubButton({ clientId }) {
   );
 }
 
+// ── Sortable wrapper ─────────────────────────────────────
+function SortableProtocolCard(props) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: props.protocol.id });
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : 1,
+    position: 'relative',
+  };
+  return (
+    <div ref={setNodeRef} style={style}>
+      <ProtocolCard {...props} dragHandleProps={{ ...attributes, ...listeners }} />
+    </div>
+  );
+}
+
 // ── Protocol Card ────────────────────────────────────────
-function ProtocolCard({ protocol, server, onDelete }) {
+function ProtocolCard({ protocol, server, onDelete, dragHandleProps }) {
   const [clients, setClients] = useState([]);
   const [loadingClients, setLoadingClients] = useState(true);
   const [showAddClient, setShowAddClient] = useState(false);
   const [selectedClient, setSelectedClient] = useState(null);
   const [status, setStatus] = useState(protocol.status);
   const [toggling, setToggling] = useState(false);
+
+  useEffect(() => { setStatus(protocol.status); }, [protocol.status]);
   const [showLogs, setShowLogs] = useState(false);
   const [logs, setLogs] = useState('');
+  const [showClients, setShowClients] = useState(false);
+  const [showConfig, setShowConfig] = useState(false);
+  const [search, setSearch] = useState('');
 
   const icons = { awg2: '🛡️', xray: '⚡', wireguard: '🔒' };
 
@@ -650,13 +764,32 @@ function ProtocolCard({ protocol, server, onDelete }) {
       {/* Header */}
       <div className="flex items-center justify-between" style={{ marginBottom: 12 }}>
         <div className="flex items-center gap-8">
+          <span
+            {...dragHandleProps}
+            title="Перетащить"
+            style={{ cursor: 'grab', color: 'var(--text-muted)', fontSize: 14, lineHeight: 1, userSelect: 'none', touchAction: 'none' }}
+          >⠿</span>
           <span style={{ fontSize: 20 }}>{icons[protocol.type]}</span>
           <div>
             <div style={{ fontWeight: 600, fontSize: 14 }}>{protocol.name}</div>
-            <div className="mono text-muted" style={{ fontSize: 11 }}>:{protocol.port} · {protocol.container_name}</div>
+            <div className="mono text-muted" style={{ fontSize: 11, display: 'flex', alignItems: 'center', gap: 6 }}>
+              :{protocol.port} · {protocol.container_name}
+              {cfg && (
+                <button onClick={() => setShowConfig(s => !s)} style={{
+                  background: 'none', border: 'none', cursor: 'pointer', padding: 0,
+                  color: showConfig ? 'var(--accent)' : 'var(--text-muted)',
+                  fontFamily: 'var(--font-mono)', fontSize: 10,
+                  display: 'inline-flex', alignItems: 'center', gap: 2,
+                  transition: 'color 0.15s',
+                }}>
+                  · ⚙ config
+                  <span style={{ display: 'inline-block', transition: 'transform 0.15s', transform: showConfig ? 'rotate(180deg)' : 'rotate(0deg)', fontSize: 8 }}>▾</span>
+                </button>
+              )}
+            </div>
           </div>
         </div>
-        <div className="flex gap-8 items-center">
+        <div className="flex gap-8 items-center proto-card-actions">
           <span className={`badge badge-${status === 'running' ? 'running' : 'stopped'}`}>
             {status}
           </span>
@@ -669,7 +802,7 @@ function ProtocolCard({ protocol, server, onDelete }) {
       </div>
 
       {/* Config summary */}
-      {cfg && (
+      {cfg && showConfig && (
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 12, minWidth: 0 }}>
           {Object.entries(cfg)
             .filter(([k]) => !['privateKey', 'i1', 'i2', 'i3', 'i4', 'i5'].includes(k))
@@ -701,49 +834,98 @@ function ProtocolCard({ protocol, server, onDelete }) {
 
       {/* Clients */}
       <div style={{ borderTop: '1px solid var(--border)', paddingTop: 12 }}>
-        <div className="flex justify-between items-center" style={{ marginBottom: 10 }}>
-          <span className="input-label">Clients ({clients.length})</span>
-          <button className="btn btn-outline btn-sm" onClick={() => setShowAddClient(true)}>+ Add</button>
+        <div className="flex justify-between items-center" style={{ marginBottom: showClients ? 10 : 0 }}>
+          <button
+            onClick={() => { setShowClients(s => !s); setSearch(''); }}
+            style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}
+          >
+            <span style={{
+              fontSize: 9, display: 'inline-block', transition: 'transform 0.15s',
+              transform: showClients ? 'rotate(90deg)' : 'rotate(0deg)', color: 'var(--text-muted)',
+            }}>▶</span>
+            <span className="input-label" style={{ margin: 0, cursor: 'pointer' }}>
+              Clients ({loadingClients ? '…' : clients.length})
+            </span>
+          </button>
+          <button className="btn btn-outline btn-sm" onClick={() => { setShowClients(true); setShowAddClient(true); }}>+ Add</button>
         </div>
 
-        {loadingClients ? (
-          <span className="spinner" style={{ width: 14, height: 14 }} />
-        ) : clients.length === 0 ? (
-          <div className="text-muted mono" style={{ fontSize: 11 }}>No clients yet</div>
-        ) : (
-          <table className="table">
-            <thead>
-              <tr>
-                <th>Name</th>
-                <th>Created</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              {clients.map(c => (
-                <tr key={c.id}>
-                  <td style={{ fontWeight: 500 }}>
-                    {c.name}
-                    {!c.has_config && (
-                      <span className="mono text-muted" style={{ fontSize: 10, marginLeft: 6 }}>[без конфига]</span>
-                    )}
-                  </td>
-                  <td className="mono text-muted" style={{ fontSize: 11 }}>
-                    {c.created_at ? new Date(c.created_at.replace(' ', 'T')).toLocaleDateString() : '—'}
-                  </td>
-                  <td>
-                    <div className="flex gap-8">
-                      <button className="btn btn-ghost btn-sm" onClick={() => setSelectedClient(c)}>⬡ View</button>
-                      {protocol.type === 'xray' && c.has_config && (
-                        <CopySubButton clientId={c.id} />
-                      )}
-                      <button className="btn btn-danger btn-sm" onClick={() => delClient(c.id)}>✕</button>
+        {showClients && (
+          loadingClients ? (
+            <span className="spinner" style={{ width: 14, height: 14 }} />
+          ) : clients.length === 0 ? (
+            <div className="text-muted mono" style={{ fontSize: 11 }}>No clients yet</div>
+          ) : (() => {
+            const q = search.trim().toLowerCase();
+            const filtered = q ? clients.filter(c => c.name.toLowerCase().includes(q)) : clients;
+            return (
+              <div>
+                {/* search */}
+                <div style={{ position: 'relative', marginBottom: 10 }}>
+                  <span style={{ position: 'absolute', left: 9, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)', fontSize: 12, pointerEvents: 'none' }}>⌕</span>
+                  <input
+                    className="input input-mono"
+                    style={{ paddingLeft: 28, fontSize: 12, height: 30 }}
+                    placeholder="Search clients…"
+                    value={search}
+                    onChange={e => setSearch(e.target.value)}
+                  />
+                  {search && (
+                    <button onClick={() => setSearch('')} style={{
+                      position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)',
+                      background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: 14, lineHeight: 1, padding: 0,
+                    }}>×</button>
+                  )}
+                </div>
+
+                {/* count hint when filtering */}
+                {q && (
+                  <div className="mono text-muted" style={{ fontSize: 11, marginBottom: 8 }}>
+                    {filtered.length} из {clients.length}
+                    {filtered.length === 0 && ' — ничего не найдено'}
+                  </div>
+                )}
+
+                {filtered.length > 0 && (
+                  <>
+                    {/* header */}
+                    <div style={{ display: 'flex', alignItems: 'center', padding: '0 0 6px 0', borderBottom: '1px solid var(--border)' }}>
+                      <span className="col-name" style={{ fontSize: 11, color: 'var(--text-dim)', fontFamily: 'var(--font-mono)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Name</span>
+                      <div style={{ flex: 1, display: 'flex', alignItems: 'center' }}>
+                        <span className="col-date-hdr">Created</span>
+                        <span className="col-actions-hdr"></span>
+                      </div>
                     </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+                    {/* rows */}
+                    {filtered.map(c => (
+                      <div key={c.id} style={{ display: 'flex', alignItems: 'center', padding: '7px 0', borderBottom: '1px solid var(--border)' }}
+                        onMouseEnter={e => e.currentTarget.style.background = 'var(--surface2)'}
+                        onMouseLeave={e => e.currentTarget.style.background = ''}>
+                        <div className="col-name" style={{ fontWeight: 500, paddingRight: 8 }}>
+                          {c.name}
+                          {!c.has_config && (
+                            <span className="mono text-muted" style={{ fontSize: 10, marginLeft: 6 }}>[без конфига]</span>
+                          )}
+                        </div>
+                        <div style={{ flex: 1, display: 'flex', alignItems: 'center' }}>
+                          <div className="col-date mono text-muted">
+                            {c.created_at ? new Date(c.created_at.replace(' ', 'T')).toLocaleDateString() : '—'}
+                          </div>
+                          <div className="col-actions">
+                            <button className="btn btn-ghost btn-sm" onClick={() => setSelectedClient(c)}>⬡ View</button>
+                            {protocol.type === 'xray' && c.has_config && (
+                              <CopySubButton clientId={c.id} />
+                            )}
+                            <button className="btn btn-danger btn-sm" onClick={() => delClient(c.id)}>✕</button>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </>
+                )}
+              </div>
+            );
+          })()
         )}
       </div>
 
@@ -759,6 +941,23 @@ function ProtocolCard({ protocol, server, onDelete }) {
   );
 }
 
+const ORDER_KEY = (serverId) => `protocol-order-${serverId}`;
+
+function applyOrder(protocols, serverId) {
+  try {
+    const saved = JSON.parse(localStorage.getItem(ORDER_KEY(serverId)) || '[]');
+    if (!saved.length) return protocols;
+    return [...protocols].sort((a, b) => {
+      const ai = saved.indexOf(a.id);
+      const bi = saved.indexOf(b.id);
+      if (ai === -1 && bi === -1) return 0;
+      if (ai === -1) return 1;
+      if (bi === -1) return -1;
+      return ai - bi;
+    });
+  } catch { return protocols; }
+}
+
 // ── Main Page ────────────────────────────────────────────
 export default function ServerPage() {
   const { id } = useParams();
@@ -767,9 +966,16 @@ export default function ServerPage() {
   const [protocols, setProtocols] = useState([]);
   const [showInstall, setShowInstall] = useState(false);
   const [showScan, setShowScan] = useState(false);
+  const [showEdit, setShowEdit] = useState(false);
   const [loading, setLoading] = useState(true);
   const [installingDocker, setInstallingDocker] = useState(false);
   const [dockerMsg, setDockerMsg] = useState('');
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(TouchSensor,   { activationConstraint: { delay: 250, tolerance: 5 } }),
+  );
+  const protocolsLoadedRef = useRef(false);
 
   useEffect(() => {
     Promise.all([
@@ -777,16 +983,38 @@ export default function ServerPage() {
       protocolsApi.byServer(id),
     ]).then(([sr, pr]) => {
       setServer(sr.data.find(s => s.id === id));
-      setProtocols(pr.data);
-      // Auto-open scan if redirected from "Add Server"
+      setProtocols(applyOrder(pr.data, id));
       const params = new URLSearchParams(window.location.search);
       if (params.get('scan') === '1') {
         setShowScan(true);
-        // Clean URL
         window.history.replaceState({}, '', window.location.pathname);
       }
-    }).finally(() => setLoading(false));
+    }).then(() => { protocolsLoadedRef.current = true; }).finally(() => setLoading(false));
   }, [id]);
+
+  // Polling реальных статусов каждые 30 секунд
+  useEffect(() => {
+    const poll = async () => {
+      if (!protocolsLoadedRef.current) return;
+      try {
+        const r = await protocolsApi.health(id);
+        setProtocols(prev => prev.map(p => r.data[p.id] !== undefined ? { ...p, status: r.data[p.id] } : p));
+      } catch {} // не мешаем работе при недоступности сервера
+    };
+    const interval = setInterval(poll, 30000);
+    return () => clearInterval(interval);
+  }, [id]);
+
+  const handleDragEnd = ({ active, over }) => {
+    if (!over || active.id === over.id) return;
+    setProtocols(prev => {
+      const oldIdx = prev.findIndex(p => p.id === active.id);
+      const newIdx = prev.findIndex(p => p.id === over.id);
+      const next = arrayMove(prev, oldIdx, newIdx);
+      localStorage.setItem(ORDER_KEY(id), JSON.stringify(next.map(p => p.id)));
+      return next;
+    });
+  };
 
   const ensureDocker = async () => {
     setInstallingDocker(true);
@@ -813,7 +1041,7 @@ export default function ServerPage() {
   return (
     <>
       <div className="page-header">
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between page-header-row">
           <div>
             <div className="flex items-center gap-8">
               <button className="btn btn-ghost btn-sm" onClick={() => navigate('/')}>← Back</button>
@@ -821,7 +1049,8 @@ export default function ServerPage() {
             </div>
             <div className="page-sub mono">// {server.username}@{server.host}:{server.port}</div>
           </div>
-          <div className="flex gap-8">
+          <div className="flex gap-8 page-header-actions">
+            <button className="btn btn-outline" onClick={() => setShowEdit(true)}>✎ Edit Server</button>
             <button className="btn btn-outline" onClick={ensureDocker} disabled={installingDocker}>
               {installingDocker ? <><span className="spinner" /> Installing Docker…</> : '🐳 Ensure Docker'}
             </button>
@@ -847,11 +1076,15 @@ export default function ServerPage() {
             </button>
           </div>
         ) : (
-          <div className="grid" style={{ gap: 16, minWidth: 0, overflow: 'hidden' }}>
-            {protocols.map(p => (
-              <ProtocolCard key={p.id} protocol={p} server={server} onDelete={delProtocol} />
-            ))}
-          </div>
+          <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+            <SortableContext items={protocols.map(p => p.id)} strategy={verticalListSortingStrategy}>
+              <div className="grid" style={{ gap: 16, minWidth: 0, overflow: 'hidden' }}>
+                {protocols.map(p => (
+                  <SortableProtocolCard key={p.id} protocol={p} server={server} onDelete={delProtocol} />
+                ))}
+              </div>
+            </SortableContext>
+          </DndContext>
         )}
       </div>
 
@@ -873,6 +1106,13 @@ export default function ServerPage() {
               return [...prev, p];
             });
           }}
+        />
+      )}
+      {showEdit && (
+        <EditServerModal
+          server={server}
+          onClose={() => setShowEdit(false)}
+          onSaved={updated => { setServer(s => ({ ...s, ...updated })); setShowEdit(false); }}
         />
       )}
     </>
