@@ -706,8 +706,9 @@ export async function addAWG2Client(server, protocol, clientName) {
     throw new Error(`Failed to add AWG2 peer: ${addPeerRes.stderr || addPeerRes.stdout}`);
   }
 
-  // Дописываем peer в серверный конфиг
-  await execSudo(server, `printf '\\n[Peer]\\nPublicKey = ${clientPubKey}\\nPresharedKey = ${presharedKey}\\nAllowedIPs = ${clientIp}/32\\n' >> /opt/amnezia/awg/awg0.conf`);
+  // Дописываем peer в серверный конфиг ВНУТРИ контейнера (конфиг хранится в контейнере, не на хосте)
+  const awgPeerEntry = Buffer.from(`\n[Peer]\nPublicKey = ${clientPubKey}\nPresharedKey = ${presharedKey}\nAllowedIPs = ${clientIp}/32\n`).toString('base64');
+  await execSudo(server, `echo '${awgPeerEntry}' | base64 -d | docker exec -i ${cn} tee -a /opt/amnezia/awg/awg0.conf > /dev/null`);
 
   // Общие параметры шаблона
   const templateVars = {
@@ -987,7 +988,8 @@ export async function addWireGuardClient(server, protocol, clientName) {
     throw new Error(`Failed to add WireGuard peer: ${addPeerRes.stderr || addPeerRes.stdout}`);
   }
 
-  await execSudo(server, `printf '\\n[Peer]\\nPublicKey = ${clientPubKey}\\nPresharedKey = ${presharedKey}\\nAllowedIPs = ${clientIp}/32\\n' >> /opt/amnezia/wireguard/wg0.conf`);
+  const wgPeerEntry = Buffer.from(`\n[Peer]\nPublicKey = ${clientPubKey}\nPresharedKey = ${presharedKey}\nAllowedIPs = ${clientIp}/32\n`).toString('base64');
+  await execSudo(server, `echo '${wgPeerEntry}' | base64 -d | docker exec -i ${cn} tee -a /opt/amnezia/wireguard/wg0.conf > /dev/null`);
 
   const templateVars = {
     WIREGUARD_CLIENT_IP: clientIp,
@@ -1071,8 +1073,11 @@ export async function scanExistingProtocols(server) {
       // Парсим порт из конфига
       const portMatch = confRaw.match(/ListenPort\s*=\s*(\d+)/);
       port = portMatch ? parseInt(portMatch[1]) : null;
-      // Парсим параметры обфускации
-      const getConf = (key) => { const m = confRaw.match(new RegExp(`^${key}\\s*=\\s*(.+)$`, 'm')); return m ? m[1].trim() : null; };
+      // Парсим параметры обфускации.
+      // #? — I1-I5 хранятся закомментированными в серверном конфиге Amnezia Desktop.
+      // [ \t]* вместо \s* — не поглощаем \n (иначе пустые значения захватывают следующую строку).
+      // .* вместо .+ — разрешаем пустые значения.
+      const getConf = (key) => { const m = confRaw.match(new RegExp(`^#?[ \\t]*${key}[ \\t]*=[ \\t]*(.*)$`, 'm')); return m ? m[1].trim() : null; };
       config = {
         port,
         subnetIp: '10.8.1.0', subnetCidr: '24',
@@ -1080,8 +1085,8 @@ export async function scanExistingProtocols(server) {
         jc: getConf('Jc'), jmin: getConf('Jmin'), jmax: getConf('Jmax'),
         s1: getConf('S1'), s2: getConf('S2'), s3: getConf('S3'), s4: getConf('S4'),
         h1: getConf('H1'), h2: getConf('H2'), h3: getConf('H3'), h4: getConf('H4'),
-        i1: getConf('I1') || '', i2: getConf('I2') || '', i3: getConf('I3') || '',
-        i4: getConf('I4') || '', i5: getConf('I5') || '',
+        i1: getConf('I1') ?? '', i2: getConf('I2') ?? '', i3: getConf('I3') ?? '',
+        i4: getConf('I4') ?? '', i5: getConf('I5') ?? '',
       };
     } else if (c.type === 'wireguard') {
       const pubKey  = await readContainerFile(server, c.containerName, `${c.confDir}/wireguard_server_public_key.key`);
