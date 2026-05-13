@@ -238,6 +238,7 @@ const STYLES = `
 
   /* Loading */
   @keyframes spin { to { transform: rotate(360deg); } }
+  @keyframes qr-progress { from { width: 0%; } to { width: 100%; } }
   .spinner {
     width: 16px; height: 16px;
     border: 2px solid var(--border);

@@ -448,6 +448,7 @@ const AWG2_CLIENT_JSON_TEMPLATE = `{
     "host": "$SERVER_IP_ADDRESS",
     "port": "$AWG_SERVER_PORT",
     "type": "awg2",
+    "client_pub_key": "$WIREGUARD_CLIENT_PUBLIC_KEY",
     "config": {
         "address": "$WIREGUARD_CLIENT_IP/32",
         "dns": "$PRIMARY_DNS, $SECONDARY_DNS",
@@ -479,6 +480,7 @@ const WG_CLIENT_JSON_TEMPLATE = `{
     "host": "$SERVER_IP_ADDRESS",
     "port": "$WIREGUARD_SERVER_PORT",
     "type": "wireguard",
+    "client_pub_key": "$WIREGUARD_CLIENT_PUBLIC_KEY",
     "config": {
         "address": "$WIREGUARD_CLIENT_IP/32",
         "dns": "$PRIMARY_DNS, $SECONDARY_DNS",
@@ -516,6 +518,12 @@ async function writeRemoteFile(server, remotePath, content) {
 // Чтение файла с удалённого сервера
 async function readRemoteFile(server, remotePath) {
   const res = await execSudo(server, `cat ${remotePath} 2>/dev/null`);
+  return res.stdout.trim();
+}
+
+// Чтение файла из внутренности Docker-контейнера
+async function readContainerFile(server, containerName, remotePath) {
+  const res = await execSudo(server, `docker exec ${containerName} cat ${remotePath} 2>/dev/null`);
   return res.stdout.trim();
 }
 
@@ -698,8 +706,9 @@ export async function addAWG2Client(server, protocol, clientName) {
     throw new Error(`Failed to add AWG2 peer: ${addPeerRes.stderr || addPeerRes.stdout}`);
   }
 
-  // Дописываем peer в серверный конфиг
-  await execSudo(server, `printf '\\n[Peer]\\nPublicKey = ${clientPubKey}\\nPresharedKey = ${presharedKey}\\nAllowedIPs = ${clientIp}/32\\n' >> /opt/amnezia/awg/awg0.conf`);
+  // Дописываем peer в серверный конфиг ВНУТРИ контейнера (конфиг хранится в контейнере, не на хосте)
+  const awgPeerEntry = Buffer.from(`\n[Peer]\nPublicKey = ${clientPubKey}\nPresharedKey = ${presharedKey}\nAllowedIPs = ${clientIp}/32\n`).toString('base64');
+  await execSudo(server, `echo '${awgPeerEntry}' | base64 -d | docker exec -i ${cn} tee -a /opt/amnezia/awg/awg0.conf > /dev/null`);
 
   // Общие параметры шаблона
   const templateVars = {
@@ -707,6 +716,7 @@ export async function addAWG2Client(server, protocol, clientName) {
     PRIMARY_DNS: '1.1.1.1',
     SECONDARY_DNS: '8.8.8.8',
     WIREGUARD_CLIENT_PRIVATE_KEY: clientPrivKey,
+    WIREGUARD_CLIENT_PUBLIC_KEY: clientPubKey,
     JUNK_PACKET_COUNT: c.jc ?? randInt(3, 10),
     JUNK_PACKET_MIN_SIZE: c.jmin ?? randInt(10, 50),
     JUNK_PACKET_MAX_SIZE: c.jmax ?? randInt(200, 1000),
@@ -818,15 +828,15 @@ export async function addXrayClient(server, protocol, clientName) {
   }
   const clientId = uuidRes.stdout.trim();
 
-  // Читаем и обновляем server.json
-  const confRes = await execSudo(server, `cat /opt/amnezia/xray/server.json`);
-  if (confRes.code !== 0 || !confRes.stdout.trim()) {
+  // Читаем server.json из контейнера (файл хранится внутри, не на хосте)
+  const confRaw = await readContainerFile(server, cn, '/opt/amnezia/xray/server.json');
+  if (!confRaw) {
     throw new Error('Xray server.json not found on VPS. The protocol may not have been configured correctly. Reinstall the protocol.');
   }
 
   let serverJson;
   try {
-    serverJson = JSON.parse(confRes.stdout);
+    serverJson = JSON.parse(confRaw);
   } catch (e) {
     throw new Error(`Failed to parse Xray server.json: ${e.message}. File content may be corrupted. Reinstall the protocol.`);
   }
@@ -836,7 +846,10 @@ export async function addXrayClient(server, protocol, clientName) {
   }
 
   serverJson.inbounds[0].settings.clients.push({ id: clientId, flow: 'xtls-rprx-vision' });
-  await writeRemoteFile(server, `/opt/amnezia/xray/server.json`, JSON.stringify(serverJson, null, 4));
+
+  // Пишем обновлённый server.json обратно в контейнер
+  const jsonB64 = Buffer.from(JSON.stringify(serverJson, null, 4)).toString('base64');
+  await execSudo(server, `echo '${jsonB64}' | base64 -d | docker exec -i ${cn} sh -c 'cat > /opt/amnezia/xray/server.json'`);
 
   // Перезапускаем контейнер для применения изменений
   const restartRes = await execSudo(server, `docker restart ${cn}`);
@@ -959,8 +972,8 @@ export async function addWireGuardClient(server, protocol, clientName) {
   }
   const clientPubKey = pubRes.stdout.trim();
 
-  // Читаем server PSK
-  const presharedKey = await readRemoteFile(server, '/opt/amnezia/wireguard/wireguard_psk.key');
+  // PSK хранится внутри контейнера, не на хосте
+  const presharedKey = await readContainerFile(server, cn, '/opt/amnezia/wireguard/wireguard_psk.key');
   if (!presharedKey) {
     throw new Error('WireGuard PSK not found on server. Reinstall the protocol.');
   }
@@ -978,13 +991,15 @@ export async function addWireGuardClient(server, protocol, clientName) {
     throw new Error(`Failed to add WireGuard peer: ${addPeerRes.stderr || addPeerRes.stdout}`);
   }
 
-  await execSudo(server, `printf '\\n[Peer]\\nPublicKey = ${clientPubKey}\\nPresharedKey = ${presharedKey}\\nAllowedIPs = ${clientIp}/32\\n' >> /opt/amnezia/wireguard/wg0.conf`);
+  const wgPeerEntry = Buffer.from(`\n[Peer]\nPublicKey = ${clientPubKey}\nPresharedKey = ${presharedKey}\nAllowedIPs = ${clientIp}/32\n`).toString('base64');
+  await execSudo(server, `echo '${wgPeerEntry}' | base64 -d | docker exec -i ${cn} tee -a /opt/amnezia/wireguard/wg0.conf > /dev/null`);
 
   const templateVars = {
     WIREGUARD_CLIENT_IP: clientIp,
     PRIMARY_DNS: '1.1.1.1',
     SECONDARY_DNS: '8.8.8.8',
     WIREGUARD_CLIENT_PRIVATE_KEY: clientPrivKey,
+    WIREGUARD_CLIENT_PUBLIC_KEY: clientPubKey,
     WIREGUARD_SERVER_PUBLIC_KEY: c.serverPubKey,
     WIREGUARD_PSK: presharedKey,
     SERVER_IP_ADDRESS: server.host,
@@ -1045,7 +1060,8 @@ export async function scanExistingProtocols(server) {
   ];
 
   for (const c of candidates) {
-    const statusRes = await exec(server, `docker inspect --format='{{.State.Status}}' ${c.containerName} 2>/dev/null || echo 'not_found'`);
+    // execSudo чтобы гарантировать доступ к docker даже без прав группы docker у SSH-пользователя
+    const statusRes = await execSudo(server, `docker inspect --format='{{.State.Status}}' ${c.containerName} 2>/dev/null || echo 'not_found'`);
     const status = statusRes.stdout.trim();
     if (status === 'not_found') continue;
 
@@ -1053,14 +1069,18 @@ export async function scanExistingProtocols(server) {
     let port = null;
 
     if (c.type === 'awg2') {
-      const pubKey  = await readRemoteFile(server, `${c.confDir}/wireguard_server_public_key.key`);
-      const confRaw = await readRemoteFile(server, `${c.confDir}/awg0.conf`);
+      // Конфиги хранятся внутри контейнера, не на хосте
+      const pubKey  = await readContainerFile(server, c.containerName, `${c.confDir}/wireguard_server_public_key.key`);
+      const confRaw = await readContainerFile(server, c.containerName, `${c.confDir}/awg0.conf`);
       if (!pubKey && !confRaw) continue;
       // Парсим порт из конфига
       const portMatch = confRaw.match(/ListenPort\s*=\s*(\d+)/);
       port = portMatch ? parseInt(portMatch[1]) : null;
-      // Парсим параметры обфускации
-      const getConf = (key) => { const m = confRaw.match(new RegExp(`^${key}\\s*=\\s*(.+)$`, 'm')); return m ? m[1].trim() : null; };
+      // Парсим параметры обфускации.
+      // #? — I1-I5 хранятся закомментированными в серверном конфиге Amnezia Desktop.
+      // [ \t]* вместо \s* — не поглощаем \n (иначе пустые значения захватывают следующую строку).
+      // .* вместо .+ — разрешаем пустые значения.
+      const getConf = (key) => { const m = confRaw.match(new RegExp(`^#?[ \\t]*${key}[ \\t]*=[ \\t]*(.*)$`, 'm')); return m ? m[1].trim() : null; };
       config = {
         port,
         subnetIp: '10.8.1.0', subnetCidr: '24',
@@ -1068,12 +1088,12 @@ export async function scanExistingProtocols(server) {
         jc: getConf('Jc'), jmin: getConf('Jmin'), jmax: getConf('Jmax'),
         s1: getConf('S1'), s2: getConf('S2'), s3: getConf('S3'), s4: getConf('S4'),
         h1: getConf('H1'), h2: getConf('H2'), h3: getConf('H3'), h4: getConf('H4'),
-        i1: getConf('I1') || '', i2: getConf('I2') || '', i3: getConf('I3') || '',
-        i4: getConf('I4') || '', i5: getConf('I5') || '',
+        i1: getConf('I1') ?? '', i2: getConf('I2') ?? '', i3: getConf('I3') ?? '',
+        i4: getConf('I4') ?? '', i5: getConf('I5') ?? '',
       };
     } else if (c.type === 'wireguard') {
-      const pubKey  = await readRemoteFile(server, `${c.confDir}/wireguard_server_public_key.key`);
-      const confRaw = await readRemoteFile(server, `${c.confDir}/wg0.conf`);
+      const pubKey  = await readContainerFile(server, c.containerName, `${c.confDir}/wireguard_server_public_key.key`);
+      const confRaw = await readContainerFile(server, c.containerName, `${c.confDir}/wg0.conf`);
       if (!pubKey && !confRaw) continue;
       const portMatch = confRaw.match(/ListenPort\s*=\s*(\d+)/);
       port = portMatch ? parseInt(portMatch[1]) : null;
@@ -1081,46 +1101,27 @@ export async function scanExistingProtocols(server) {
     } else if (c.type === 'xray') {
       let serverJson = null;
       try {
-        const confRaw = await readRemoteFile(server, `${c.confDir}/server.json`);
+        const confRaw = await readContainerFile(server, c.containerName, `${c.confDir}/server.json`);
         serverJson = JSON.parse(confRaw);
       } catch { continue; }
-      const pubKey  = await readRemoteFile(server, `${c.confDir}/xray_public.key`);
-      const shortId = await readRemoteFile(server, `${c.confDir}/xray_short_id.key`);
-      const uuid    = await readRemoteFile(server, `${c.confDir}/xray_uuid.key`);
+      const pubKey  = await readContainerFile(server, c.containerName, `${c.confDir}/xray_public.key`);
+      const shortId = await readContainerFile(server, c.containerName, `${c.confDir}/xray_short_id.key`);
+      const uuid    = await readContainerFile(server, c.containerName, `${c.confDir}/xray_uuid.key`);
       port = serverJson?.inbounds?.[0]?.port || null;
       const sni = serverJson?.inbounds?.[0]?.streamSettings?.realitySettings?.dest?.replace(/:443$/, '') || '';
       config = { port, sni, publicKey: pubKey, shortId, firstUuid: uuid };
     }
 
-    // Сканируем существующих пиров (клиентов) из конфига
-    let existingPeers = [];
-    if (c.type === 'awg2' || c.type === 'wireguard') {
-      const confFile = c.type === 'awg2' ? `${c.confDir}/awg0.conf` : `${c.confDir}/wg0.conf`;
-      const psk = await readRemoteFile(server, `${c.confDir}/wireguard_psk.key`);
-      const confRaw = await readRemoteFile(server, confFile);
-      // Парсим все [Peer] блоки
-      const peerBlocks = confRaw.split('[Peer]').slice(1);
-      for (let i = 0; i < peerBlocks.length; i++) {
-        const block = peerBlocks[i];
-        const pubKeyMatch = block.match(/PublicKey\s*=\s*(.+)/);
-        const allowedIpsMatch = block.match(/AllowedIPs\s*=\s*(.+)/);
-        if (pubKeyMatch) {
-          existingPeers.push({
-            index: i,
-            pubKey: pubKeyMatch[1].trim(),
-            allowedIps: allowedIpsMatch ? allowedIpsMatch[1].trim() : '',
-          });
-        }
-      }
-    } else if (c.type === 'xray') {
-      // Для Xray — список клиентов из server.json
-      try {
-        const confRaw = await readRemoteFile(server, `${c.confDir}/server.json`);
-        const sj = JSON.parse(confRaw);
-        const clients = sj?.inbounds?.[0]?.settings?.clients || [];
-        existingPeers = clients.map((cl, i) => ({ index: i, uuid: cl.id }));
-      } catch {}
-    }
+    // Читаем clientsTable из контейнера — источник истины по именам клиентов
+    let clients = [];
+    try {
+      const raw = await readContainerFile(server, c.containerName, `${c.confDir}/clientsTable`);
+      const table = JSON.parse(raw);
+      clients = table.map(e => ({
+        clientId: e.clientId,
+        name: e.userData?.clientName || `client-${String(e.clientId).slice(0, 8)}`,
+      }));
+    } catch {}
 
     found.push({
       type: c.type,
@@ -1128,7 +1129,7 @@ export async function scanExistingProtocols(server) {
       status,
       port,
       config,
-      existingPeers,
+      clients,
     });
   }
 

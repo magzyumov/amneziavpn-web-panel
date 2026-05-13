@@ -41,8 +41,9 @@ function ScanProtocolsModal({ serverId, existingProtocols, onClose, onImported }
         containerName: proto.containerName,
         port: proto.port,
         config: proto.config,
+        clients: proto.clients || [],
       });
-      setImported(s => ({ ...s, [proto.containerName]: true }));
+      setImported(s => ({ ...s, [proto.containerName]: r.data }));
       onImported(r.data);
     } catch (e) {
       setError(e.response?.data?.error || e.message);
@@ -89,7 +90,7 @@ function ScanProtocolsModal({ serverId, existingProtocols, onClose, onImported }
                     justifyContent: 'space-between',
                     gap: 12,
                   }}>
-                    <div>
+                    <div style={{ flex: 1 }}>
                       <div style={{ fontWeight: 600, fontSize: 14 }}>
                         {typeIcons[proto.type]} {typeNames[proto.type] || proto.type}
                       </div>
@@ -98,10 +99,22 @@ function ScanProtocolsModal({ serverId, existingProtocols, onClose, onImported }
                           color: proto.status === 'running' ? 'var(--green)' : 'var(--text-muted)'
                         }}>{proto.status}</span>
                       </div>
-                      {proto.existingPeers?.length > 0 && (
-                        <div className="text-muted" style={{ fontSize: 11, marginTop: 2 }}>
-                          {proto.existingPeers.length} existing peer{proto.existingPeers.length !== 1 ? 's' : ''} on server
-                          {' '}(will not be auto-imported as clients)
+                      {proto.clients?.length > 0 && (
+                        <div style={{ fontSize: 11, marginTop: 4, color: 'var(--text-dim)' }}>
+                          {proto.clients.length} client{proto.clients.length !== 1 ? 's' : ''} найдено
+                          {proto.type !== 'xray' && <span className="text-muted"> (без конфига — приватный ключ на устройстве)</span>}
+                          {isImported && (
+                            <span style={{ color: 'var(--green)', marginLeft: 6 }}>
+                              ✓ {isImported.importedClients} импортировано
+                            </span>
+                          )}
+                          {!isImported && proto.clients.length > 0 && (
+                            <div className="mono" style={{ marginTop: 4, maxHeight: 80, overflowY: 'auto' }}>
+                              {proto.clients.map((cl, i) => (
+                                <div key={i} style={{ fontSize: 10, color: 'var(--text-muted)' }}>· {cl.name}</div>
+                              ))}
+                            </div>
+                          )}
                         </div>
                       )}
                     </div>
@@ -258,26 +271,32 @@ function InstallProtocolModal({ serverId, onClose, onInstalled }) {
   );
 }
 
+const QR_AUTO_INTERVAL = 3000; // мс между автосменой QR-частей
+
 // ── Client Modal ────────────────────────────────────────
 function ClientModal({ client, protocolType, onClose }) {
   // format: 'amnezia' | 'original'  (только для awg2/wireguard)
   const [format, setFormat] = useState('amnezia');
   const [tab, setTab]       = useState('qr');
 
-  const [origQr,    setOrigQr]    = useState(null);
-  const [amneziaQr, setAmneziaQr] = useState(null);
-  const [vpnUri,    setVpnUri]    = useState('');
-  const [origConf,  setOrigConf]  = useState('');
-  const [loadingQr, setLoadingQr] = useState(true);
+  const [origQr,         setOrigQr]         = useState(null);
+  const [amneziaQrParts, setAmneziaQrParts] = useState(null);  // массив QR-кусков
+  const [qrPartIdx,      setQrPartIdx]      = useState(0);     // текущая часть
+  const [vpnUri,         setVpnUri]         = useState('');
+  const [origConf,       setOrigConf]       = useState('');
+  const [loadingQr,      setLoadingQr]      = useState(true);
 
   const isXray = protocolType === 'xray';
   const hasAmnezia = protocolType === 'awg2' || protocolType === 'wireguard';
+  const hasAmneziaQr = hasAmnezia || isXray;  // все протоколы поддерживают Amnezia chunked QR
 
   useEffect(() => {
+    if (!client.has_config) { setLoadingQr(false); return; }
     setLoadingQr(true);
     clientsApi.qr(client.id).then(r => {
       setOrigQr(r.data.qr);
-      setAmneziaQr(r.data.amneziaQr || null);
+      setAmneziaQrParts(r.data.amneziaQrParts || (r.data.amneziaQr ? [r.data.amneziaQr] : null));
+      setQrPartIdx(0);
       setVpnUri(r.data.vpnUri || '');
     }).catch(() => setOrigQr(null)).finally(() => setLoadingQr(false));
 
@@ -287,17 +306,32 @@ function ClientModal({ client, protocolType, onClose }) {
     });
   }, [client.id]);
 
-  // Активные значения в зависимости от выбранного формата
-  const activeQr     = (hasAmnezia && format === 'amnezia') ? amneziaQr   : origQr;
-  const activeConfig = (hasAmnezia && format === 'amnezia') ? (vpnUri || '') : origConf;
-  const activeHint   = hasAmnezia && format === 'amnezia'
-    ? 'Сканируйте в приложении AmneziaVPN (поддерживает vpn:// ссылки)'
-    : isXray ? 'Сканируйте в FLClash, v2rayNG или совместимом клиенте' : 'Сканируйте в стандартном WireGuard клиенте';
+  // Автоперелистывание — запускается только когда видна вкладка QR в Amnezia-формате
+  const showAmnezia  = hasAmneziaQr && format === 'amnezia';
+  const totalParts   = amneziaQrParts?.length ?? 1;
+  const autoActive   = showAmnezia && tab === 'qr' && totalParts > 1 && !loadingQr;
 
-  const activeDownloadUrl  = (hasAmnezia && format === 'amnezia')
-    ? clientsApi.configAmneziaUrl(client.id)
-    : clientsApi.configDownloadUrl(client.id);
-  const activeDownloadLabel = (hasAmnezia && format === 'amnezia') ? '⬇ JSON для Amnezia' : '⬇ Скачать .conf';
+  useEffect(() => {
+    if (!autoActive) return;
+    const timer = setInterval(() => {
+      setQrPartIdx(i => (i + 1) % totalParts);
+    }, QR_AUTO_INTERVAL);
+    return () => clearInterval(timer);
+  }, [autoActive, totalParts, qrPartIdx]);
+
+  // Активные значения в зависимости от выбранного формата
+  const amneziaQr    = amneziaQrParts?.[qrPartIdx] ?? null;
+  const activeQr     = showAmnezia ? amneziaQr : origQr;
+  const activeConfig = showAmnezia ? (vpnUri || '') : origConf;
+  const activeHint   = showAmnezia
+    ? (totalParts > 1
+        ? `Часть ${qrPartIdx + 1} из ${totalParts} — сканируйте по очереди в AmneziaVPN`
+        : 'Сканируйте в приложении AmneziaVPN')
+    : isXray ? 'Сканируйте в FLClash, v2rayNG или совместимом клиенте'
+             : 'Сканируйте в стандартном WireGuard клиенте';
+
+  const activeDownloadUrl   = showAmnezia ? clientsApi.configAmneziaUrl(client.id) : clientsApi.configDownloadUrl(client.id);
+  const activeDownloadLabel = showAmnezia ? '⬇ JSON для Amnezia' : isXray ? '⬇ Скачать .txt' : '⬇ Скачать .conf';
 
   const tabs = [
     { id: 'qr',  label: 'QR-код' },
@@ -319,8 +353,16 @@ function ClientModal({ client, protocolType, onClose }) {
           <button className="btn btn-ghost btn-sm" onClick={onClose} style={{ fontSize: 18, lineHeight: 1 }}>×</button>
         </div>
 
-        {/* Переключатель формата (только для AWG и WireGuard) */}
-        {hasAmnezia && (
+        {/* Клиент импортирован без конфига */}
+        {!client.has_config && (
+          <div className="notice notice-info" style={{ marginBottom: 16, fontSize: 12 }}>
+            Этот клиент импортирован с сервера. Приватный ключ хранится только на устройстве клиента —
+            конфиг и QR недоступны. Для переподключения создайте нового клиента.
+          </div>
+        )}
+
+        {/* Переключатель формата (AWG, WireGuard, Xray) */}
+        {hasAmneziaQr && client.has_config && (
           <div style={{
             display: 'flex', gap: 0, marginBottom: 16,
             border: '1px solid var(--border)', borderRadius: 8, overflow: 'hidden',
@@ -345,67 +387,112 @@ function ClientModal({ client, protocolType, onClose }) {
               }}
               onClick={() => setFormat('original')}
             >
-              📄 Оригинальный формат
+              {isXray ? '📡 VLESS URI' : '📄 Оригинальный формат'}
             </button>
           </div>
         )}
 
-        {/* Вкладки QR / текст */}
-        <div style={{ display: 'flex', gap: 4, marginBottom: 16 }}>
-          {tabs.map(t => (
-            <button key={t.id}
-              className={`btn btn-sm ${tab === t.id ? 'btn-primary' : 'btn-outline'}`}
-              onClick={() => setTab(t.id)}>{t.label}</button>
-          ))}
-        </div>
-
-        {/* QR-код */}
-        {tab === 'qr' && (
-          <div style={{ textAlign: 'center' }}>
-            {loadingQr ? (
-              <div style={{ padding: 60 }}><span className="spinner" style={{ width: 28, height: 28 }} /></div>
-            ) : activeQr ? (
-              <img src={activeQr} alt="QR" style={{ width: 280, height: 280, borderRadius: 8 }} />
-            ) : (
-              <div className="notice notice-error">Не удалось сгенерировать QR</div>
-            )}
-            <div className="text-muted" style={{ marginTop: 12, fontSize: 11 }}>{activeHint}</div>
+        {client.has_config && (<>
+          {/* Вкладки QR / текст */}
+          <div style={{ display: 'flex', gap: 4, marginBottom: 16 }}>
+            {tabs.map(t => (
+              <button key={t.id}
+                className={`btn btn-sm ${tab === t.id ? 'btn-primary' : 'btn-outline'}`}
+                onClick={() => setTab(t.id)}>{t.label}</button>
+            ))}
           </div>
-        )}
 
-        {/* Текст конфига / URI */}
-        {tab === 'cfg' && (
-          <div>
-            {hasAmnezia && format === 'amnezia' ? (
-              <>
-                <div className="notice notice-info" style={{ marginBottom: 8, fontSize: 11 }}>
-                  <b>vpn://</b> ссылка — вставьте или отсканируйте в AmneziaVPN (iOS / Android / Desktop)
-                </div>
-                <div className="config-box" style={{ fontSize: 10, wordBreak: 'break-all', maxHeight: 160, overflowY: 'auto' }}>
-                  {vpnUri || 'Генерация…'}
-                </div>
-              </>
-            ) : (
-              <>
-                {isXray && (
+          {/* QR-код */}
+          {tab === 'qr' && (
+            <div style={{ textAlign: 'center' }}>
+              {loadingQr ? (
+                <div style={{ padding: 60 }}><span className="spinner" style={{ width: 28, height: 28 }} /></div>
+              ) : activeQr ? (
+                <>
+                  <img src={activeQr} alt="QR" style={{ width: 360, height: 360, borderRadius: 8 }} />
+
+                  {/* Многочастный QR: прогресс-бар + навигация */}
+                  {showAmnezia && totalParts > 1 && (
+                    <div style={{ marginTop: 12 }}>
+                      {/* Индикаторы-точки */}
+                      <div style={{ display: 'flex', justifyContent: 'center', gap: 6, marginBottom: 8 }}>
+                        {Array.from({ length: totalParts }).map((_, i) => (
+                          <button key={i}
+                            onClick={() => setQrPartIdx(i)}
+                            style={{
+                              width: 10, height: 10, borderRadius: '50%', border: 'none', cursor: 'pointer',
+                              padding: 0,
+                              background: i === qrPartIdx ? 'var(--accent)' : 'var(--border)',
+                              transition: 'background 0.2s',
+                            }}
+                          />
+                        ))}
+                      </div>
+                      {/* Прогресс-бар автосмены */}
+                      <div style={{ height: 3, background: 'var(--border)', borderRadius: 2, overflow: 'hidden', margin: '0 auto', width: 360 }}>
+                        <div key={`pb-${qrPartIdx}`} style={{
+                          height: '100%', background: 'var(--accent)', borderRadius: 2,
+                          animation: `qr-progress ${QR_AUTO_INTERVAL}ms linear`,
+                        }} />
+                      </div>
+                      {/* Кнопки */}
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10, marginTop: 8 }}>
+                        <button className="btn btn-outline btn-sm"
+                          onClick={() => setQrPartIdx(i => Math.max(0, i - 1))}
+                          disabled={qrPartIdx === 0}>‹</button>
+                        <span className="mono text-dim" style={{ fontSize: 11, minWidth: 48 }}>
+                          {qrPartIdx + 1} / {totalParts}
+                        </span>
+                        <button className="btn btn-outline btn-sm"
+                          onClick={() => setQrPartIdx(i => Math.min(totalParts - 1, i + 1))}
+                          disabled={qrPartIdx === totalParts - 1}>›</button>
+                      </div>
+                    </div>
+                  )}
+                </>
+              ) : (
+                <div className="notice notice-error">Не удалось сгенерировать QR</div>
+              )}
+              <div className="text-muted" style={{ marginTop: 8, fontSize: 11 }}>{activeHint}</div>
+            </div>
+          )}
+
+          {/* Текст конфига / URI */}
+          {tab === 'cfg' && (
+            <div>
+              {showAmnezia ? (
+                <>
                   <div className="notice notice-info" style={{ marginBottom: 8, fontSize: 11 }}>
-                    VLESS URI — для FLClash, Clash Meta, v2rayNG
+                    <b>vpn://</b> ссылка — вставьте или отсканируйте в AmneziaVPN (iOS / Android / Desktop)
                   </div>
-                )}
-                <div className="config-box" style={{ maxHeight: 260, overflowY: 'auto' }}>
-                  {origConf || 'Загрузка…'}
-                </div>
-              </>
-            )}
-          </div>
-        )}
+                  <div className="config-box" style={{ fontSize: 10, wordBreak: 'break-all', maxHeight: 160, overflowY: 'auto' }}>
+                    {vpnUri || 'Генерация…'}
+                  </div>
+                </>
+              ) : (
+                <>
+                  {isXray && (
+                    <div className="notice notice-info" style={{ marginBottom: 8, fontSize: 11 }}>
+                      VLESS URI — для FLClash, Clash Meta, v2rayNG
+                    </div>
+                  )}
+                  <div className="config-box" style={{ maxHeight: 260, overflowY: 'auto' }}>
+                    {origConf || 'Загрузка…'}
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+        </>)}
 
         {/* Кнопки */}
         <div className="modal-actions" style={{ marginTop: 16 }}>
           <button className="btn btn-outline" onClick={onClose}>Закрыть</button>
-          <button className="btn btn-primary" onClick={() => window.open(activeDownloadUrl, '_blank')}>
-            {activeDownloadLabel}
-          </button>
+          {client.has_config && (
+            <button className="btn btn-primary" onClick={() => window.open(activeDownloadUrl, '_blank')}>
+              {activeDownloadLabel}
+            </button>
+          )}
         </div>
       </div>
     </div>
@@ -559,7 +646,7 @@ function ProtocolCard({ protocol, server, onDelete }) {
   const cfg = typeof protocol.config === 'string' ? JSON.parse(protocol.config) : protocol.config;
 
   return (
-    <div className="card">
+    <div className="card" style={{ minWidth: 0, overflow: 'hidden' }}>
       {/* Header */}
       <div className="flex items-center justify-between" style={{ marginBottom: 12 }}>
         <div className="flex items-center gap-8">
@@ -583,13 +670,21 @@ function ProtocolCard({ protocol, server, onDelete }) {
 
       {/* Config summary */}
       {cfg && (
-        <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 12 }}>
-          {Object.entries(cfg).filter(([k]) => !['privateKey'].includes(k)).map(([k, v]) => (
-            <div key={k} style={{ background: 'var(--surface2)', borderRadius: 4, padding: '2px 8px' }}>
-              <span className="text-muted mono" style={{ fontSize: 10 }}>{k}: </span>
-              <span className="mono" style={{ fontSize: 11 }}>{String(v)}</span>
-            </div>
-          ))}
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 12, minWidth: 0 }}>
+          {Object.entries(cfg)
+            .filter(([k]) => !['privateKey', 'i1', 'i2', 'i3', 'i4', 'i5'].includes(k))
+            .map(([k, v]) => {
+              const str = String(v);
+              const truncated = str.length > 40 ? str.slice(0, 40) + '…' : str;
+              return (
+                <div key={k} title={str}
+                  style={{ background: 'var(--surface2)', borderRadius: 4, padding: '2px 8px',
+                           maxWidth: '100%', overflow: 'hidden' }}>
+                  <span className="text-muted mono" style={{ fontSize: 10 }}>{k}: </span>
+                  <span className="mono" style={{ fontSize: 11, wordBreak: 'break-all' }}>{truncated}</span>
+                </div>
+              );
+            })}
         </div>
       )}
 
@@ -627,14 +722,19 @@ function ProtocolCard({ protocol, server, onDelete }) {
             <tbody>
               {clients.map(c => (
                 <tr key={c.id}>
-                  <td style={{ fontWeight: 500 }}>{c.name}</td>
+                  <td style={{ fontWeight: 500 }}>
+                    {c.name}
+                    {!c.has_config && (
+                      <span className="mono text-muted" style={{ fontSize: 10, marginLeft: 6 }}>[без конфига]</span>
+                    )}
+                  </td>
                   <td className="mono text-muted" style={{ fontSize: 11 }}>
-                    {new Date(c.created_at).toLocaleDateString()}
+                    {c.created_at ? new Date(c.created_at.replace(' ', 'T')).toLocaleDateString() : '—'}
                   </td>
                   <td>
                     <div className="flex gap-8">
                       <button className="btn btn-ghost btn-sm" onClick={() => setSelectedClient(c)}>⬡ View</button>
-                      {protocol.type === 'xray' && (
+                      {protocol.type === 'xray' && c.has_config && (
                         <CopySubButton clientId={c.id} />
                       )}
                       <button className="btn btn-danger btn-sm" onClick={() => delClient(c.id)}>✕</button>
@@ -747,7 +847,7 @@ export default function ServerPage() {
             </button>
           </div>
         ) : (
-          <div className="grid" style={{ gap: 16 }}>
+          <div className="grid" style={{ gap: 16, minWidth: 0, overflow: 'hidden' }}>
             {protocols.map(p => (
               <ProtocolCard key={p.id} protocol={p} server={server} onDelete={delProtocol} />
             ))}
