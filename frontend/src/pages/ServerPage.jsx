@@ -728,7 +728,7 @@ function ProtocolCard({ protocol, server, onDelete }) {
                     )}
                   </td>
                   <td className="mono text-muted" style={{ fontSize: 11 }}>
-                    {new Date(c.created_at?.replace(' ', 'T')).toLocaleDateString()}
+                    {c.created_at ? new Date(c.created_at.replace(' ', 'T')).toLocaleDateString() : '—'}
                   </td>
                   <td>
                     <div className="flex gap-8">

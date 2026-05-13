@@ -278,7 +278,8 @@ router.post('/', async (req, res) => {
     } catch (e) { console.error('Failed to create subscription:', e.message); }
   }
 
-  res.json({ id, name: safeName, config: result.config, type: result.type, subscriptionSlug, has_config: 1 });
+  const created = queryOne('SELECT created_at FROM clients WHERE id = ?', [id]);
+  res.json({ id, name: safeName, config: result.config, type: result.type, subscriptionSlug, has_config: 1, created_at: created?.created_at });
 });
 
 // GET /api/clients/:id/qr — QR для оригинального формата (.conf / VLESS URI)
