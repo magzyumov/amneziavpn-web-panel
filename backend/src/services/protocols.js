@@ -969,8 +969,8 @@ export async function addWireGuardClient(server, protocol, clientName) {
   }
   const clientPubKey = pubRes.stdout.trim();
 
-  // Читаем server PSK
-  const presharedKey = await readRemoteFile(server, '/opt/amnezia/wireguard/wireguard_psk.key');
+  // PSK хранится внутри контейнера, не на хосте
+  const presharedKey = await readContainerFile(server, cn, '/opt/amnezia/wireguard/wireguard_psk.key');
   if (!presharedKey) {
     throw new Error('WireGuard PSK not found on server. Reinstall the protocol.');
   }
