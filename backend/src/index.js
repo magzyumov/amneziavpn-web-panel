@@ -1,4 +1,7 @@
 import 'express-async-errors';
+import { validateEnv } from './services/env.js';
+validateEnv();
+
 import express from 'express';
 import cors from 'cors';
 import { getDb } from './services/db.js';

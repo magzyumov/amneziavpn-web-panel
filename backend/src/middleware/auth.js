@@ -1,6 +1,7 @@
 import jwt from 'jsonwebtoken';
 
-const JWT_SECRET = process.env.JWT_SECRET || 'amnezia-panel-secret-change-me';
+// Валидация JWT_SECRET выполняется в services/env.js до загрузки этого модуля.
+const JWT_SECRET = process.env.JWT_SECRET;
 
 export function authMiddleware(req, res, next) {
   const auth = req.headers.authorization;
