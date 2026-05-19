@@ -91,6 +91,8 @@ export const protocolsApi = {
   status: (id: string) => api.get(`/protocols/${id}/status`),
   health: (serverId: string) => api.get<Record<string, string>>(`/protocols/server/${serverId}/health`),
   logs: (id: string, lines: number) => api.get<{ logs: string }>(`/protocols/${id}/logs`, { params: { lines } }),
+  statsStatus: (id: string) => api.get<{ statsEnabled: boolean }>(`/protocols/${id}/stats-status`),
+  enableStats: (id: string) => api.post(`/protocols/${id}/enable-stats`),
 };
 
 export type StatsRange = '1h' | '24h' | '7d' | '30d';

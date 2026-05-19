@@ -8,6 +8,7 @@ import {
   installAWG2, installXray, installWireGuard,
   getContainerStatus, getContainersHealth, startContainer, stopContainer,
   removeContainer, getContainerLogs, PROTOCOLS,
+  isXrayStatsEnabled, enableXrayStats,
 } from '../services/protocols/index.js';
 import { shInt } from '../services/shell.js';
 import type { Server, Protocol, ProtocolType } from '../types.js';
@@ -106,6 +107,35 @@ router.get('/:id/status', async (req, res) => {
   const status = await getContainerStatus(server, p.container_name);
   run('UPDATE protocols SET status = ? WHERE id = ?', [status, p.id]);
   res.json({ status });
+});
+
+// Возвращает { statsEnabled } — для UI чтобы показать или скрыть "Enable stats".
+// AWG/WG всегда true (статистика идёт из kernel-модуля бесплатно). Для Xray
+// читаем server.json и проверяем наличие "stats"/"api" блоков.
+router.get('/:id/stats-status', async (req, res) => {
+  const p = queryOne<Protocol>('SELECT * FROM protocols WHERE id = ?', [req.params.id]);
+  if (!p) return res.status(404).json({ error: 'Not found' });
+
+  if (p.type !== 'xray') return res.json({ statsEnabled: true });
+
+  const server = queryOne<Server>('SELECT * FROM servers WHERE id = ?', [p.server_id]);
+  if (!server) return res.status(404).json({ error: 'Server not found' });
+  const enabled = await isXrayStatsEnabled(server, p.container_name);
+  res.json({ statsEnabled: enabled });
+});
+
+// Включает stats на существующем Xray-протоколе (патчит server.json через jq
+// и рестартит контейнер). Для не-Xray возвращает 400 — там и так включено.
+router.post('/:id/enable-stats', async (req, res) => {
+  const p = queryOne<Protocol>('SELECT * FROM protocols WHERE id = ?', [req.params.id]);
+  if (!p) return res.status(404).json({ error: 'Not found' });
+  if (p.type !== 'xray') return res.status(400).json({ error: 'enable-stats is only needed for Xray' });
+
+  const server = queryOne<Server>('SELECT * FROM servers WHERE id = ?', [p.server_id]);
+  if (!server) return res.status(404).json({ error: 'Server not found' });
+
+  await enableXrayStats(server, p.container_name);
+  res.json({ ok: true });
 });
 
 router.get('/:id/logs', async (req, res) => {

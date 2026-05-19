@@ -132,8 +132,10 @@ export async function scanExistingProtocols(server: Server): Promise<ScannedProt
       const pubKey  = await readContainerFile(server, c.containerName, `${c.confDir}/xray_public.key`);
       const shortId = await readContainerFile(server, c.containerName, `${c.confDir}/xray_short_id.key`);
       const uuid    = await readContainerFile(server, c.containerName, `${c.confDir}/xray_uuid.key`);
-      port = serverJson?.inbounds?.[0]?.port || null;
-      const sni = serverJson?.inbounds?.[0]?.streamSettings?.realitySettings?.dest?.replace(/:443$/, '') || '';
+      // Со stats-конфигом inbounds[0] — это api на localhost; vless ищем по протоколу.
+      const vlessInbound = serverJson?.inbounds?.find((i: any) => i?.protocol === 'vless') || serverJson?.inbounds?.[0];
+      port = vlessInbound?.port || null;
+      const sni = vlessInbound?.streamSettings?.realitySettings?.dest?.replace(/:443$/, '') || '';
       config = { port, sni, publicKey: pubKey, shortId, firstUuid: uuid };
     }
 

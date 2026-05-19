@@ -90,11 +90,15 @@ export async function addXrayClient(server: Server, protocol: Protocol, clientNa
     throw new Error(`Failed to parse Xray server.json: ${(e as Error).message}. File content may be corrupted. Reinstall the protocol.`);
   }
 
-  if (!serverJson.inbounds?.[0]?.settings?.clients) {
-    throw new Error('Unexpected structure in Xray server.json. Reinstall the protocol.');
+  // Со включёнными stats в server.json два inbound'а (api на 127.0.0.1:10085 +
+  // vless), без stats — один (vless). Ищем нужный по protocol.
+  const vlessInbound = serverJson.inbounds?.find((i: any) => i.protocol === 'vless');
+  if (!vlessInbound?.settings?.clients) {
+    throw new Error('Unexpected structure in Xray server.json (no vless inbound). Reinstall the protocol.');
   }
 
-  serverJson.inbounds[0].settings.clients.push({ id: clientId, flow: 'xtls-rprx-vision' });
+  // email == clientId — это то, по чему Xray мапит per-user stats counters.
+  vlessInbound.settings.clients.push({ id: clientId, email: clientId, level: 0, flow: 'xtls-rprx-vision' });
 
   const jsonB64 = Buffer.from(JSON.stringify(serverJson, null, 4)).toString('base64');
   await execSudo(server, `echo '${jsonB64}' | base64 -d | docker exec -i ${cn} sh -c 'cat > /opt/amnezia/xray/server.json'`);

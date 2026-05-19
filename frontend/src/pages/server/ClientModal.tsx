@@ -72,10 +72,10 @@ export default function ClientModal({ client, protocolType, onClose }: Props) {
     ? `${client.name}_amnezia.json`
     : isXray ? `${client.name}.txt` : `${client.name}.conf`;
 
-  // Stats доступна только для AWG/WG (Xray stats API не включён в дефолтной
-  // сборке контейнера, см. README). Импортированные клиенты тоже видят
-  // статистику — их peer_id заполняется на импорте.
-  const hasStats = (protocolType === 'awg2' || protocolType === 'wireguard');
+  // Stats доступна для всех трёх протоколов. Для Xray на старых установках
+  // (без `stats` в server.json) бэкенд вернёт пустой series — StatsTab покажет
+  // подсказку про "Enable stats" на ProtocolCard.
+  const hasStats = (protocolType === 'awg2' || protocolType === 'wireguard' || protocolType === 'xray');
   const configTabs: Array<{ id: Tab; label: string }> = client.has_config ? [
     { id: 'qr',  label: 'QR-код' },
     { id: 'cfg', label: isXray ? 'VLESS URI' : format === 'amnezia' ? 'vpn:// URI' : '.conf' },

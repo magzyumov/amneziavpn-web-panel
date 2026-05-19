@@ -303,25 +303,47 @@ echo $XRAY_PRIVATE_KEY > /opt/amnezia/xray/xray_private.key
 cat > /opt/amnezia/xray/server.json <<EOF
 {
     "log": { "loglevel": "error" },
-    "inbounds": [{
-        "port": $XRAY_SERVER_PORT,
-        "protocol": "vless",
-        "settings": {
-            "clients": [{ "id": "$XRAY_CLIENT_ID", "flow": "xtls-rprx-vision" }],
-            "decryption": "none"
+    "stats": {},
+    "api": { "tag": "api", "services": ["StatsService"] },
+    "policy": {
+        "levels": { "0": { "statsUserUplink": true, "statsUserDownlink": true } },
+        "system": { "statsInboundUplink": true, "statsInboundDownlink": true }
+    },
+    "routing": {
+        "rules": [{ "type": "field", "inboundTag": ["api"], "outboundTag": "api" }]
+    },
+    "inbounds": [
+        {
+            "tag": "api",
+            "port": 10085,
+            "listen": "127.0.0.1",
+            "protocol": "dokodemo-door",
+            "settings": { "address": "127.0.0.1" }
         },
-        "streamSettings": {
-            "network": "tcp",
-            "security": "reality",
-            "realitySettings": {
-                "dest": "$XRAY_SITE_NAME:443",
-                "serverNames": ["$XRAY_SITE_NAME"],
-                "privateKey": "$XRAY_PRIVATE_KEY",
-                "shortIds": ["$XRAY_SHORT_ID"]
+        {
+            "tag": "vless-in",
+            "port": $XRAY_SERVER_PORT,
+            "protocol": "vless",
+            "settings": {
+                "clients": [{ "id": "$XRAY_CLIENT_ID", "email": "$XRAY_CLIENT_ID", "level": 0, "flow": "xtls-rprx-vision" }],
+                "decryption": "none"
+            },
+            "streamSettings": {
+                "network": "tcp",
+                "security": "reality",
+                "realitySettings": {
+                    "dest": "$XRAY_SITE_NAME:443",
+                    "serverNames": ["$XRAY_SITE_NAME"],
+                    "privateKey": "$XRAY_PRIVATE_KEY",
+                    "shortIds": ["$XRAY_SHORT_ID"]
+                }
             }
         }
-    }],
-    "outbounds": [{ "protocol": "freedom" }]
+    ],
+    "outbounds": [
+        { "protocol": "freedom", "tag": "direct" },
+        { "protocol": "blackhole", "tag": "api" }
+    ]
 }
 EOF`,
 };
