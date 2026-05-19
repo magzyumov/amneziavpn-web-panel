@@ -93,6 +93,15 @@ export const protocolsApi = {
   logs: (id: string, lines: number) => api.get<{ logs: string }>(`/protocols/${id}/logs`, { params: { lines } }),
 };
 
+export type StatsRange = '1h' | '24h' | '7d' | '30d';
+export interface ClientStatsResponse {
+  online: boolean;
+  lastHandshake: number | null;
+  totalRx: number;
+  totalTx: number;
+  series: Array<{ ts: number; rxRate: number; txRate: number }>;
+}
+
 export const clientsApi = {
   byProtocol: (protocolId: string) => api.get<ClientRecord[]>(`/clients/protocol/${protocolId}`),
   create: (data: { protocolId: string; name: string }) => api.post('/clients', data),
@@ -102,6 +111,8 @@ export const clientsApi = {
   configDownloadUrl: (id: string) => `/api/clients/${id}/config`,
   configAmneziaUrl: (id: string) => `/api/clients/${id}/config-amnezia`,
   subscription: (id: string) => api.get<{ slug: string | null }>(`/clients/${id}/subscription`),
+  stats: (id: string, range: StatsRange = '24h') =>
+    api.get<ClientStatsResponse>(`/clients/${id}/stats`, { params: { range } }),
 };
 
 export async function downloadWithAuth(url: string, filename: string): Promise<void> {
