@@ -5,23 +5,23 @@ validateEnv();
 import express from 'express';
 import helmet from 'helmet';
 import cookieParser from 'cookie-parser';
-import { getDb } from './services/db.js';
+import { getDb, flushSave } from './services/db.js';
 import { initEncryption } from './services/crypto.js';
 import { csrfMiddleware } from './middleware/auth.js';
+import { disconnectAll } from './services/ssh.js';
 import authRoutes from './routes/auth.js';
 import serverRoutes from './routes/servers.js';
 import protocolRoutes from './routes/protocols.js';
 import clientRoutes from './routes/clients.js';
 import subscriptionRoutes from './routes/subscriptions.js';
 
-// Глобальный обработчик необработанных ошибок
+// Логируем необработанные ошибки, но процесс не убиваем — единичный rejection
+// в SSH-вызове не должен класть весь backend (другие сессии продолжают работать).
 process.on('uncaughtException', (err) => {
-  console.error('[FATAL] uncaughtException:', err.stack || err.message);
-  process.exit(1);
+  console.error('[uncaughtException]', err.stack || err.message);
 });
 process.on('unhandledRejection', (reason) => {
-  console.error('[FATAL] unhandledRejection:', reason?.stack || reason);
-  process.exit(1);
+  console.error('[unhandledRejection]', reason?.stack || reason);
 });
 
 const app = express();
@@ -76,6 +76,29 @@ app.use((err, req, res, next) => {
   res.status(500).json({ error: 'Internal server error' });
 });
 
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log(`[startup] Amnezia Panel backend running on :${PORT}`);
 });
+
+// Graceful shutdown по SIGTERM (docker compose down) и SIGINT (Ctrl+C).
+// Сбрасываем БД на диск, закрываем SSH-соединения, останавливаем HTTP-сервер.
+let shuttingDown = false;
+function gracefulShutdown(signal) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log(`[shutdown] ${signal} received, draining...`);
+  const timer = setTimeout(() => {
+    console.error('[shutdown] forced exit after 10s timeout');
+    process.exit(1);
+  }, 10000).unref();
+
+  server.close(() => {
+    try { flushSave(); } catch (e) { console.error('[shutdown] flushSave failed:', e.message); }
+    try { disconnectAll(); } catch (e) { console.error('[shutdown] disconnectAll failed:', e.message); }
+    clearTimeout(timer);
+    console.log('[shutdown] done');
+    process.exit(0);
+  });
+}
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT',  () => gracefulShutdown('SIGINT'));
