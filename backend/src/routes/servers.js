@@ -5,6 +5,7 @@ import { encrypt } from '../services/crypto.js';
 import { authMiddleware } from '../middleware/auth.js';
 import { testConnection, disconnect } from '../services/ssh.js';
 import { listAmneziaContainers, ensureDocker, scanExistingProtocols } from '../services/protocols.js';
+import { assertContainerName, assertPort } from '../services/shell.js';
 import { createSubscription, getVpsHost } from '../services/subscription.js';
 
 const router = Router();
@@ -115,6 +116,11 @@ router.post('/:id/import-protocol', async (req, res) => {
 
   const { type, containerName, port, config, clients = [] } = req.body;
   if (!type || !containerName) return res.status(400).json({ error: 'type and containerName required' });
+  if (!['awg2', 'wireguard', 'xray'].includes(type)) return res.status(400).json({ error: 'Invalid protocol type' });
+  try {
+    assertContainerName(containerName);
+    if (port != null) assertPort(port);
+  } catch (e) { return res.status(400).json({ error: e.message }); }
 
   // Проверяем не импортирован ли уже этот контейнер
   const existing = queryOne('SELECT id FROM protocols WHERE server_id = ? AND container_name = ?', [server.id, containerName]);

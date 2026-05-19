@@ -7,6 +7,7 @@ import {
   getContainerStatus, getContainersHealth, startContainer, stopContainer,
   removeContainer, getContainerLogs, PROTOCOLS,
 } from '../services/protocols.js';
+import { shInt } from '../services/shell.js';
 
 const router = Router();
 router.use(authMiddleware);
@@ -107,7 +108,10 @@ router.get('/:id/logs', async (req, res) => {
   const p = queryOne('SELECT * FROM protocols WHERE id = ?', [req.params.id]);
   if (!p) return res.status(404).json({ error: 'Not found' });
   const server = queryOne('SELECT * FROM servers WHERE id = ?', [p.server_id]);
-  const logs = await getContainerLogs(server, p.container_name, req.query.lines || 100);
+  let lines;
+  try { lines = shInt(req.query.lines ?? 100, { min: 1, max: 10000, label: 'lines' }); }
+  catch (e) { return res.status(400).json({ error: e.message }); }
+  const logs = await getContainerLogs(server, p.container_name, lines);
   res.json({ logs });
 });
 
