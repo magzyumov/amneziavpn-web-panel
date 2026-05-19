@@ -4,8 +4,10 @@ validateEnv();
 
 import express from 'express';
 import cors from 'cors';
+import cookieParser from 'cookie-parser';
 import { getDb } from './services/db.js';
 import { initEncryption } from './services/crypto.js';
+import { csrfMiddleware } from './middleware/auth.js';
 import authRoutes from './routes/auth.js';
 import serverRoutes from './routes/servers.js';
 import protocolRoutes from './routes/protocols.js';
@@ -29,7 +31,9 @@ const PORT = process.env.PORT || 3001;
 app.set('trust proxy', 1);
 
 app.use(cors());
+app.use(cookieParser());
 app.use(express.json({ limit: '2mb' }));
+app.use('/api', csrfMiddleware);
 
 console.log('[startup] Initializing encryption...');
 try {

@@ -80,13 +80,12 @@ export default function LoginPage() {
     authApi.status().then(r => {
       if (!r.data.configured) navigate('/setup');
     });
-    if (localStorage.getItem('token')) navigate('/');
+    authApi.me().then(() => navigate('/')).catch(() => {});
   }, []);
 
   const submit = async ({ username, password }) => {
     try {
-      const r = await authApi.login({ username, password });
-      localStorage.setItem('token', r.data.token);
+      await authApi.login({ username, password });
       navigate('/');
     } catch {
       setError('Invalid credentials');

@@ -349,8 +349,8 @@ function Sidebar({ isOpen, onClose }) {
   const navigate = useNavigate();
   const location = useLocation();
 
-  const logout = () => {
-    localStorage.removeItem('token');
+  const logout = async () => {
+    try { await authApi.logout(); } catch {}
     navigate('/login');
     onClose?.();
   };
@@ -384,8 +384,14 @@ function Sidebar({ isOpen, onClose }) {
 
 function PrivateLayout({ children }) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const token = localStorage.getItem('token');
-  if (!token) return <Navigate to="/login" />;
+  const [authState, setAuthState] = useState('checking'); // 'checking' | 'ok' | 'no'
+
+  useEffect(() => {
+    authApi.me().then(() => setAuthState('ok')).catch(() => setAuthState('no'));
+  }, []);
+
+  if (authState === 'no') return <Navigate to="/login" />;
+  if (authState === 'checking') return null;
   return (
     <div className="app">
       {sidebarOpen && <div className="sidebar-overlay" onClick={() => setSidebarOpen(false)} />}

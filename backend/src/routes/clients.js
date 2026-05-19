@@ -1,10 +1,9 @@
 import { Router } from 'express';
 import { v4 as uuidv4 } from 'uuid';
 import QRCode from 'qrcode';
-import jwt from 'jsonwebtoken';
 import { deflateSync } from 'zlib';
 import { getDb, query, queryOne, run } from '../services/db.js';
-import { authMiddleware, JWT_SECRET } from '../middleware/auth.js';
+import { authMiddleware, verifyAuth } from '../middleware/auth.js';
 import { addAWG2Client, addXrayClient, addWireGuardClient } from '../services/protocols.js';
 import { createSubscription, getVpsHost } from '../services/subscription.js';
 
@@ -12,15 +11,10 @@ const router = Router();
 
 // ─── Утилиты ─────────────────────────────────────────────────────────────────
 
-function verifyQueryToken(req, res) {
-  const auth = req.headers.authorization;
-  const token = auth?.startsWith('Bearer ') ? auth.slice(7) : null;
-  if (!token) { res.status(401).json({ error: 'Unauthorized' }); return null; }
-  try {
-    return jwt.verify(token, JWT_SECRET);
-  } catch {
-    res.status(401).json({ error: 'Invalid token' }); return null;
-  }
+function requireAuth(req, res) {
+  const user = verifyAuth(req);
+  if (!user) { res.status(401).json({ error: 'Unauthorized' }); return null; }
+  return user;
 }
 
 // Официальный формат Amnezia JSON — восстановлен по декодированным реальным vpn:// URI
@@ -202,11 +196,11 @@ async function buildChunkedAmneziaQr(amneziaJson) {
   return qrImages;
 }
 
-// ─── Endpoints скачивания конфигов (Authorization header) ─────────────────────
+// ─── Endpoints скачивания конфигов (auth через httpOnly cookie) ──────────────
 
 // GET /api/clients/:id/config — скачать оригинальный .conf
 router.get('/:id/config', async (req, res) => {
-  if (!verifyQueryToken(req, res)) return;
+  if (!requireAuth(req, res)) return;
   await getDb();
   const client = queryOne('SELECT * FROM clients WHERE id = ?', [req.params.id]);
   if (!client) return res.status(404).json({ error: 'Not found' });
@@ -221,7 +215,7 @@ router.get('/:id/config', async (req, res) => {
 
 // GET /api/clients/:id/config-amnezia — скачать Amnezia JSON (.json файл)
 router.get('/:id/config-amnezia', async (req, res) => {
-  if (!verifyQueryToken(req, res)) return;
+  if (!requireAuth(req, res)) return;
   await getDb();
   const client = queryOne('SELECT * FROM clients WHERE id = ?', [req.params.id]);
   if (!client) return res.status(404).json({ error: 'Not found' });
