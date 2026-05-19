@@ -1,9 +1,11 @@
 import { Router } from 'express';
 import { v4 as uuidv4 } from 'uuid';
 import { getDb, query, queryOne, run } from '../services/db.js';
+import { encrypt } from '../services/crypto.js';
 import { authMiddleware } from '../middleware/auth.js';
 import { testConnection, disconnect } from '../services/ssh.js';
 import { listAmneziaContainers, ensureDocker, scanExistingProtocols } from '../services/protocols.js';
+import { assertContainerName, assertPort } from '../services/shell.js';
 import { createSubscription, getVpsHost } from '../services/subscription.js';
 
 const router = Router();
@@ -25,7 +27,7 @@ router.post('/', async (req, res) => {
   const id = uuidv4();
   run(
     'INSERT INTO servers (id, name, host, port, username, auth_type, password, private_key) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-    [id, name, host, port, username, auth_type, password || null, private_key || null]
+    [id, name, host, port, username, auth_type, encrypt(password) || null, encrypt(private_key) || null]
   );
   res.json({ id, name, host, port, username, auth_type });
 });
@@ -42,7 +44,7 @@ router.put('/:id', async (req, res) => {
   run(
     'UPDATE servers SET name=?, host=?, port=?, username=?, auth_type=?, password=?, private_key=? WHERE id=?',
     [name, host, port ?? server.port, username, auth_type ?? server.auth_type,
-     password || null, private_key || null, req.params.id]
+     encrypt(password) || null, encrypt(private_key) || null, req.params.id]
   );
 
   // Сбрасываем SSH-соединение чтобы подключиться с новыми данными
@@ -100,7 +102,8 @@ router.post('/:id/scan-protocols', async (req, res) => {
     const found = await scanExistingProtocols(server);
     res.json({ found });
   } catch (e) {
-    res.status(500).json({ error: e.message });
+    console.error('[scan-protocols]', e.stack || e.message);
+    res.status(500).json({ error: 'Failed to scan protocols' });
   }
 });
 
@@ -113,6 +116,11 @@ router.post('/:id/import-protocol', async (req, res) => {
 
   const { type, containerName, port, config, clients = [] } = req.body;
   if (!type || !containerName) return res.status(400).json({ error: 'type and containerName required' });
+  if (!['awg2', 'wireguard', 'xray'].includes(type)) return res.status(400).json({ error: 'Invalid protocol type' });
+  try {
+    assertContainerName(containerName);
+    if (port != null) assertPort(port);
+  } catch (e) { return res.status(400).json({ error: e.message }); }
 
   // Проверяем не импортирован ли уже этот контейнер
   const existing = queryOne('SELECT id FROM protocols WHERE server_id = ? AND container_name = ?', [server.id, containerName]);

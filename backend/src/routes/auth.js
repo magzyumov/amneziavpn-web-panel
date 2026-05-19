@@ -3,7 +3,7 @@ import bcrypt from 'bcryptjs';
 import { v4 as uuidv4 } from 'uuid';
 import rateLimit from 'express-rate-limit';
 import { getDb, query, queryOne, run } from '../services/db.js';
-import { signToken } from '../middleware/auth.js';
+import { signToken, setAuthCookies, clearAuthCookies, authMiddleware } from '../middleware/auth.js';
 
 const router = Router();
 
@@ -50,7 +50,19 @@ router.post('/login', loginLimiter, async (req, res) => {
   if (!valid) return res.status(401).json({ error: 'Invalid credentials' });
 
   const token = signToken({ id: user.id, username: user.username });
-  res.json({ token, username: user.username });
+  setAuthCookies(res, token);
+  res.json({ username: user.username });
+});
+
+// POST /api/auth/logout
+router.post('/logout', (req, res) => {
+  clearAuthCookies(res);
+  res.json({ ok: true });
+});
+
+// GET /api/auth/me — проверка авторизации (используется фронтом)
+router.get('/me', authMiddleware, (req, res) => {
+  res.json({ username: req.user.username });
 });
 
 export default router;

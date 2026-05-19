@@ -1,7 +1,13 @@
 import 'express-async-errors';
+import { validateEnv } from './services/env.js';
+validateEnv();
+
 import express from 'express';
-import cors from 'cors';
+import helmet from 'helmet';
+import cookieParser from 'cookie-parser';
 import { getDb } from './services/db.js';
+import { initEncryption } from './services/crypto.js';
+import { csrfMiddleware } from './middleware/auth.js';
 import authRoutes from './routes/auth.js';
 import serverRoutes from './routes/servers.js';
 import protocolRoutes from './routes/protocols.js';
@@ -24,8 +30,27 @@ const PORT = process.env.PORT || 3001;
 // Доверяем первому proxy (nginx внутри docker network)
 app.set('trust proxy', 1);
 
-app.use(cors());
+// CORS не нужен: фронт и API ходят через один nginx (same-origin).
+// /sub/:slug потребляется не браузерами (Clash/FLClash) — CORS им безразличен.
+app.use(helmet({
+  // API возвращает только JSON/text — CSP применяется к HTML-документам, для нас бесполезна.
+  contentSecurityPolicy: false,
+  // HSTS включится автоматически только при NODE_ENV=production.
+  hsts: process.env.NODE_ENV === 'production',
+  crossOriginResourcePolicy: { policy: 'same-site' },
+}));
+app.use(cookieParser());
 app.use(express.json({ limit: '2mb' }));
+app.use('/api', csrfMiddleware);
+
+console.log('[startup] Initializing encryption...');
+try {
+  initEncryption();
+  console.log('[startup] Encryption OK');
+} catch (err) {
+  console.error('[startup] Encryption init FAILED:', err.stack || err.message);
+  process.exit(1);
+}
 
 console.log('[startup] Initializing database...');
 try {
@@ -46,8 +71,9 @@ app.use('/api/subscriptions', subscriptionRoutes);
 app.use('/', subscriptionRoutes);
 
 app.use((err, req, res, next) => {
-  console.error('[error]', err.stack || err.message);
-  res.status(500).json({ error: err.message });
+  console.error('[error]', req.method, req.originalUrl, '→', err.stack || err.message);
+  if (res.headersSent) return next(err);
+  res.status(500).json({ error: 'Internal server error' });
 });
 
 app.listen(PORT, () => {

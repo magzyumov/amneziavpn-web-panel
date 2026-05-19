@@ -22,6 +22,7 @@
  */
 
 import { exec, execSudo } from './ssh.js';
+import { assertContainerName, assertDomain, assertPort, shInt } from './shell.js';
 import { v4 as uuidv4 } from 'uuid';
 
 // ─── Dockerfile'ы (вшиты в бинарник Amnezia, восстановлены) ─────────────────
@@ -553,7 +554,7 @@ function renderTemplate(template, vars) {
 // ─── AWG 2.0 ─────────────────────────────────────────────────────────────────
 
 export async function installAWG2(server, options = {}) {
-  const port      = options.port   || randPort();
+  const port      = assertPort(options.port || randPort());
   const subnetIp  = '10.8.1.0';
   const subnetCidr = '24';
   const subnet    = `${subnetIp}/${subnetCidr}`;
@@ -561,23 +562,24 @@ export async function installAWG2(server, options = {}) {
   const imageName = 'amnezia-awg2:latest';
   const buildDir  = '/opt/amnezia/amnezia-awg2';
 
-  // Параметры обфускации AWG2
-  const jc   = options.jc   ?? randInt(3, 10);
-  const jmin = options.jmin ?? randInt(10, 50);
-  const jmax = options.jmax ?? randInt(200, 1000);
-  const s1   = options.s1   ?? randInt(100, 200);
-  const s2   = options.s2   ?? randInt(100, 200);
-  const s3   = options.s3   ?? randInt(30, 100);
-  const s4   = options.s4   ?? randInt(10, 50);
-  const h1   = options.h1   ?? randRange(600000000, 1500000000);
-  const h2   = options.h2   ?? randRange(1500000000, 1900000000);
-  const h3   = options.h3   ?? randRange(1800000000, 2100000000);
-  const h4   = options.h4   ?? randRange(2100000000, 2139000000);
-  const i1   = options.i1   ?? randRange(600000000, 1500000000);
-  const i2   = options.i2   ?? randRange(1500000000, 1900000000);
-  const i3   = options.i3   ?? randRange(600000000, 1500000000);
-  const i4   = options.i4   ?? randRange(1500000000, 1900000000);
-  const i5   = options.i5   ?? randRange(600000000, 1500000000);
+  // Параметры обфускации AWG2 — все integer, валидируем чтобы не пустить shell-injection в configure-script.
+  const intOpt = (v, fallback, label) => v == null ? fallback : shInt(v, { min: 0, max: 4294967295, label });
+  const jc   = intOpt(options.jc,   randInt(3, 10),               'jc');
+  const jmin = intOpt(options.jmin, randInt(10, 50),               'jmin');
+  const jmax = intOpt(options.jmax, randInt(200, 1000),            'jmax');
+  const s1   = intOpt(options.s1,   randInt(100, 200),             's1');
+  const s2   = intOpt(options.s2,   randInt(100, 200),             's2');
+  const s3   = intOpt(options.s3,   randInt(30, 100),              's3');
+  const s4   = intOpt(options.s4,   randInt(10, 50),               's4');
+  const h1   = intOpt(options.h1,   randRange(600000000, 1500000000),  'h1');
+  const h2   = intOpt(options.h2,   randRange(1500000000, 1900000000), 'h2');
+  const h3   = intOpt(options.h3,   randRange(1800000000, 2100000000), 'h3');
+  const h4   = intOpt(options.h4,   randRange(2100000000, 2139000000), 'h4');
+  const i1   = intOpt(options.i1,   randRange(600000000, 1500000000),  'i1');
+  const i2   = intOpt(options.i2,   randRange(1500000000, 1900000000), 'i2');
+  const i3   = intOpt(options.i3,   randRange(600000000, 1500000000),  'i3');
+  const i4   = intOpt(options.i4,   randRange(1500000000, 1900000000), 'i4');
+  const i5   = intOpt(options.i5,   randRange(600000000, 1500000000),  'i5');
 
   // 1. Собираем образ если нет
   await buildImage(server, imageName, buildDir, DOCKERFILES.awg2);
@@ -659,6 +661,7 @@ export async function installAWG2(server, options = {}) {
 }
 
 export async function addAWG2Client(server, protocol, clientName) {
+  assertContainerName(protocol.container_name);
   const c  = typeof protocol.config === 'string' ? JSON.parse(protocol.config) : protocol.config;
   const cn = protocol.container_name;
 
@@ -749,8 +752,8 @@ export async function addAWG2Client(server, protocol, clientName) {
 // ─── Xray VLESS Reality ───────────────────────────────────────────────────────
 
 export async function installXray(server, options = {}) {
-  const port = options.port ?? 443;
-  const sni  = options.sni  ?? 'www.googletagmanager.com';
+  const port = assertPort(options.port ?? 443);
+  const sni  = assertDomain(options.sni ?? 'www.googletagmanager.com');
   const containerName = 'amnezia-xray';
   const imageName = 'amnezia-xray:latest';
   const buildDir = '/opt/amnezia/amnezia-xray';
@@ -812,6 +815,7 @@ export async function installXray(server, options = {}) {
 }
 
 export async function addXrayClient(server, protocol, clientName) {
+  assertContainerName(protocol.container_name);
   const c  = typeof protocol.config === 'string' ? JSON.parse(protocol.config) : protocol.config;
   const cn = protocol.container_name;
 
@@ -887,7 +891,7 @@ export async function addXrayClient(server, protocol, clientName) {
 // ─── WireGuard classic ────────────────────────────────────────────────────────
 
 export async function installWireGuard(server, options = {}) {
-  const port      = options.port   || randPort();
+  const port      = assertPort(options.port || randPort());
   const subnetIp  = '10.8.1.0';
   const subnetCidr = '24';
   const containerName = 'amnezia-wireguard';
@@ -947,6 +951,7 @@ export async function installWireGuard(server, options = {}) {
 }
 
 export async function addWireGuardClient(server, protocol, clientName) {
+  assertContainerName(protocol.container_name);
   const c  = typeof protocol.config === 'string' ? JSON.parse(protocol.config) : protocol.config;
   const cn = protocol.container_name;
 
@@ -1015,12 +1020,14 @@ export async function addWireGuardClient(server, protocol, clientName) {
 // ─── Container management ─────────────────────────────────────────────────────
 
 export async function getContainerStatus(server, containerName) {
+  assertContainerName(containerName);
   const res = await exec(server, `docker inspect --format='{{.State.Status}}' ${containerName} 2>/dev/null || echo "not_found"`);
   return res.stdout.trim();
 }
 
 export async function getContainersHealth(server, containerNames) {
   if (!containerNames.length) return {};
+  for (const c of containerNames) assertContainerName(c);
   const list = containerNames.map(c => `"${c}"`).join(' ');
   const cmd = `for c in ${list}; do echo "$c:$(docker inspect --format='{{.State.Status}}' $c 2>/dev/null || echo 'not_found')"; done`;
   const res = await exec(server, cmd);
@@ -1035,16 +1042,21 @@ export async function getContainersHealth(server, containerNames) {
   return result; // { containerName: status }
 }
 export async function startContainer(server, containerName) {
+  assertContainerName(containerName);
   return execSudo(server, `docker start ${containerName}`);
 }
 export async function stopContainer(server, containerName) {
+  assertContainerName(containerName);
   return execSudo(server, `docker stop ${containerName}`);
 }
 export async function removeContainer(server, containerName) {
+  assertContainerName(containerName);
   return execSudo(server, `docker rm -f ${containerName} 2>/dev/null || true`);
 }
 export async function getContainerLogs(server, containerName, lines = 100) {
-  const res = await execSudo(server, `docker logs --tail ${lines} ${containerName} 2>&1`);
+  assertContainerName(containerName);
+  const safeLines = shInt(lines, { min: 1, max: 10000, label: 'lines' });
+  const res = await execSudo(server, `docker logs --tail ${safeLines} ${containerName} 2>&1`);
   return res.stdout;
 }
 export async function listAmneziaContainers(server) {

@@ -1,10 +1,21 @@
 import axios from 'axios';
 
-const api = axios.create({ baseURL: '/api' });
+const CSRF_COOKIE = 'panel_csrf';
+
+function readCookie(name) {
+  const m = document.cookie.match(new RegExp('(?:^|; )' + name.replace(/[.$?*|{}()[\]\\/+^]/g, '\\$&') + '=([^;]*)'));
+  return m ? decodeURIComponent(m[1]) : null;
+}
+
+const api = axios.create({ baseURL: '/api', withCredentials: true });
 
 api.interceptors.request.use(cfg => {
-  const token = localStorage.getItem('token');
-  if (token) cfg.headers.Authorization = `Bearer ${token}`;
+  // Double-submit CSRF: подкладываем токен из cookie в заголовок для не-GET запросов.
+  const method = (cfg.method || 'get').toUpperCase();
+  if (method !== 'GET' && method !== 'HEAD' && method !== 'OPTIONS') {
+    const csrf = readCookie(CSRF_COOKIE);
+    if (csrf) cfg.headers['X-CSRF-Token'] = csrf;
+  }
   return cfg;
 });
 
@@ -12,8 +23,9 @@ api.interceptors.response.use(
   r => r,
   err => {
     if (err.response?.status === 401) {
-      localStorage.removeItem('token');
-      window.location.href = '/login';
+      if (window.location.pathname !== '/login' && window.location.pathname !== '/setup') {
+        window.location.href = '/login';
+      }
     }
     return Promise.reject(err);
   }
@@ -25,6 +37,8 @@ export const authApi = {
   status: () => api.get('/auth/status'),
   setup: (data) => api.post('/auth/setup', data),
   login: (data) => api.post('/auth/login', data),
+  logout: () => api.post('/auth/logout'),
+  me: () => api.get('/auth/me'),
 };
 
 export const serversApi = {
@@ -55,16 +69,15 @@ export const clientsApi = {
   byProtocol: (protocolId) => api.get(`/clients/protocol/${protocolId}`),
   create: (data) => api.post('/clients', data),
   delete: (id) => api.delete(`/clients/${id}`),
-  qr: (id) => api.get(`/clients/${id}/qr`),          // returns { qr, amneziaQr, vpnUri }
-  configText: (id) => api.get(`/clients/${id}/config-text`), // returns { config, vpnUri, name }
+  qr: (id) => api.get(`/clients/${id}/qr`),
+  configText: (id) => api.get(`/clients/${id}/config-text`),
   configDownloadUrl: (id) => `/api/clients/${id}/config`,
   configAmneziaUrl: (id) => `/api/clients/${id}/config-amnezia`,
   subscription: (id) => api.get(`/clients/${id}/subscription`),
 };
 
 export async function downloadWithAuth(url, filename) {
-  const token = localStorage.getItem('token');
-  const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+  const res = await fetch(url, { credentials: 'include' });
   if (!res.ok) throw new Error(`Download failed: ${res.status}`);
   const blob = await res.blob();
   const objectUrl = URL.createObjectURL(blob);
@@ -87,7 +100,6 @@ export const subscriptionsApi = {
   getSettings: () => api.get('/subscriptions/settings'),
   saveSettings: (data) => api.post('/subscriptions/settings', data),
   subUrl: (slug) => {
-    // Подписка отдаётся через nginx на том же порту что и панель
     const port = window.location.port || '80';
     return `${window.location.protocol}//${window.location.hostname}:${port}/sub/${slug}`;
   },

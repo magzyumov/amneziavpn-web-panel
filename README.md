@@ -16,8 +16,8 @@
 git clone <repo>
 cd amnezia-panel
 
-# Опционально: смени JWT_SECRET
-echo "JWT_SECRET=your-secret-here" > .env
+# Обязательно: задай JWT_SECRET (≥32 символа)
+echo "JWT_SECRET=$(openssl rand -hex 32)" > .env
 echo "PANEL_PORT=8080" >> .env
 
 docker compose up -d --build
@@ -134,7 +134,8 @@ GET    /api/clients/:id/config              — скачать файл
 
 | Переменная | Default | Описание |
 |---|---|---|
-| `JWT_SECRET` | `change-me-in-production` | Секрет для JWT |
+| `JWT_SECRET` | **обязательно** | Секрет для JWT, минимум 32 символа. Сгенерировать: `openssl rand -hex 32`. Дефолт-значения отвергаются на старте. |
+| `PANEL_ENCRYPTION_KEY` | автогенерация | 64 hex-символа (32 байта) для AES-GCM шифрования SSH-кредов. Если не задан — генерируется и сохраняется в `data/encryption.key` (берегите файл при бэкапах) |
 | `PANEL_PORT` | `8080` | Порт веб-панели |
 | `DB_PATH` | `/data/panel.db` | Путь к базе данных |
 

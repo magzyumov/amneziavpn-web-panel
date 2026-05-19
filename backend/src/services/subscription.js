@@ -7,6 +7,7 @@
  * URL подписки: GET /sub/:slug — отдаёт готовый YAML.
  */
 
+import crypto from 'crypto';
 import { query, queryOne, run } from './db.js';
 
 // ─── Дефолтный шаблон (можно редактировать в UI) ────────────────────────────
@@ -515,6 +516,7 @@ function generateSlug(name) {
     .replace(/^-|-$/g, '')
     .slice(0, 20) || 'client';
 
-  const rand = Math.random().toString(36).slice(2, 8);
+  // 24 байта = 192 бита энтропии в base64url. Slug не угадывается перебором.
+  const rand = crypto.randomBytes(24).toString('base64url');
   return `${base}-${rand}`;
 }

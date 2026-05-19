@@ -2,6 +2,7 @@ import initSqlJs from 'sql.js';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { encrypt, isEncrypted } from './crypto.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DB_PATH = process.env.DB_PATH || path.join(__dirname, '../../data/panel.db');
@@ -21,7 +22,29 @@ export async function getDb() {
   }
 
   initSchema();
+  migrateEncryption();
   return db;
+}
+
+// Одноразовая миграция: шифрует plaintext password / private_key в существующих записях.
+function migrateEncryption() {
+  const stmt = db.prepare('SELECT id, password, private_key FROM servers');
+  const updates = [];
+  while (stmt.step()) {
+    const row = stmt.getAsObject();
+    const newPass = row.password && !isEncrypted(row.password) ? encrypt(row.password) : null;
+    const newKey  = row.private_key && !isEncrypted(row.private_key) ? encrypt(row.private_key) : null;
+    if (newPass || newKey) {
+      updates.push({ id: row.id, password: newPass ?? row.password, private_key: newKey ?? row.private_key });
+    }
+  }
+  stmt.free();
+  if (!updates.length) return;
+  for (const u of updates) {
+    db.run('UPDATE servers SET password = ?, private_key = ? WHERE id = ?', [u.password, u.private_key, u.id]);
+  }
+  console.log(`[db] Encrypted credentials for ${updates.length} server(s).`);
+  save();
 }
 
 function initSchema() {
