@@ -9,6 +9,7 @@ import { getDb, flushSave } from './services/db.js';
 import { initEncryption } from './services/crypto.js';
 import { csrfMiddleware } from './middleware/auth.js';
 import { disconnectAll } from './services/ssh.js';
+import { startStatsWorker, stopStatsWorker } from './services/statsWorker.js';
 import { logger } from './services/logger.js';
 import authRoutes from './routes/auth.js';
 import serverRoutes from './routes/servers.js';
@@ -95,6 +96,7 @@ app.use(errorHandler);
 
 const server = app.listen(PORT, () => {
   logger.info(`Amnezia Panel backend running on :${PORT}`);
+  startStatsWorker();
 });
 
 // Graceful shutdown по SIGTERM (docker compose down) и SIGINT (Ctrl+C).
@@ -109,6 +111,7 @@ function gracefulShutdown(signal: NodeJS.Signals): void {
   }, 10000).unref();
 
   server.close(() => {
+    try { stopStatsWorker(); } catch (e) { logger.error({ err: e }, 'stopStatsWorker failed'); }
     try { flushSave(); } catch (e) { logger.error({ err: e }, 'flushSave failed'); }
     try { disconnectAll(); } catch (e) { logger.error({ err: e }, 'disconnectAll failed'); }
     clearTimeout(timer);

@@ -4,6 +4,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { encrypt, isEncrypted } from './crypto.js';
 import { logger } from './logger.js';
+import { extractPeerId } from './peerId.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DB_PATH = process.env.DB_PATH || path.join(__dirname, '../../data/panel.db');
@@ -29,6 +30,7 @@ export async function getDb(): Promise<Database> {
 
   initSchema();
   migrateEncryption();
+  migrateClientPeerIds();
   return db;
 }
 
@@ -67,6 +69,48 @@ function migrateEncryption(): void {
   save();
 }
 
+// Для существующих БД (где CREATE TABLE clients был без peer_id) — добавляем колонку.
+// Затем бэкфиллим peer_id из ранее сохранённой конфигурации клиента:
+//   - AWG/WG: client.config содержит "<conf>\n---AMNEZIA_JSON---\n<json>" где json.client_pub_key
+//   - Xray: из vless://uuid@... в conf берём UUID
+const PEER_ID_MIGRATION_KEY = 'peer_id_migration_v1';
+
+function migrateClientPeerIds(): void {
+  const d = assertDb();
+
+  // ALTER TABLE если колонки нет (для уже существующих БД)
+  const info = d.exec("PRAGMA table_info('clients')")[0];
+  const hasColumn = info?.values.some((row) => row[1] === 'peer_id');
+  if (!hasColumn) d.run("ALTER TABLE clients ADD COLUMN peer_id TEXT");
+
+  const flag = d.prepare("SELECT value FROM settings WHERE key = ?");
+  flag.bind([PEER_ID_MIGRATION_KEY]);
+  const done = flag.step();
+  flag.free();
+  if (done) return;
+
+  const stmt = d.prepare(`
+    SELECT c.id, c.config, p.type FROM clients c
+    JOIN protocols p ON p.id = c.protocol_id
+    WHERE c.peer_id IS NULL
+  `);
+  const updates: Array<{ id: string; peer_id: string }> = [];
+  while (stmt.step()) {
+    const row = stmt.getAsObject() as { id: string; config: string | null; type: string };
+    const peerId = extractPeerId(row.config, row.type);
+    if (peerId) updates.push({ id: row.id, peer_id: peerId });
+  }
+  stmt.free();
+  for (const u of updates) {
+    d.run('UPDATE clients SET peer_id = ? WHERE id = ?', [u.peer_id, u.id]);
+  }
+  d.run('INSERT INTO settings (key, value) VALUES (?, ?)', [PEER_ID_MIGRATION_KEY, 'done']);
+  if (updates.length) {
+    logger.info({ count: updates.length }, 'Backfilled peer_id for existing clients');
+  }
+  save();
+}
+
 function initSchema(): void {
   const d = assertDb();
   d.run(`
@@ -101,9 +145,24 @@ function initSchema(): void {
       server_id TEXT NOT NULL,
       name TEXT NOT NULL,
       config TEXT,
+      peer_id TEXT, -- pubkey для AWG/WG, UUID для Xray; используется stats-воркером
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (protocol_id) REFERENCES protocols(id) ON DELETE CASCADE
     );
+
+    -- Снимки накопительной статистики per-client. rx/tx — cumulative bytes
+    -- с момента старта контейнера (awg show transfer), могут "обнуляться"
+    -- при рестарте контейнера — обработка делается на стороне reader'а.
+    CREATE TABLE IF NOT EXISTS client_stats (
+      client_id TEXT NOT NULL,
+      ts INTEGER NOT NULL,                  -- unix seconds снимка
+      rx_bytes INTEGER NOT NULL,            -- cumulative с момента старта контейнера
+      tx_bytes INTEGER NOT NULL,
+      last_handshake INTEGER,               -- unix seconds, 0 если ни разу не было
+      PRIMARY KEY (client_id, ts),
+      FOREIGN KEY (client_id) REFERENCES clients(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_client_stats_ts ON client_stats(ts);
 
     CREATE TABLE IF NOT EXISTS users (
       id TEXT PRIMARY KEY,

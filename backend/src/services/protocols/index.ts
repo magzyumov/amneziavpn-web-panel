@@ -10,3 +10,5 @@ export {
   scanExistingProtocols, PROTOCOLS,
 } from './containers.js';
 export type { AmneziaContainerListing, ScannedProtocol, ScannedClient } from './containers.js';
+export { readAwgWgPeerStats } from './stats.js';
+export type { PeerStats } from './stats.js';
