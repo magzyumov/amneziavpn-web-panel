@@ -8,6 +8,7 @@ import { validateBody } from '../middleware/validate.js';
 import { addAWG2Client, addXrayClient, addWireGuardClient } from '../services/protocols/index.js';
 import { createSubscription, getVpsHost } from '../services/subscription.js';
 import { buildAmneziaExportJson, buildVpnUri, buildChunkedAmneziaQr } from '../services/amneziaExport.js';
+import { extractPeerId } from '../services/peerId.js';
 import { logger } from '../services/logger.js';
 import type { Server, Protocol, Client, ProtocolType } from '../types.js';
 
@@ -87,8 +88,9 @@ router.post('/', validateBody(createClientSchema), async (req: Request, res: Res
   const storedConfig = result.configJson
     ? `${result.config}\n---AMNEZIA_JSON---\n${result.configJson}`
     : result.config;
-  run('INSERT INTO clients (id, protocol_id, server_id, name, config) VALUES (?, ?, ?, ?, ?)',
-    [id, protocolId, server.id, safeName, storedConfig]);
+  const peerId = extractPeerId(storedConfig, protocol.type);
+  run('INSERT INTO clients (id, protocol_id, server_id, name, config, peer_id) VALUES (?, ?, ?, ?, ?, ?)',
+    [id, protocolId, server.id, safeName, storedConfig, peerId]);
 
   let subscriptionSlug: string | null = null;
   if (protocol.type === 'xray') {
@@ -158,6 +160,78 @@ router.delete('/:id', (req, res) => {
 router.get('/:id/subscription', (req, res) => {
   const subs = query<{ slug: string }>('SELECT slug FROM subscriptions WHERE client_id = ?', [req.params.id]);
   res.json({ slug: subs[0]?.slug || null });
+});
+
+// ─── GET /api/clients/:id/stats ──────────────────────────────────────────────
+//
+// Возвращает per-client traffic статистику. range ∈ { 1h, 24h, 7d, 30d } —
+// дефолт 24h. series downsampled до ~60 точек по бакетам времени; rate
+// считается из cumulative bytes между соседними снимками (нет данных для
+// пары = no point). При container restart cumulative обнуляется — отрицательный
+// дельту мы клампим в 0.
+const RANGE_SECONDS: Record<string, number> = {
+  '1h':  60 * 60,
+  '24h': 24 * 60 * 60,
+  '7d':  7 * 24 * 60 * 60,
+  '30d': 30 * 24 * 60 * 60,
+};
+const ONLINE_WINDOW_SEC = 180; // 3 минуты от last_handshake = online
+
+interface StatsRow {
+  ts: number;
+  rx_bytes: number;
+  tx_bytes: number;
+  last_handshake: number | null;
+}
+
+router.get('/:id/stats', (req, res) => {
+  const rangeKey = (typeof req.query.range === 'string' ? req.query.range : '24h');
+  const rangeSec = RANGE_SECONDS[rangeKey] ?? RANGE_SECONDS['24h'];
+  const now = Math.floor(Date.now() / 1000);
+  const since = now - rangeSec;
+
+  const client = queryOne<Client>('SELECT id FROM clients WHERE id = ?', [req.params.id]);
+  if (!client) return res.status(404).json({ error: 'Not found' });
+
+  const rows = query<StatsRow>(
+    'SELECT ts, rx_bytes, tx_bytes, last_handshake FROM client_stats WHERE client_id = ? AND ts >= ? ORDER BY ts ASC',
+    [req.params.id, since],
+  );
+
+  const latest = rows.length ? rows[rows.length - 1] : null;
+  const online = latest && latest.last_handshake
+    ? (now - latest.last_handshake) < ONLINE_WINDOW_SEC
+    : false;
+
+  // Downsample: ~60 точек по бакетам, в каждом берём последний снимок.
+  const BUCKETS = 60;
+  const bucketSec = Math.max(60, Math.floor(rangeSec / BUCKETS));
+  const lastByBucket = new Map<number, StatsRow>();
+  for (const r of rows) {
+    const b = Math.floor(r.ts / bucketSec);
+    lastByBucket.set(b, r);
+  }
+  const bucketed = [...lastByBucket.values()].sort((a, b) => a.ts - b.ts);
+
+  // Считаем rate между соседними снимками (B/s). Reset = current_bytes < prev_bytes.
+  const series: Array<{ ts: number; rxRate: number; txRate: number }> = [];
+  for (let i = 1; i < bucketed.length; i++) {
+    const a = bucketed[i - 1];
+    const b = bucketed[i];
+    const dt = b.ts - a.ts;
+    if (dt <= 0) continue;
+    const dRx = Math.max(0, b.rx_bytes - a.rx_bytes);
+    const dTx = Math.max(0, b.tx_bytes - a.tx_bytes);
+    series.push({ ts: b.ts, rxRate: dRx / dt, txRate: dTx / dt });
+  }
+
+  res.json({
+    online,
+    lastHandshake: latest?.last_handshake ?? null,
+    totalRx: latest?.rx_bytes ?? 0,
+    totalTx: latest?.tx_bytes ?? 0,
+    series,
+  });
 });
 
 export default router;

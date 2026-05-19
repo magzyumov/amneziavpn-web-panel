@@ -160,9 +160,11 @@ router.post('/:id/import-protocol', validateBody(importSchema), (req: Request, r
     }
     // AWG/WireGuard: clientConfig остаётся null — приватный ключ клиента не хранится на сервере
 
+    // cl.clientId — это pubkey для AWG/WG (берётся прямо из clientsTable
+    // в контейнере) и UUID для Xray.
     run(
-      'INSERT INTO clients (id, protocol_id, server_id, name, config) VALUES (?, ?, ?, ?, ?)',
-      [clientId, protocolId, server.id, cl.name, clientConfig]
+      'INSERT INTO clients (id, protocol_id, server_id, name, config, peer_id) VALUES (?, ?, ?, ?, ?, ?)',
+      [clientId, protocolId, server.id, cl.name, clientConfig, cl.clientId]
     );
     importedClients++;
   }

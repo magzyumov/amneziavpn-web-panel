@@ -1,7 +1,9 @@
 import { useState, useEffect } from 'react';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { clientsApi, protocolsApi, type ClientRecord, type ProtocolRecord, type ServerRecord } from '../../api';
+import {
+  clientsApi, protocolsApi, type ClientRecord, type ProtocolRecord, type ServerRecord,
+} from '../../api';
 import AddClientModal from './AddClientModal';
 import ClientModal from './ClientModal';
 import CopySubButton from './CopySubButton';
@@ -30,9 +32,32 @@ function ProtocolCard({ protocol, server: _server, onDelete, dragHandleProps }: 
   const [showConfig, setShowConfig] = useState(false);
   const [search, setSearch] = useState('');
 
+  // Xray: stats-API может быть выключен на протоколах, поставленных до того
+  // как мы стали включать stats в шаблоне. Тогда показываем кнопку Enable.
+  const [statsEnabled, setStatsEnabled] = useState<boolean | null>(null);
+  const [enablingStats, setEnablingStats] = useState(false);
+
   useEffect(() => {
     clientsApi.byProtocol(protocol.id).then(r => setClients(r.data)).finally(() => setLoadingClients(false));
-  }, [protocol.id]);
+    if (protocol.type === 'xray') {
+      protocolsApi.statsStatus(protocol.id)
+        .then(r => setStatsEnabled(r.data.statsEnabled))
+        .catch(() => setStatsEnabled(null));
+    }
+  }, [protocol.id, protocol.type]);
+
+  const enableStats = async () => {
+    if (!confirm('Включить stats? Xray-контейнер будет перезапущен (несколько секунд даунтайма для активных клиентов).')) return;
+    setEnablingStats(true);
+    try {
+      await protocolsApi.enableStats(protocol.id);
+      setStatsEnabled(true);
+    } catch (e: any) {
+      alert('Не удалось включить stats: ' + (e?.response?.data?.error || e?.message));
+    } finally {
+      setEnablingStats(false);
+    }
+  };
 
   const toggle = async () => {
     setToggling(true);
@@ -98,6 +123,16 @@ function ProtocolCard({ protocol, server: _server, onDelete, dragHandleProps }: 
           <span className={`badge badge-${status === 'running' ? 'running' : 'stopped'}`}>
             {status}
           </span>
+          {protocol.type === 'xray' && statsEnabled === false && (
+            <button
+              className="btn btn-outline btn-sm"
+              onClick={enableStats}
+              disabled={enablingStats}
+              title="Включить stats API в Xray (server.json патчится через jq, контейнер рестартится)"
+            >
+              {enablingStats ? <span className="spinner" style={{ width: 12, height: 12 }} /> : '📊 Enable stats'}
+            </button>
+          )}
           <button className="btn btn-ghost btn-sm" onClick={toggle} disabled={toggling}>
             {toggling ? <span className="spinner" style={{ width: 12, height: 12 }} /> : status === 'running' ? '⏸' : '▶'}
           </button>

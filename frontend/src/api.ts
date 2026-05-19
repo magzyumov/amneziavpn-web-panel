@@ -91,7 +91,18 @@ export const protocolsApi = {
   status: (id: string) => api.get(`/protocols/${id}/status`),
   health: (serverId: string) => api.get<Record<string, string>>(`/protocols/server/${serverId}/health`),
   logs: (id: string, lines: number) => api.get<{ logs: string }>(`/protocols/${id}/logs`, { params: { lines } }),
+  statsStatus: (id: string) => api.get<{ statsEnabled: boolean }>(`/protocols/${id}/stats-status`),
+  enableStats: (id: string) => api.post(`/protocols/${id}/enable-stats`),
 };
+
+export type StatsRange = '1h' | '24h' | '7d' | '30d';
+export interface ClientStatsResponse {
+  online: boolean;
+  lastHandshake: number | null;
+  totalRx: number;
+  totalTx: number;
+  series: Array<{ ts: number; rxRate: number; txRate: number }>;
+}
 
 export const clientsApi = {
   byProtocol: (protocolId: string) => api.get<ClientRecord[]>(`/clients/protocol/${protocolId}`),
@@ -102,6 +113,8 @@ export const clientsApi = {
   configDownloadUrl: (id: string) => `/api/clients/${id}/config`,
   configAmneziaUrl: (id: string) => `/api/clients/${id}/config-amnezia`,
   subscription: (id: string) => api.get<{ slug: string | null }>(`/clients/${id}/subscription`),
+  stats: (id: string, range: StatsRange = '24h') =>
+    api.get<ClientStatsResponse>(`/clients/${id}/stats`, { params: { range } }),
 };
 
 export async function downloadWithAuth(url: string, filename: string): Promise<void> {
