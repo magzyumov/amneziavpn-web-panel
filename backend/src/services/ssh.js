@@ -1,4 +1,5 @@
 import { NodeSSH } from 'node-ssh';
+import { decrypt } from './crypto.js';
 
 const connections = new Map();
 
@@ -23,9 +24,9 @@ export async function getConnection(server) {
   };
 
   if (server.auth_type === 'key' && server.private_key) {
-    config.privateKey = server.private_key;
+    config.privateKey = decrypt(server.private_key);
   } else {
-    config.password = server.password;
+    config.password = decrypt(server.password);
   }
 
   await ssh.connect(config);

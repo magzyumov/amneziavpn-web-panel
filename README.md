@@ -135,6 +135,7 @@ GET    /api/clients/:id/config              — скачать файл
 | Переменная | Default | Описание |
 |---|---|---|
 | `JWT_SECRET` | `change-me-in-production` | Секрет для JWT |
+| `PANEL_ENCRYPTION_KEY` | автогенерация | 64 hex-символа (32 байта) для AES-GCM шифрования SSH-кредов. Если не задан — генерируется и сохраняется в `data/encryption.key` (берегите файл при бэкапах) |
 | `PANEL_PORT` | `8080` | Порт веб-панели |
 | `DB_PATH` | `/data/panel.db` | Путь к базе данных |
 

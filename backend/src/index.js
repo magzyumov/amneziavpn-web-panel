@@ -2,6 +2,7 @@ import 'express-async-errors';
 import express from 'express';
 import cors from 'cors';
 import { getDb } from './services/db.js';
+import { initEncryption } from './services/crypto.js';
 import authRoutes from './routes/auth.js';
 import serverRoutes from './routes/servers.js';
 import protocolRoutes from './routes/protocols.js';
@@ -26,6 +27,15 @@ app.set('trust proxy', 1);
 
 app.use(cors());
 app.use(express.json({ limit: '2mb' }));
+
+console.log('[startup] Initializing encryption...');
+try {
+  initEncryption();
+  console.log('[startup] Encryption OK');
+} catch (err) {
+  console.error('[startup] Encryption init FAILED:', err.stack || err.message);
+  process.exit(1);
+}
 
 console.log('[startup] Initializing database...');
 try {
