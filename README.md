@@ -53,6 +53,7 @@ Docker-образы собираются на VPS из Dockerfile'ов, гене
 - Chunked QR-код в нативном формате Amnezia (sscanf через несколько кадров)
 - Clash/FLClash YAML-подписки для Xray-клиентов: публичный URL `/sub/<slug>` с криптостойким slug (192 бита энтропии) и rate-limit
 - Drag-and-drop порядка протокольных карточек, сохраняется в localStorage
+- **Per-client статистика трафика** (AWG/WG): online-статус, last handshake, накопительный rx/tx, графики rx/tx rate за 1h/24h/7d/30d — без логирования посещаемых сайтов
 
 ---
 
@@ -82,11 +83,14 @@ amnezia-panel/
 │   │   │   ├── logger.ts           — pino (JSON в prod, pretty в dev)
 │   │   │   ├── subscription.ts     — генерация Clash YAML
 │   │   │   ├── amneziaExport.ts    — vpn:// URI + Amnezia JSON + chunked QR
+│   │   │   ├── peerId.ts           — extractPeerId() — pubkey/UUID из stored config
+│   │   │   ├── statsWorker.ts      — фоновый поллер per-client статистики
 │   │   │   └── protocols/
 │   │   │       ├── index.ts        — barrel re-export
 │   │   │       ├── common.ts       — randInt, writeRemoteFile, buildImage
 │   │   │       ├── containers.ts   — docker lifecycle + scanExistingProtocols
 │   │   │       ├── dockerfiles.ts  — шаблоны Dockerfile'ов и start/configure скриптов
+│   │   │       ├── stats.ts        — readAwgWgPeerStats (awg/wg show … dump)
 │   │   │       ├── awg2.ts         — install + addClient
 │   │   │       ├── wireguard.ts    — install + addClient
 │   │   │       └── xray.ts         — install + addClient
@@ -115,7 +119,10 @@ amnezia-panel/
 │   │           ├── InstallProtocolModal.tsx
 │   │           ├── ScanProtocolsModal.tsx
 │   │           ├── CopySubButton.tsx
-│   │           └── clipboard.ts
+│   │           ├── clipboard.ts
+│   │           ├── format.ts        — formatBytes / formatBitsPerSec / ...
+│   │           ├── Sparkline.tsx    — минималистичный SVG-чарт
+│   │           └── StatsTab.tsx     — вкладка статистики в ClientModal
 │   ├── tsconfig.json
 │   ├── vite.config.ts
 │   └── Dockerfile
@@ -177,6 +184,8 @@ GET    /api/clients/:id/config-text         — { config, vpnUri, name }
 GET    /api/clients/:id/config              — скачать .conf / .txt
 GET    /api/clients/:id/config-amnezia      — скачать Amnezia JSON
 GET    /api/clients/:id/subscription        — { slug } для Xray-клиентов
+GET    /api/clients/:id/stats?range=1h|24h|7d|30d  — per-client traffic stats
+                                              (online, lastHandshake, totalRx/Tx, series[])
 ```
 
 ### Subscriptions
@@ -204,6 +213,32 @@ POST   /api/subscriptions/settings         — { vpsHost } сохранить
 | `DB_PATH` | `/data/panel.db` | Путь к базе данных. |
 | `NODE_ENV` | `development` | В `production` включает HSTS и JSON-логи pino. |
 | `LOG_LEVEL` | `info` (prod) / `debug` (dev) | Уровень логов pino. |
+| `STATS_POLL_INTERVAL_MS` | `60000` | Интервал snapshot'ов client_stats в миллисекундах. |
+| `STATS_RETENTION_DAYS` | `30` | Сколько дней хранить точки client_stats; старше — purge каждые 6ч. |
+
+---
+
+## Статистика клиентов
+
+Раз в минуту backend опрашивает все запущенные AWG/WG контейнеры одной командой
+`awg|wg show <iface> dump` и сохраняет per-peer cumulative rx/tx + last_handshake
+в таблицу `client_stats`. Мап peer-pubkey → client делается через колонку
+`clients.peer_id`, которая заполняется на создании/импорте клиента.
+
+**Что в UI:** клик на клиента → вкладка **📊 Stats**:
+- online/offline + last handshake
+- накопительные rx/tx (сбрасываются при рестарте VPN-контейнера)
+- график rx/tx rate за 1 ч / 24 ч / 7 дней / 30 дней
+
+**Чего нет (и не будет в этой версии):** логирование посещаемых доменов / DNS-запросов
+/ SNI-сниффинг. Намеренно — обходится встроенным DoH в браузерах, нагружает
+CPU, заметная privacy-проблема при раздаче доступа другим людям.
+
+**Xray** пока не охвачен — у его stats API нужен дополнительный inbound в
+конфиге контейнера, который мы не включаем по умолчанию. Существующие
+Xray-протоколы продолжают работать, просто вкладка Stats для них скрыта.
+
+Tuning: `STATS_POLL_INTERVAL_MS` и `STATS_RETENTION_DAYS` (см. выше).
 
 ---
 
