@@ -53,7 +53,7 @@ Docker-образы собираются на VPS из Dockerfile'ов, гене
 - Chunked QR-код в нативном формате Amnezia (sscanf через несколько кадров)
 - Clash/FLClash YAML-подписки для Xray-клиентов: публичный URL `/sub/<slug>` с криптостойким slug (192 бита энтропии) и rate-limit
 - Drag-and-drop порядка протокольных карточек, сохраняется в localStorage
-- **Per-client статистика трафика** (AWG/WG): online-статус, last handshake, накопительный rx/tx, графики rx/tx rate за 1h/24h/7d/30d — без логирования посещаемых сайтов
+- **Per-client статистика трафика** (AWG/WG/Xray): online-статус, last handshake, накопительный rx/tx, графики rx/tx rate за 1h/24h/7d/30d — без логирования посещаемых сайтов
 
 ---
 
@@ -172,6 +172,10 @@ POST   /api/protocols/:id/start                      — запустить
 POST   /api/protocols/:id/stop                       — остановить
 GET    /api/protocols/:id/status                     — статус одного
 GET    /api/protocols/:id/logs?lines=100             — логи контейнера
+GET    /api/protocols/:id/stats-status               — { statsEnabled }
+                                                       (AWG/WG always true; Xray читает server.json)
+POST   /api/protocols/:id/enable-stats               — только для Xray:
+                                                       jq-патч server.json + restart контейнера
 ```
 
 ### Clients
@@ -220,23 +224,32 @@ POST   /api/subscriptions/settings         — { vpsHost } сохранить
 
 ## Статистика клиентов
 
-Раз в минуту backend опрашивает все запущенные AWG/WG контейнеры одной командой
-`awg|wg show <iface> dump` и сохраняет per-peer cumulative rx/tx + last_handshake
-в таблицу `client_stats`. Мап peer-pubkey → client делается через колонку
-`clients.peer_id`, которая заполняется на создании/импорте клиента.
+Раз в минуту backend опрашивает все запущенные VPN-контейнеры и сохраняет
+per-peer cumulative rx/tx + last_handshake в таблицу `client_stats`. Мап
+peer-id → client делается через колонку `clients.peer_id`, которая
+заполняется на создании / импорте клиента.
+
+**Источники данных по протоколам:**
+
+| Протокол | Команда | Per-user счётчик |
+|---|---|---|
+| AmneziaWG / WireGuard | `awg\|wg show <iface> dump` | public key |
+| Xray VLESS Reality | `xray api stats --pattern user>>>` через 127.0.0.1:10085 | email (== UUID) |
 
 **Что в UI:** клик на клиента → вкладка **📊 Stats**:
-- online/offline + last handshake
+- online/offline + last handshake (для Xray синтезируется из дельты трафика)
 - накопительные rx/tx (сбрасываются при рестарте VPN-контейнера)
 - график rx/tx rate за 1 ч / 24 ч / 7 дней / 30 дней
+
+**Xray и существующие установки:** новые Xray-протоколы ставятся уже с включённым
+stats-API (см. `CONFIGURE_SCRIPTS.xray`). Старые протоколы — на их карточке появляется
+кнопка **📊 Enable stats**: бэкенд через `jq` дописывает блоки `stats`, `api`,
+`policy`, `routing` в `server.json` и рестартит контейнер (даунтайм ~3 сек,
+существующие клиенты сохраняются, email-поле бэкфиллится автоматически).
 
 **Чего нет (и не будет в этой версии):** логирование посещаемых доменов / DNS-запросов
 / SNI-сниффинг. Намеренно — обходится встроенным DoH в браузерах, нагружает
 CPU, заметная privacy-проблема при раздаче доступа другим людям.
-
-**Xray** пока не охвачен — у его stats API нужен дополнительный inbound в
-конфиге контейнера, который мы не включаем по умолчанию. Существующие
-Xray-протоколы продолжают работать, просто вкладка Stats для них скрыта.
 
 Tuning: `STATS_POLL_INTERVAL_MS` и `STATS_RETENTION_DAYS` (см. выше).
 
