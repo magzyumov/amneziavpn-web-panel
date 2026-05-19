@@ -101,7 +101,8 @@ router.post('/:id/scan-protocols', async (req, res) => {
     const found = await scanExistingProtocols(server);
     res.json({ found });
   } catch (e) {
-    res.status(500).json({ error: e.message });
+    console.error('[scan-protocols]', e.stack || e.message);
+    res.status(500).json({ error: 'Failed to scan protocols' });
   }
 });
 
