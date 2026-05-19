@@ -60,6 +60,10 @@ try {
   process.exit(1);
 }
 
+// Без авторизации и CSRF (csrfMiddleware пропускает GET).
+// Используется docker compose healthcheck'ом и внешним мониторингом.
+app.get('/api/health', (_req, res) => res.json({ ok: true }));
+
 app.use('/api/auth',          authRoutes);
 app.use('/api/servers',       serverRoutes);
 app.use('/api/protocols',     protocolRoutes);
