@@ -111,11 +111,37 @@ function initSchema() {
   save();
 }
 
+// sql.js — in-memory БД, нужно периодически писать снимок на диск.
+// save() — синхронная запись прямо сейчас (для миграций, shutdown).
+// requestSave() — дебаунс: при шторме run() пишем диск 1 раз в SAVE_DEBOUNCE_MS.
+const SAVE_DEBOUNCE_MS = 250;
+let saveTimer = null;
+let saveDirty = false;
+
 export function save() {
+  saveDirty = false;
+  if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; }
   const data = db.export();
   const dir = path.dirname(DB_PATH);
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(DB_PATH, Buffer.from(data));
+}
+
+function requestSave() {
+  saveDirty = true;
+  if (saveTimer) return;
+  saveTimer = setTimeout(() => {
+    saveTimer = null;
+    if (saveDirty) {
+      try { save(); }
+      catch (e) { console.error('[db] save failed:', e.stack || e.message); }
+    }
+  }, SAVE_DEBOUNCE_MS);
+}
+
+// Вызывается при graceful shutdown — гарантирует, что незаписанные данные на диске.
+export function flushSave() {
+  if (saveDirty) save();
 }
 
 export function query(sql, params = []) {
@@ -131,7 +157,7 @@ export function query(sql, params = []) {
 
 export function run(sql, params = []) {
   db.run(sql, params);
-  save();
+  requestSave();
 }
 
 export function queryOne(sql, params = []) {
