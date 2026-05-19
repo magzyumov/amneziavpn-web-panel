@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { serversApi } from '../api.js';
+import { serversApi } from '../api';
 
 function AddServerModal({ onClose, onAdded }) {
   const [form, setForm] = useState({ name: '', host: '', port: 22, username: 'root', auth_type: 'password', password: '', private_key: '' });
@@ -22,7 +22,7 @@ function AddServerModal({ onClose, onAdded }) {
     setLoading(true);
     setError('');
     try {
-      const r = await serversApi.create(form);
+      const r = await serversApi.create(form as any);
       onAdded(r.data);
       // Переходим на страницу сервера — там покажем результаты сканирования
       navigate(`/server/${r.data.id}?scan=1`);

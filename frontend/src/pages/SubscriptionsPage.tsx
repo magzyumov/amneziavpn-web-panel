@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { subscriptionsApi } from '../api.js';
+import { subscriptionsApi } from '../api';
 
 function copyToClipboard(text) {
   if (navigator.clipboard && window.isSecureContext) {

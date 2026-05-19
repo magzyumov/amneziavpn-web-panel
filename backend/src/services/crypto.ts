@@ -1,15 +1,16 @@
 import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
+import { logger } from './logger.js';
 
 const ALGORITHM = 'aes-256-gcm';
 const IV_LENGTH = 12;
 const TAG_LENGTH = 16;
 const PREFIX = 'enc:v1:';
 
-let cachedKey = null;
+let cachedKey: Buffer | null = null;
 
-function loadOrGenerateKey() {
+function loadOrGenerateKey(): Buffer {
   const fromEnv = process.env.PANEL_ENCRYPTION_KEY;
   if (fromEnv) {
     if (!/^[0-9a-fA-F]{64}$/.test(fromEnv)) {
@@ -30,25 +31,24 @@ function loadOrGenerateKey() {
   const key = crypto.randomBytes(32);
   fs.mkdirSync(path.dirname(keyPath), { recursive: true });
   fs.writeFileSync(keyPath, key.toString('hex'), { mode: 0o600 });
-  console.warn(`[crypto] PANEL_ENCRYPTION_KEY not set — generated new key at ${keyPath}.`);
-  console.warn('[crypto]   Back this file up alongside the database, or set PANEL_ENCRYPTION_KEY env var.');
+  logger.warn({ keyPath }, 'PANEL_ENCRYPTION_KEY not set — generated new key; back up alongside DB or set env var');
   return key;
 }
 
-function getKey() {
+function getKey(): Buffer {
   if (!cachedKey) cachedKey = loadOrGenerateKey();
   return cachedKey;
 }
 
-export function initEncryption() {
+export function initEncryption(): void {
   getKey();
 }
 
-export function isEncrypted(value) {
+export function isEncrypted(value: unknown): value is string {
   return typeof value === 'string' && value.startsWith(PREFIX);
 }
 
-export function encrypt(plaintext) {
+export function encrypt(plaintext: string | null | undefined): string | null | undefined {
   if (plaintext == null || plaintext === '') return plaintext;
   if (isEncrypted(plaintext)) return plaintext;
   const iv = crypto.randomBytes(IV_LENGTH);
@@ -58,7 +58,7 @@ export function encrypt(plaintext) {
   return PREFIX + Buffer.concat([iv, tag, ct]).toString('base64');
 }
 
-export function decrypt(value) {
+export function decrypt(value: string | null | undefined): string | null | undefined {
   if (value == null || value === '') return value;
   if (!isEncrypted(value)) return value;
   const data = Buffer.from(value.slice(PREFIX.length), 'base64');

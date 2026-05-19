@@ -1,12 +1,12 @@
 # Amnezia Panel
 
 Веб-панель для управления VPN-сервером через Amnezia Docker-образы.
-Альтернатива десктопному клиенту Amnezia в части серверного управления.
+Альтернатива десктопному клиенту Amnezia в части серверного управления — работает в браузере и управляет VPS через SSH.
 
 ## Стек
-- **Backend**: Node.js + Express + node-ssh + sql.js
-- **Frontend**: React + Vite + React Router
-- **Деплой**: Docker Compose
+- **Backend**: Node.js + TypeScript (tsx) + Express + node-ssh + sql.js + zod + pino
+- **Frontend**: React 18 + TypeScript + Vite + React Router + @dnd-kit
+- **Деплой**: Docker Compose (nginx во frontend-контейнере проксирует `/api/` и `/sub/` на backend)
 
 ---
 
@@ -16,7 +16,7 @@
 git clone <repo>
 cd amnezia-panel
 
-# Обязательно: задай JWT_SECRET (≥32 символа)
+# Обязательно: задай JWT_SECRET (≥32 символа, не дефолт)
 echo "JWT_SECRET=$(openssl rand -hex 32)" > .env
 echo "PANEL_PORT=8080" >> .env
 
@@ -31,25 +31,28 @@ docker compose up -d --build
 
 ## Поддерживаемые протоколы
 
-| Протокол | Docker образ | Статус |
+| Протокол | Контейнер | Особенности |
 |---|---|---|
-| **AmneziaWG** | `amneziavpn/amneziawg-go` | ✅ |
-| **Xray VLESS Reality** | `amneziavpn/amnezia-xray-core` | ✅ |
-| **OpenVPN** | `amneziavpn/openvpn-server` | ✅ |
+| **AmneziaWG 2.0** (`awg2`) | `amnezia-awg2` (build локально) | WireGuard + расширенная DPI-обфускация (Jc/Jmin/Jmax/S1-S4/H1-H4/I1-I5) |
+| **WireGuard** | `amnezia-wireguard` (build локально) | Классический WG без обфускации |
+| **Xray VLESS Reality** | `amnezia-xray` (build локально) | VLESS + Reality, имитирует TLS трафик целевого SNI |
+
+Docker-образы собираются на VPS из Dockerfile'ов, генерируемых backend'ом (см. `backend/src/services/protocols/dockerfiles.ts`) — это реверс-инжиниринг команд Amnezia Desktop.
 
 ---
 
 ## Возможности
 
 - Добавление нескольких VPS (password или SSH key)
-- Тест SSH-соединения + проверка Docker
-- Автоустановка Docker (`Ensure Docker`)
+- SSH credentials шифруются AES-256-GCM перед записью в БД
+- Тест SSH-соединения + проверка/автоустановка Docker (`Ensure Docker`)
 - Установка протоколов с настраиваемыми параметрами (порт, обфускация AWG, SNI для Xray)
-- Управление контейнерами (start/stop/delete)
-- Просмотр логов контейнера в реальном времени
-- Создание клиентов с генерацией конфига
-- QR-код для каждого клиента
-- Скачивание `.conf` файла
+- Управление контейнерами (start / stop / delete / logs)
+- Сканирование уже установленных Amnezia-протоколов на сервере и импорт их в БД панели
+- Создание клиентов с генерацией конфига, AmneziaVPN-совместимым `vpn://` URI и QR-кодом
+- Chunked QR-код в нативном формате Amnezia (sscanf через несколько кадров)
+- Clash/FLClash YAML-подписки для Xray-клиентов: публичный URL `/sub/<slug>` с криптостойким slug (192 бита энтропии) и rate-limit
+- Drag-and-drop порядка протокольных карточек, сохраняется в localStorage
 
 ---
 
@@ -59,30 +62,61 @@ docker compose up -d --build
 amnezia-panel/
 ├── backend/
 │   ├── src/
-│   │   ├── index.js            — Express app
-│   │   ├── middleware/auth.js  — JWT auth
+│   │   ├── index.ts                — Express app, graceful shutdown
+│   │   ├── types.ts                — доменные типы (Server, Protocol, Client, ...)
+│   │   ├── middleware/
+│   │   │   ├── auth.ts             — JWT cookie + double-submit CSRF
+│   │   │   └── validate.ts         — zod-схема → 400 с понятным error.path
 │   │   ├── routes/
-│   │   │   ├── auth.js         — login/setup
-│   │   │   ├── servers.js      — CRUD серверов
-│   │   │   ├── protocols.js    — установка/управление
-│   │   │   └── clients.js      — клиенты + QR
+│   │   │   ├── auth.ts             — login / setup / me / logout
+│   │   │   ├── servers.ts          — CRUD + scan + import
+│   │   │   ├── protocols.ts        — install / start / stop / health / logs
+│   │   │   ├── clients.ts          — create / qr / config / download
+│   │   │   └── subscriptions.ts    — Clash подписки + публичный /sub/:slug
 │   │   └── services/
-│   │       ├── db.js           — SQLite (sql.js)
-│   │       ├── ssh.js          — SSH connection pool
-│   │       └── protocols.js    — Docker команды
+│   │       ├── db.ts               — sql.js + debounced disk snapshots
+│   │       ├── crypto.ts           — AES-256-GCM для SSH-кредов
+│   │       ├── ssh.ts              — node-ssh connection pool + keepalive
+│   │       ├── shell.ts            — sh()/shInt()/assert* для безопасной интерполяции
+│   │       ├── env.ts              — валидация JWT_SECRET на старте
+│   │       ├── logger.ts           — pino (JSON в prod, pretty в dev)
+│   │       ├── subscription.ts     — генерация Clash YAML
+│   │       └── protocols/
+│   │           ├── index.ts        — barrel re-export
+│   │           ├── common.ts       — randInt, writeRemoteFile, buildImage
+│   │           ├── containers.ts   — docker lifecycle + scanExistingProtocols
+│   │           ├── dockerfiles.ts  — шаблоны Dockerfile'ов и start/configure скриптов
+│   │           ├── awg2.ts         — install + addClient
+│   │           ├── wireguard.ts    — install + addClient
+│   │           └── xray.ts         — install + addClient
+│   ├── tsconfig.json
 │   └── Dockerfile
 ├── frontend/
 │   ├── src/
-│   │   ├── api.js              — axios API client
-│   │   ├── App.jsx             — роутинг + стили
+│   │   ├── main.tsx
+│   │   ├── App.tsx                 — роутинг + sidebar
+│   │   ├── App.css                 — все стили в одном файле
+│   │   ├── api.ts                  — axios + CSRF + типы API
 │   │   └── pages/
-│   │       ├── LoginPage.jsx
-│   │       ├── SetupPage.jsx
-│   │       ├── DashboardPage.jsx
-│   │       └── ServerPage.jsx
-│   ├── nginx.conf
+│   │       ├── LoginPage.tsx
+│   │       ├── SetupPage.tsx
+│   │       ├── AuthForm.tsx        — общая форма login/setup
+│   │       ├── DashboardPage.tsx
+│   │       ├── ServerPage.tsx      — главная страница сервера (тонкий контейнер)
+│   │       ├── SubscriptionsPage.tsx
+│   │       └── server/             — компоненты ServerPage
+│   │           ├── ProtocolCard.tsx
+│   │           ├── ClientModal.tsx
+│   │           ├── AddClientModal.tsx
+│   │           ├── EditServerModal.tsx
+│   │           ├── InstallProtocolModal.tsx
+│   │           ├── ScanProtocolsModal.tsx
+│   │           ├── CopySubButton.tsx
+│   │           └── clipboard.ts
+│   ├── tsconfig.json
+│   ├── vite.config.ts
 │   └── Dockerfile
-├── data/                       — БД (создаётся автоматически)
+├── data/                           — БД + encryption.key (создаётся автоматически)
 └── docker-compose.yml
 ```
 
@@ -92,40 +126,62 @@ amnezia-panel/
 
 ### Auth
 ```
-GET  /api/auth/status      — нужна ли настройка
-POST /api/auth/setup       — создать admin
-POST /api/auth/login       — получить JWT
+GET  /api/auth/status      — нужна ли первичная настройка
+POST /api/auth/setup       — создать admin (только если БД пустая)
+POST /api/auth/login       — выставить httpOnly cookie + CSRF cookie
+POST /api/auth/logout      — очистить cookies
+GET  /api/auth/me          — { username } для проверки сессии
 ```
 
 ### Servers
 ```
-GET    /api/servers                    — список серверов
-POST   /api/servers                    — добавить сервер
-DELETE /api/servers/:id                — удалить
-POST   /api/servers/:id/test           — тест SSH
-POST   /api/servers/:id/ensure-docker  — установить Docker
-GET    /api/servers/:id/containers     — список контейнеров
+GET    /api/servers                       — список
+POST   /api/servers                       — добавить
+PUT    /api/servers/:id                   — обновить
+DELETE /api/servers/:id                   — удалить
+POST   /api/servers/:id/test              — тест SSH
+POST   /api/servers/:id/ensure-docker     — установить Docker через get.docker.com
+GET    /api/servers/:id/containers        — список Amnezia-контейнеров
+POST   /api/servers/:id/scan-protocols    — найти установленные протоколы
+POST   /api/servers/:id/import-protocol   — импортировать найденный протокол + клиентов
 ```
 
 ### Protocols
 ```
-GET    /api/protocols                       — описания протоколов
-GET    /api/protocols/server/:serverId      — протоколы сервера
-POST   /api/protocols/server/:serverId      — установить { type, options }
-DELETE /api/protocols/:id                   — удалить + контейнер
-POST   /api/protocols/:id/start             — запустить
-POST   /api/protocols/:id/stop              — остановить
-GET    /api/protocols/:id/logs              — логи контейнера
+GET    /api/protocols                                — описания (для UI)
+GET    /api/protocols/server/:serverId               — установленные на сервере
+GET    /api/protocols/server/:serverId/health        — реальные статусы (батчем за 1 SSH)
+POST   /api/protocols/server/:serverId               — установить { type, options }
+DELETE /api/protocols/:id                            — удалить + контейнер + клиенты
+POST   /api/protocols/:id/start                      — запустить
+POST   /api/protocols/:id/stop                       — остановить
+GET    /api/protocols/:id/status                     — статус одного
+GET    /api/protocols/:id/logs?lines=100             — логи контейнера
 ```
 
 ### Clients
 ```
-GET    /api/clients/protocol/:protocolId   — список клиентов
+GET    /api/clients/protocol/:protocolId   — список
 POST   /api/clients                         — создать { protocolId, name }
 DELETE /api/clients/:id                     — удалить
-GET    /api/clients/:id/qr                  — QR-код (base64)
-GET    /api/clients/:id/config-text         — текст конфига
-GET    /api/clients/:id/config              — скачать файл
+GET    /api/clients/:id/qr                  — QR (оригинальный + amneziaQrParts + vpnUri)
+GET    /api/clients/:id/config-text         — { config, vpnUri, name }
+GET    /api/clients/:id/config              — скачать .conf / .txt
+GET    /api/clients/:id/config-amnezia      — скачать Amnezia JSON
+GET    /api/clients/:id/subscription        — { slug } для Xray-клиентов
+```
+
+### Subscriptions
+```
+GET    /sub/:slug                          — публичный YAML для Clash/FLClash (rate-limit 30/min)
+GET    /api/subscriptions                  — список (auth)
+DELETE /api/subscriptions/:clientId        — удалить подписку
+GET    /api/subscriptions/template         — { template, default }
+POST   /api/subscriptions/template         — { template } сохранить
+POST   /api/subscriptions/template/reset   — вернуть дефолтный шаблон
+POST   /api/subscriptions/regenerate       — перегенерировать все подписки из текущего шаблона
+GET    /api/subscriptions/settings         — { vpsHost }
+POST   /api/subscriptions/settings         — { vpsHost } сохранить
 ```
 
 ---
@@ -134,17 +190,48 @@ GET    /api/clients/:id/config              — скачать файл
 
 | Переменная | Default | Описание |
 |---|---|---|
-| `JWT_SECRET` | **обязательно** | Секрет для JWT, минимум 32 символа. Сгенерировать: `openssl rand -hex 32`. Дефолт-значения отвергаются на старте. |
-| `PANEL_ENCRYPTION_KEY` | автогенерация | 64 hex-символа (32 байта) для AES-GCM шифрования SSH-кредов. Если не задан — генерируется и сохраняется в `data/encryption.key` (берегите файл при бэкапах) |
-| `PANEL_PORT` | `8080` | Порт веб-панели |
-| `DB_PATH` | `/data/panel.db` | Путь к базе данных |
+| `JWT_SECRET` | **обязательно** | Секрет для JWT, минимум 32 символа. Сгенерировать: `openssl rand -hex 32`. Известные дефолт-значения отвергаются на старте. |
+| `PANEL_ENCRYPTION_KEY` | автогенерация | 64 hex-символа (32 байта) для AES-GCM шифрования SSH-кредов. Если не задан — генерируется и сохраняется в `data/encryption.key` (берегите файл при бэкапах). |
+| `PANEL_PORT` | `80` | Внешний порт веб-панели (`docker-compose.yml`). |
+| `DB_PATH` | `/data/panel.db` | Путь к базе данных. |
+| `NODE_ENV` | `development` | В `production` включает HSTS и JSON-логи pino. |
+| `LOG_LEVEL` | `info` (prod) / `debug` (dev) | Уровень логов pino. |
 
 ---
 
-## Добавление протоколов (roadmap)
+## Безопасность
+
+- SSH credentials (password, private_key) шифруются AES-256-GCM перед записью в БД, ключ — в `data/encryption.key` или `PANEL_ENCRYPTION_KEY`
+- JWT в httpOnly cookie + CSRF double-submit cookie (`X-CSRF-Token` header против `panel_csrf` cookie)
+- Rate-limit: 10 попыток логина / 15 мин, 30 запросов / мин на `/sub/:slug`
+- Slug подписки = 192 бита криптослучайных байт в base64url
+- helmet с CSP=off (для inline-стилей) + same-site cookie + HSTS в production
+- Все user input в SSH-командах проходят через `shell.ts` (`sh()`, `shInt()`, `assertContainerName()`, `assertPort()`)
+- zod-валидация на всех POST/PUT с пользовательскими данными
+
+---
+
+## Дев-режим
+
+```bash
+# Backend
+cd backend
+npm install
+JWT_SECRET=$(openssl rand -hex 32) npm start          # tsx watch
+npm run typecheck                                      # tsc --noEmit
+
+# Frontend
+cd frontend
+npm install
+npm run dev                                            # vite на :3000, проксирует /api → :3001
+npm run typecheck
+```
+
+---
+
+## Roadmap
 
 - [ ] Shadowsocks
 - [ ] OpenVPN over Cloak
 - [ ] IKEv2/IPSec
-- [ ] Euphoria (AWG-based)
-- [ ] Импорт существующих конфигов Amnezia
+- [ ] Удалённое управление настройками AWG (без передеплоя)

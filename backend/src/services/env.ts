@@ -6,12 +6,12 @@ const WEAK_JWT_SECRETS = new Set([
   'amnezia-panel-secret-change-me',
 ]);
 
-function fail(msg) {
+function fail(msg: string): never {
   console.error(`[startup] ENV check failed: ${msg}`);
   process.exit(1);
 }
 
-export function validateEnv() {
+export function validateEnv(): void {
   const jwt = process.env.JWT_SECRET;
   if (!jwt) {
     fail('JWT_SECRET is required. Generate one with: openssl rand -hex 32');
