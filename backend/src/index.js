@@ -3,7 +3,6 @@ import { validateEnv } from './services/env.js';
 validateEnv();
 
 import express from 'express';
-import cors from 'cors';
 import cookieParser from 'cookie-parser';
 import { getDb } from './services/db.js';
 import { initEncryption } from './services/crypto.js';
@@ -30,7 +29,8 @@ const PORT = process.env.PORT || 3001;
 // Доверяем первому proxy (nginx внутри docker network)
 app.set('trust proxy', 1);
 
-app.use(cors());
+// CORS не нужен: фронт и API ходят через один nginx (same-origin).
+// /sub/:slug потребляется не браузерами (Clash/FLClash) — CORS им безразличен.
 app.use(cookieParser());
 app.use(express.json({ limit: '2mb' }));
 app.use('/api', csrfMiddleware);
