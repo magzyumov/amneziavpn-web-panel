@@ -73,22 +73,25 @@ amnezia-panel/
 │   │   │   ├── protocols.ts        — install / start / stop / health / logs
 │   │   │   ├── clients.ts          — create / qr / config / download
 │   │   │   └── subscriptions.ts    — Clash подписки + публичный /sub/:slug
-│   │   └── services/
-│   │       ├── db.ts               — sql.js + debounced disk snapshots
-│   │       ├── crypto.ts           — AES-256-GCM для SSH-кредов
-│   │       ├── ssh.ts              — node-ssh connection pool + keepalive
-│   │       ├── shell.ts            — sh()/shInt()/assert* для безопасной интерполяции
-│   │       ├── env.ts              — валидация JWT_SECRET на старте
-│   │       ├── logger.ts           — pino (JSON в prod, pretty в dev)
-│   │       ├── subscription.ts     — генерация Clash YAML
-│   │       └── protocols/
-│   │           ├── index.ts        — barrel re-export
-│   │           ├── common.ts       — randInt, writeRemoteFile, buildImage
-│   │           ├── containers.ts   — docker lifecycle + scanExistingProtocols
-│   │           ├── dockerfiles.ts  — шаблоны Dockerfile'ов и start/configure скриптов
-│   │           ├── awg2.ts         — install + addClient
-│   │           ├── wireguard.ts    — install + addClient
-│   │           └── xray.ts         — install + addClient
+│   │   ├── services/
+│   │   │   ├── db.ts               — sql.js + debounced disk snapshots
+│   │   │   ├── crypto.ts           — AES-256-GCM для SSH-кредов
+│   │   │   ├── ssh.ts              — node-ssh connection pool + keepalive
+│   │   │   ├── shell.ts            — sh()/shInt()/assert* для безопасной интерполяции
+│   │   │   ├── env.ts              — валидация JWT_SECRET на старте
+│   │   │   ├── logger.ts           — pino (JSON в prod, pretty в dev)
+│   │   │   ├── subscription.ts     — генерация Clash YAML
+│   │   │   ├── amneziaExport.ts    — vpn:// URI + Amnezia JSON + chunked QR
+│   │   │   └── protocols/
+│   │   │       ├── index.ts        — barrel re-export
+│   │   │       ├── common.ts       — randInt, writeRemoteFile, buildImage
+│   │   │       ├── containers.ts   — docker lifecycle + scanExistingProtocols
+│   │   │       ├── dockerfiles.ts  — шаблоны Dockerfile'ов и start/configure скриптов
+│   │   │       ├── awg2.ts         — install + addClient
+│   │   │       ├── wireguard.ts    — install + addClient
+│   │   │       └── xray.ts         — install + addClient
+│   │   └── templates/
+│   │       └── clash.yaml          — дефолтный Clash YAML template
 │   ├── tsconfig.json
 │   └── Dockerfile
 ├── frontend/
@@ -123,6 +126,11 @@ amnezia-panel/
 ---
 
 ## API
+
+### Health
+```
+GET  /api/health           — { ok: true } (без auth, used by docker compose healthcheck)
+```
 
 ### Auth
 ```
@@ -205,9 +213,11 @@ POST   /api/subscriptions/settings         — { vpsHost } сохранить
 - JWT в httpOnly cookie + CSRF double-submit cookie (`X-CSRF-Token` header против `panel_csrf` cookie)
 - Rate-limit: 10 попыток логина / 15 мин, 30 запросов / мин на `/sub/:slug`
 - Slug подписки = 192 бита криптослучайных байт в base64url
-- helmet с CSP=off (для inline-стилей) + same-site cookie + HSTS в production
+- CSP в двух слоях: nginx отдаёт строгий CSP на HTML (`default-src 'self'`, без `unsafe-eval`); backend через helmet отдаёт `default-src 'none'` на JSON-ответах (defense-in-depth)
+- same-site cookie + HSTS в production
 - Все user input в SSH-командах проходят через `shell.ts` (`sh()`, `shInt()`, `assertContainerName()`, `assertPort()`)
 - zod-валидация на всех POST/PUT с пользовательскими данными
+- docker compose healthcheck (`/api/health`): nginx не начинает проксировать до того, как backend готов отвечать
 
 ---
 
