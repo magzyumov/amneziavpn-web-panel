@@ -3,6 +3,7 @@ import { validateEnv } from './services/env.js';
 validateEnv();
 
 import express from 'express';
+import helmet from 'helmet';
 import cookieParser from 'cookie-parser';
 import { getDb } from './services/db.js';
 import { initEncryption } from './services/crypto.js';
@@ -31,6 +32,13 @@ app.set('trust proxy', 1);
 
 // CORS не нужен: фронт и API ходят через один nginx (same-origin).
 // /sub/:slug потребляется не браузерами (Clash/FLClash) — CORS им безразличен.
+app.use(helmet({
+  // API возвращает только JSON/text — CSP применяется к HTML-документам, для нас бесполезна.
+  contentSecurityPolicy: false,
+  // HSTS включится автоматически только при NODE_ENV=production.
+  hsts: process.env.NODE_ENV === 'production',
+  crossOriginResourcePolicy: { policy: 'same-site' },
+}));
 app.use(cookieParser());
 app.use(express.json({ limit: '2mb' }));
 app.use('/api', csrfMiddleware);
