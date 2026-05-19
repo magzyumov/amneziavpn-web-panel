@@ -3,17 +3,25 @@ import { decrypt } from './crypto.js';
 
 const connections = new Map();
 
+// Сообщения, по которым считаем что SSH-канал умер и нужно переподключиться.
+const RECONNECT_PATTERNS = [
+  /not connected/i,
+  /connection lost/i,
+  /channel closed/i,
+  /no response/i,
+  /ECONNRESET/,
+  /EPIPE/,
+  /Client network socket/i,
+];
+
+function shouldReconnect(err) {
+  const msg = err?.message || String(err);
+  return RECONNECT_PATTERNS.some(re => re.test(msg));
+}
+
 export async function getConnection(server) {
   const key = server.id;
-  if (connections.has(key)) {
-    const conn = connections.get(key);
-    try {
-      await conn.execCommand('echo ok');
-      return conn;
-    } catch {
-      connections.delete(key);
-    }
-  }
+  if (connections.has(key)) return connections.get(key);
 
   const ssh = new NodeSSH();
   const config = {
@@ -21,6 +29,9 @@ export async function getConnection(server) {
     port: server.port || 22,
     username: server.username,
     readyTimeout: 15000,
+    // Пингуем канал каждые 30s; если 3 пинга подряд не получили ответа — рвём.
+    keepaliveInterval: 30000,
+    keepaliveCountMax: 3,
   };
 
   if (server.auth_type === 'key' && server.private_key) {
@@ -34,7 +45,7 @@ export async function getConnection(server) {
   return ssh;
 }
 
-export async function exec(server, command) {
+async function execOnce(server, command) {
   const ssh = await getConnection(server);
   const result = await ssh.execCommand(command);
   return {
@@ -42,6 +53,17 @@ export async function exec(server, command) {
     stderr: result.stderr || '',
     code: result.code,
   };
+}
+
+export async function exec(server, command) {
+  try {
+    return await execOnce(server, command);
+  } catch (e) {
+    if (!shouldReconnect(e)) throw e;
+    // Stale connection — drop and retry once.
+    disconnect(server.id);
+    return await execOnce(server, command);
+  }
 }
 
 export async function execSudo(server, command) {
@@ -53,6 +75,10 @@ export function disconnect(serverId) {
     try { connections.get(serverId).dispose(); } catch {}
     connections.delete(serverId);
   }
+}
+
+export function disconnectAll() {
+  for (const id of [...connections.keys()]) disconnect(id);
 }
 
 export async function testConnection(server) {
