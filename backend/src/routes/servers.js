@@ -1,9 +1,12 @@
 import { Router } from 'express';
 import { v4 as uuidv4 } from 'uuid';
 import { getDb, query, queryOne, run } from '../services/db.js';
+import { encrypt } from '../services/crypto.js';
 import { authMiddleware } from '../middleware/auth.js';
 import { testConnection, disconnect } from '../services/ssh.js';
 import { listAmneziaContainers, ensureDocker, scanExistingProtocols } from '../services/protocols.js';
+import { assertContainerName, assertPort } from '../services/shell.js';
+import { createSubscription, getVpsHost } from '../services/subscription.js';
 
 const router = Router();
 router.use(authMiddleware);
@@ -24,9 +27,30 @@ router.post('/', async (req, res) => {
   const id = uuidv4();
   run(
     'INSERT INTO servers (id, name, host, port, username, auth_type, password, private_key) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-    [id, name, host, port, username, auth_type, password || null, private_key || null]
+    [id, name, host, port, username, auth_type, encrypt(password) || null, encrypt(private_key) || null]
   );
   res.json({ id, name, host, port, username, auth_type });
+});
+
+// PUT /api/servers/:id
+router.put('/:id', async (req, res) => {
+  await getDb();
+  const server = queryOne('SELECT * FROM servers WHERE id = ?', [req.params.id]);
+  if (!server) return res.status(404).json({ error: 'Server not found' });
+
+  const { name, host, port, username, auth_type, password, private_key } = req.body;
+  if (!name || !host || !username) return res.status(400).json({ error: 'name, host, username required' });
+
+  run(
+    'UPDATE servers SET name=?, host=?, port=?, username=?, auth_type=?, password=?, private_key=? WHERE id=?',
+    [name, host, port ?? server.port, username, auth_type ?? server.auth_type,
+     encrypt(password) || null, encrypt(private_key) || null, req.params.id]
+  );
+
+  // Сбрасываем SSH-соединение чтобы подключиться с новыми данными
+  disconnect(req.params.id);
+
+  res.json({ id: req.params.id, name, host, port: port ?? server.port, username, auth_type: auth_type ?? server.auth_type });
 });
 
 // DELETE /api/servers/:id
@@ -78,32 +102,75 @@ router.post('/:id/scan-protocols', async (req, res) => {
     const found = await scanExistingProtocols(server);
     res.json({ found });
   } catch (e) {
-    res.status(500).json({ error: e.message });
+    console.error('[scan-protocols]', e.stack || e.message);
+    res.status(500).json({ error: 'Failed to scan protocols' });
   }
 });
 
 // POST /api/servers/:id/import-protocol
-// Импортирует найденный протокол в БД (после сканирования)
+// Импортирует найденный протокол в БД (после сканирования) и создаёт записи клиентов
 router.post('/:id/import-protocol', async (req, res) => {
   await getDb();
   const server = queryOne('SELECT * FROM servers WHERE id = ?', [req.params.id]);
   if (!server) return res.status(404).json({ error: 'Server not found' });
 
-  const { type, containerName, port, config } = req.body;
+  const { type, containerName, port, config, clients = [] } = req.body;
   if (!type || !containerName) return res.status(400).json({ error: 'type and containerName required' });
+  if (!['awg2', 'wireguard', 'xray'].includes(type)) return res.status(400).json({ error: 'Invalid protocol type' });
+  try {
+    assertContainerName(containerName);
+    if (port != null) assertPort(port);
+  } catch (e) { return res.status(400).json({ error: e.message }); }
 
   // Проверяем не импортирован ли уже этот контейнер
   const existing = queryOne('SELECT id FROM protocols WHERE server_id = ? AND container_name = ?', [server.id, containerName]);
   if (existing) return res.status(409).json({ error: 'Protocol already imported', id: existing.id });
 
   const names = { awg2: 'AmneziaWG 2.0', wireguard: 'WireGuard', xray: 'Xray VLESS Reality' };
-  const id = uuidv4();
+  const protocolId = uuidv4();
   run(
     'INSERT INTO protocols (id, server_id, type, name, port, container_name, status, config) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-    [id, server.id, type, names[type] || type, port, containerName, 'running', JSON.stringify(config || {})]
+    [protocolId, server.id, type, names[type] || type, port, containerName, 'running', JSON.stringify(config || {})]
   );
 
-  res.json({ id, type, name: names[type] || type, port, containerName, status: 'running', config: JSON.stringify(config || {}) });
+  // Импортируем клиентов
+  let importedClients = 0;
+  const vpsHost = getVpsHost() || server.host;
+
+  for (const cl of clients) {
+    if (!cl.clientId || !cl.name) continue;
+    const clientId = uuidv4();
+    let clientConfig = null;
+
+    if (type === 'xray' && config) {
+      // Для Xray восстанавливаем VLESS URI из UUID + серверного конфига
+      const { port: xrayPort, publicKey, shortId, sni } = config;
+      clientConfig = `vless://${cl.clientId}@${server.host}:${xrayPort}?type=tcp&security=reality&pbk=${publicKey}&fp=chrome&sni=${sni}&sid=${shortId}&flow=xtls-rprx-vision#${encodeURIComponent(cl.name)}`;
+      try {
+        createSubscription({ clientId, clientName: cl.name, serverHost: vpsHost, vlessUrl: clientConfig });
+      } catch (e) {
+        console.error('[import-protocol] subscription error:', e.message);
+      }
+    }
+    // AWG/WireGuard: clientConfig остаётся null — приватный ключ клиента не хранится на сервере
+
+    run(
+      'INSERT INTO clients (id, protocol_id, server_id, name, config) VALUES (?, ?, ?, ?, ?)',
+      [clientId, protocolId, server.id, cl.name, clientConfig]
+    );
+    importedClients++;
+  }
+
+  res.json({
+    id: protocolId,
+    type,
+    name: names[type] || type,
+    port,
+    containerName,
+    status: 'running',
+    config: JSON.stringify(config || {}),
+    importedClients,
+  });
 });
 
 export default router;

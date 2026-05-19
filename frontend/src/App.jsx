@@ -238,6 +238,7 @@ const STYLES = `
 
   /* Loading */
   @keyframes spin { to { transform: rotate(360deg); } }
+  @keyframes qr-progress { from { width: 0%; } to { width: 100%; } }
   .spinner {
     width: 16px; height: 16px;
     border: 2px solid var(--border);
@@ -271,6 +272,68 @@ const STYLES = `
   .empty-icon { font-size: 32px; margin-bottom: 12px; }
   .empty-text { font-size: 13px; }
 
+  /* Mobile top bar */
+  .mobile-topbar {
+    display: none; align-items: center; gap: 12px;
+    padding: 10px 16px; border-bottom: 1px solid var(--border);
+    background: var(--surface); position: sticky; top: 0; z-index: 100;
+    flex-shrink: 0;
+  }
+  .hamburger {
+    background: transparent; border: 1px solid var(--border);
+    color: var(--text); border-radius: var(--radius);
+    padding: 4px 9px; cursor: pointer; font-size: 16px; line-height: 1;
+  }
+
+  /* Sidebar overlay (mobile) */
+  .sidebar-overlay {
+    position: fixed; inset: 0;
+    background: rgba(0,0,0,0.6); z-index: 190;
+    backdrop-filter: blur(2px);
+  }
+
+  /* Client list columns */
+  .col-name { width: 550px; flex-shrink: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .col-date { width: 88px; flex-shrink: 0; }
+  .col-date-hdr { width: 88px; flex-shrink: 0; font-size: 11px; color: var(--text-dim); font-family: var(--font-mono); text-transform: uppercase; letter-spacing: 0.05em; }
+  .col-actions { width: 186px; flex-shrink: 0; display: flex; gap: 8px; }
+  .col-actions-hdr { width: 186px; flex-shrink: 0; }
+
+  /* ── Responsive ── */
+  @media (max-width: 768px) {
+    .mobile-topbar { display: flex; }
+
+    .sidebar {
+      position: fixed; left: 0; top: 0; bottom: 0; z-index: 200;
+      transform: translateX(-100%);
+      transition: transform 0.25s ease;
+      box-shadow: 4px 0 24px rgba(0,0,0,0.5);
+    }
+    .sidebar.sidebar-open { transform: translateX(0); }
+
+    .page-header { padding: 14px 16px; }
+    .page-body { padding: 16px; }
+    .page-header-row { flex-direction: column !important; align-items: flex-start !important; gap: 10px; }
+    .page-header-actions { flex-wrap: wrap; }
+
+    .modal { width: calc(100vw - 24px) !important; padding: 16px; }
+
+    .proto-card-actions { flex-wrap: wrap; }
+
+    .col-name { width: 160px; }
+    .col-date { display: none !important; }
+    .col-date-hdr { display: none !important; }
+    .col-actions { width: auto; flex: 1; min-width: 0; justify-content: flex-end; }
+    .col-actions-hdr { display: none; }
+  }
+
+  @media (max-width: 480px) {
+    .page-header { padding: 10px 12px; }
+    .page-body { padding: 12px; }
+    .card { padding: 12px; }
+    .col-name { width: 110px; }
+  }
+
   /* Toast-like notices */
   .notice {
     padding: 10px 14px; border-radius: var(--radius);
@@ -282,17 +345,18 @@ const STYLES = `
   .notice-info { background: #2d8fff10; border-color: var(--accent); color: var(--accent); }
 `;
 
-function Sidebar() {
+function Sidebar({ isOpen, onClose }) {
   const navigate = useNavigate();
   const location = useLocation();
 
-  const logout = () => {
-    localStorage.removeItem('token');
+  const logout = async () => {
+    try { await authApi.logout(); } catch {}
     navigate('/login');
+    onClose?.();
   };
 
   return (
-    <aside className="sidebar">
+    <aside className={`sidebar${isOpen ? ' sidebar-open' : ''}`}>
       <div className="sidebar-logo">
         <div className="logo-text">◈ AMNEZIA</div>
         <div className="logo-sub">// management panel</div>
@@ -300,22 +364,13 @@ function Sidebar() {
       <nav className="sidebar-nav">
         <div className="nav-section">
           <div className="nav-section-label">navigation</div>
-          <Link
-            to="/"
-            className={`nav-link ${location.pathname === '/' ? 'active' : ''}`}
-          >
+          <Link to="/" className={`nav-link ${location.pathname === '/' ? 'active' : ''}`} onClick={onClose}>
             <span className="icon">⬡</span> Dashboard
           </Link>
-          <Link
-            to="/servers"
-            className={`nav-link ${location.pathname.startsWith('/server') ? 'active' : ''}`}
-          >
+          <Link to="/servers" className={`nav-link ${location.pathname.startsWith('/server') ? 'active' : ''}`} onClick={onClose}>
             <span className="icon">⊡</span> Servers
           </Link>
-          <Link
-            to="/subscriptions"
-            className={`nav-link ${location.pathname === '/subscriptions' ? 'active' : ''}`}
-          >
+          <Link to="/subscriptions" className={`nav-link ${location.pathname === '/subscriptions' ? 'active' : ''}`} onClick={onClose}>
             <span className="icon">📡</span> Подписки
           </Link>
         </div>
@@ -328,12 +383,26 @@ function Sidebar() {
 }
 
 function PrivateLayout({ children }) {
-  const token = localStorage.getItem('token');
-  if (!token) return <Navigate to="/login" />;
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [authState, setAuthState] = useState('checking'); // 'checking' | 'ok' | 'no'
+
+  useEffect(() => {
+    authApi.me().then(() => setAuthState('ok')).catch(() => setAuthState('no'));
+  }, []);
+
+  if (authState === 'no') return <Navigate to="/login" />;
+  if (authState === 'checking') return null;
   return (
     <div className="app">
-      <Sidebar />
-      <main className="main">{children}</main>
+      {sidebarOpen && <div className="sidebar-overlay" onClick={() => setSidebarOpen(false)} />}
+      <Sidebar isOpen={sidebarOpen} onClose={() => setSidebarOpen(false)} />
+      <main className="main">
+        <div className="mobile-topbar">
+          <button className="hamburger" onClick={() => setSidebarOpen(true)}>☰</button>
+          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 13, fontWeight: 700, color: 'var(--accent)' }}>◈ AMNEZIA</span>
+        </div>
+        {children}
+      </main>
     </div>
   );
 }

@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import rateLimit from 'express-rate-limit';
 import { getDb } from '../services/db.js';
 import { authMiddleware } from '../middleware/auth.js';
 import {
@@ -10,9 +11,21 @@ import {
 
 const router = Router();
 
+// Rate-limit на публичный endpoint подписок. 30 req/min на IP — это с запасом
+// для FLClash/Clash, которые обновляются раз в минуту-час. Любая попытка
+// перебрать slug (192 бита энтропии) упрётся в этот лимит задолго до угадывания.
+const subLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 30,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  message: 'Too many requests',
+  keyGenerator: (req) => req.ip || req.socket?.remoteAddress || 'unknown',
+});
+
 // ── Публичный endpoint — отдаёт YAML по slug (без авторизации) ──────────────
 // GET /sub/:slug
-router.get('/sub/:slug', async (req, res) => {
+router.get('/sub/:slug', subLimiter, async (req, res) => {
   await getDb();
   const sub = getSubscriptionBySlug(req.params.slug);
   if (!sub) return res.status(404).send('# Subscription not found\n');
