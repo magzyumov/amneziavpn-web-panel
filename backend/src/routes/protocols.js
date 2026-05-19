@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { v4 as uuidv4 } from 'uuid';
-import { getDb, query, queryOne, run } from '../services/db.js';
+import { query, queryOne, run } from '../services/db.js';
 import { authMiddleware } from '../middleware/auth.js';
 import {
   installAWG2, installXray, installWireGuard,
@@ -15,14 +15,12 @@ router.use(authMiddleware);
 router.get('/', (req, res) => res.json(PROTOCOLS));
 
 router.get('/server/:serverId', async (req, res) => {
-  await getDb();
   const protocols = query('SELECT * FROM protocols WHERE server_id = ?', [req.params.serverId]);
   res.json(protocols.map(p => ({ ...p, config: p.config ? JSON.parse(p.config) : {} })));
 });
 
 // GET /api/protocols/server/:serverId/health — реальные статусы всех контейнеров за один SSH-вызов
 router.get('/server/:serverId/health', async (req, res) => {
-  await getDb();
   const protocols = query('SELECT id, container_name FROM protocols WHERE server_id = ?', [req.params.serverId]);
   if (!protocols.length) return res.json({});
 
@@ -41,7 +39,6 @@ router.get('/server/:serverId/health', async (req, res) => {
 });
 
 router.post('/server/:serverId', async (req, res) => {
-  await getDb();
   const server = queryOne('SELECT * FROM servers WHERE id = ?', [req.params.serverId]);
   if (!server) return res.status(404).json({ error: 'Server not found' });
 
@@ -63,7 +60,6 @@ router.post('/server/:serverId', async (req, res) => {
 });
 
 router.delete('/:id', async (req, res) => {
-  await getDb();
   const p = queryOne('SELECT * FROM protocols WHERE id = ?', [req.params.id]);
   if (!p) return res.status(404).json({ error: 'Not found' });
   const server = queryOne('SELECT * FROM servers WHERE id = ?', [p.server_id]);
@@ -74,7 +70,6 @@ router.delete('/:id', async (req, res) => {
 });
 
 router.post('/:id/start', async (req, res) => {
-  await getDb();
   const p = queryOne('SELECT * FROM protocols WHERE id = ?', [req.params.id]);
   if (!p) return res.status(404).json({ error: 'Not found' });
   const server = queryOne('SELECT * FROM servers WHERE id = ?', [p.server_id]);
@@ -84,7 +79,6 @@ router.post('/:id/start', async (req, res) => {
 });
 
 router.post('/:id/stop', async (req, res) => {
-  await getDb();
   const p = queryOne('SELECT * FROM protocols WHERE id = ?', [req.params.id]);
   if (!p) return res.status(404).json({ error: 'Not found' });
   const server = queryOne('SELECT * FROM servers WHERE id = ?', [p.server_id]);
@@ -94,7 +88,6 @@ router.post('/:id/stop', async (req, res) => {
 });
 
 router.get('/:id/status', async (req, res) => {
-  await getDb();
   const p = queryOne('SELECT * FROM protocols WHERE id = ?', [req.params.id]);
   if (!p) return res.status(404).json({ error: 'Not found' });
   const server = queryOne('SELECT * FROM servers WHERE id = ?', [p.server_id]);
@@ -104,7 +97,6 @@ router.get('/:id/status', async (req, res) => {
 });
 
 router.get('/:id/logs', async (req, res) => {
-  await getDb();
   const p = queryOne('SELECT * FROM protocols WHERE id = ?', [req.params.id]);
   if (!p) return res.status(404).json({ error: 'Not found' });
   const server = queryOne('SELECT * FROM servers WHERE id = ?', [p.server_id]);

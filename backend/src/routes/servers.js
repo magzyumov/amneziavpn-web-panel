@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { v4 as uuidv4 } from 'uuid';
-import { getDb, query, queryOne, run } from '../services/db.js';
+import { query, queryOne, run } from '../services/db.js';
 import { encrypt } from '../services/crypto.js';
 import { authMiddleware } from '../middleware/auth.js';
 import { testConnection, disconnect } from '../services/ssh.js';
@@ -13,14 +13,12 @@ router.use(authMiddleware);
 
 // GET /api/servers
 router.get('/', async (req, res) => {
-  await getDb();
   const servers = query('SELECT id, name, host, port, username, auth_type, created_at FROM servers');
   res.json(servers);
 });
 
 // POST /api/servers
 router.post('/', async (req, res) => {
-  await getDb();
   const { name, host, port = 22, username, auth_type = 'password', password, private_key } = req.body;
   if (!name || !host || !username) return res.status(400).json({ error: 'name, host, username required' });
 
@@ -34,7 +32,6 @@ router.post('/', async (req, res) => {
 
 // PUT /api/servers/:id
 router.put('/:id', async (req, res) => {
-  await getDb();
   const server = queryOne('SELECT * FROM servers WHERE id = ?', [req.params.id]);
   if (!server) return res.status(404).json({ error: 'Server not found' });
 
@@ -55,7 +52,6 @@ router.put('/:id', async (req, res) => {
 
 // DELETE /api/servers/:id
 router.delete('/:id', async (req, res) => {
-  await getDb();
   disconnect(req.params.id);
   run('DELETE FROM servers WHERE id = ?', [req.params.id]);
   res.json({ ok: true });
@@ -63,7 +59,6 @@ router.delete('/:id', async (req, res) => {
 
 // POST /api/servers/:id/test
 router.post('/:id/test', async (req, res) => {
-  await getDb();
   const server = queryOne('SELECT * FROM servers WHERE id = ?', [req.params.id]);
   if (!server) return res.status(404).json({ error: 'Server not found' });
 
@@ -73,7 +68,6 @@ router.post('/:id/test', async (req, res) => {
 
 // POST /api/servers/:id/ensure-docker
 router.post('/:id/ensure-docker', async (req, res) => {
-  await getDb();
   const server = queryOne('SELECT * FROM servers WHERE id = ?', [req.params.id]);
   if (!server) return res.status(404).json({ error: 'Server not found' });
 
@@ -83,7 +77,6 @@ router.post('/:id/ensure-docker', async (req, res) => {
 
 // GET /api/servers/:id/containers
 router.get('/:id/containers', async (req, res) => {
-  await getDb();
   const server = queryOne('SELECT * FROM servers WHERE id = ?', [req.params.id]);
   if (!server) return res.status(404).json({ error: 'Server not found' });
 
@@ -94,7 +87,6 @@ router.get('/:id/containers', async (req, res) => {
 // POST /api/servers/:id/scan-protocols
 // Сканирует сервер на наличие уже установленных протоколов Amnezia
 router.post('/:id/scan-protocols', async (req, res) => {
-  await getDb();
   const server = queryOne('SELECT * FROM servers WHERE id = ?', [req.params.id]);
   if (!server) return res.status(404).json({ error: 'Server not found' });
 
@@ -110,7 +102,6 @@ router.post('/:id/scan-protocols', async (req, res) => {
 // POST /api/servers/:id/import-protocol
 // Импортирует найденный протокол в БД (после сканирования) и создаёт записи клиентов
 router.post('/:id/import-protocol', async (req, res) => {
-  await getDb();
   const server = queryOne('SELECT * FROM servers WHERE id = ?', [req.params.id]);
   if (!server) return res.status(404).json({ error: 'Server not found' });
 

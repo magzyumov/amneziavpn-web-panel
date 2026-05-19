@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { v4 as uuidv4 } from 'uuid';
 import QRCode from 'qrcode';
 import { deflateSync } from 'zlib';
-import { getDb, query, queryOne, run } from '../services/db.js';
+import { query, queryOne, run } from '../services/db.js';
 import { authMiddleware, verifyAuth } from '../middleware/auth.js';
 import { addAWG2Client, addXrayClient, addWireGuardClient } from '../services/protocols.js';
 import { createSubscription, getVpsHost } from '../services/subscription.js';
@@ -201,7 +201,6 @@ async function buildChunkedAmneziaQr(amneziaJson) {
 // GET /api/clients/:id/config — скачать оригинальный .conf
 router.get('/:id/config', async (req, res) => {
   if (!requireAuth(req, res)) return;
-  await getDb();
   const client = queryOne('SELECT * FROM clients WHERE id = ?', [req.params.id]);
   if (!client) return res.status(404).json({ error: 'Not found' });
   if (!client.config) return res.status(409).json({ error: 'Config unavailable: client was imported from an existing server and the original private key is not stored' });
@@ -216,7 +215,6 @@ router.get('/:id/config', async (req, res) => {
 // GET /api/clients/:id/config-amnezia — скачать Amnezia JSON (.json файл)
 router.get('/:id/config-amnezia', async (req, res) => {
   if (!requireAuth(req, res)) return;
-  await getDb();
   const client = queryOne('SELECT * FROM clients WHERE id = ?', [req.params.id]);
   if (!client) return res.status(404).json({ error: 'Not found' });
   if (!client.config) return res.status(409).json({ error: 'Config unavailable: client was imported from an existing server and the original private key is not stored' });
@@ -232,7 +230,6 @@ router.get('/:id/config-amnezia', async (req, res) => {
 router.use(authMiddleware);
 
 router.get('/protocol/:protocolId', async (req, res) => {
-  await getDb();
   const clients = query(
     'SELECT id, name, created_at, (config IS NOT NULL) as has_config FROM clients WHERE protocol_id = ?',
     [req.params.protocolId]
@@ -241,7 +238,6 @@ router.get('/protocol/:protocolId', async (req, res) => {
 });
 
 router.post('/', async (req, res) => {
-  await getDb();
   const { protocolId, name } = req.body;
   if (!protocolId || !name) return res.status(400).json({ error: 'protocolId and name required' });
   const protocol = queryOne('SELECT * FROM protocols WHERE id = ?', [protocolId]);
@@ -278,7 +274,6 @@ router.post('/', async (req, res) => {
 
 // GET /api/clients/:id/qr — QR для оригинального формата (.conf / VLESS URI)
 router.get('/:id/qr', async (req, res) => {
-  await getDb();
   const client   = queryOne('SELECT * FROM clients WHERE id = ?', [req.params.id]);
   if (!client) return res.status(404).json({ error: 'Not found' });
   if (!client.config) return res.json({ qr: null, amneziaQr: null, vpnUri: null, noConfig: true });
@@ -310,7 +305,6 @@ router.get('/:id/qr', async (req, res) => {
 
 // GET /api/clients/:id/config-text — текст оригинального конфига
 router.get('/:id/config-text', async (req, res) => {
-  await getDb();
   const client = queryOne('SELECT * FROM clients WHERE id = ?', [req.params.id]);
   if (!client) return res.status(404).json({ error: 'Not found' });
   if (!client.config) return res.json({ config: null, vpnUri: null, name: client.name, noConfig: true });
@@ -331,13 +325,11 @@ router.get('/:id/config-text', async (req, res) => {
 });
 
 router.delete('/:id', async (req, res) => {
-  await getDb();
   run('DELETE FROM clients WHERE id = ?', [req.params.id]);
   res.json({ ok: true });
 });
 
 router.get('/:id/subscription', async (req, res) => {
-  await getDb();
   const subs = query('SELECT slug FROM subscriptions WHERE client_id = ?', [req.params.id]);
   res.json({ slug: subs[0]?.slug || null });
 });

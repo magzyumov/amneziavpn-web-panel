@@ -2,7 +2,7 @@ import { Router } from 'express';
 import bcrypt from 'bcryptjs';
 import { v4 as uuidv4 } from 'uuid';
 import rateLimit from 'express-rate-limit';
-import { getDb, query, queryOne, run } from '../services/db.js';
+import { query, queryOne, run } from '../services/db.js';
 import { signToken, setAuthCookies, clearAuthCookies, authMiddleware } from '../middleware/auth.js';
 
 const router = Router();
@@ -19,7 +19,6 @@ const loginLimiter = rateLimit({
 
 // POST /api/auth/setup — первичная регистрация (только если нет юзеров)
 router.post('/setup', async (req, res) => {
-  await getDb();
   const existing = query('SELECT id FROM users LIMIT 1');
   if (existing.length > 0) {
     return res.status(400).json({ error: 'Already configured' });
@@ -34,14 +33,12 @@ router.post('/setup', async (req, res) => {
 
 // GET /api/auth/status — нужна ли настройка
 router.get('/status', async (req, res) => {
-  await getDb();
   const existing = query('SELECT id FROM users LIMIT 1');
   res.json({ configured: existing.length > 0 });
 });
 
 // POST /api/auth/login
 router.post('/login', loginLimiter, async (req, res) => {
-  await getDb();
   const { username, password } = req.body;
   const user = queryOne('SELECT * FROM users WHERE username = ?', [username]);
   if (!user) return res.status(401).json({ error: 'Invalid credentials' });
