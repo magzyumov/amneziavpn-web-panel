@@ -1,23 +1,18 @@
-import React, { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { subscriptionsApi } from '../api';
+import { copyToClipboard } from './server/clipboard';
 
-function copyToClipboard(text) {
-  if (navigator.clipboard && window.isSecureContext) {
-    return navigator.clipboard.writeText(text);
-  }
-  const ta = document.createElement('textarea');
-  ta.value = text;
-  ta.style.position = 'fixed';
-  ta.style.opacity = '0';
-  document.body.appendChild(ta);
-  ta.focus();
-  ta.select();
-  document.execCommand('copy');
-  document.body.removeChild(ta);
-  return Promise.resolve();
+interface SubscriptionRecord {
+  id: string;
+  client_name: string;
+  server_host: string;
+  slug: string;
+  created_at: string;
 }
 
-function CopyButton({ text, label = 'Copy' }) {
+interface CopyButtonProps { text: string; label?: string }
+
+function CopyButton({ text, label = 'Copy' }: CopyButtonProps) {
   const [copied, setCopied] = useState(false);
   const copy = async () => {
     await copyToClipboard(text);
@@ -31,17 +26,21 @@ function CopyButton({ text, label = 'Copy' }) {
   );
 }
 
+type Tab = 'subs' | 'template' | 'settings';
+type MsgType = 'success' | 'error';
+interface Msg { text: string; type: MsgType }
+
 export default function SubscriptionsPage() {
-  const [subs, setSubs] = useState([]);
+  const [subs, setSubs] = useState<SubscriptionRecord[]>([]);
   const [template, setTemplate] = useState('');
   const [originalTemplate, setOriginalTemplate] = useState('');
   const [vpsHost, setVpsHost] = useState('');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [regenerating, setRegenerating] = useState(false);
-  const [msg, setMsg] = useState(null);
-  const [activeTab, setActiveTab] = useState('subs'); // 'subs' | 'template' | 'settings'
-  const textareaRef = useRef();
+  const [msg, setMsg] = useState<Msg | null>(null);
+  const [activeTab, setActiveTab] = useState<Tab>('subs');
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
     loadAll();
@@ -55,7 +54,7 @@ export default function SubscriptionsPage() {
         subscriptionsApi.getTemplate(),
         subscriptionsApi.getSettings(),
       ]);
-      setSubs(subsR.data);
+      setSubs(subsR.data as SubscriptionRecord[]);
       setTemplate(templateR.data.template);
       setOriginalTemplate(templateR.data.template);
       setVpsHost(settingsR.data.vpsHost || '');
@@ -64,7 +63,7 @@ export default function SubscriptionsPage() {
     }
   };
 
-  const showMsg = (text, type = 'success') => {
+  const showMsg = (text: string, type: MsgType = 'success') => {
     setMsg({ text, type });
     setTimeout(() => setMsg(null), 3000);
   };
@@ -75,7 +74,7 @@ export default function SubscriptionsPage() {
       await subscriptionsApi.saveTemplate(template);
       setOriginalTemplate(template);
       showMsg('Шаблон сохранён');
-    } catch (e) {
+    } catch (e: any) {
       showMsg(e.response?.data?.error || 'Ошибка', 'error');
     } finally {
       setSaving(false);
@@ -94,8 +93,8 @@ export default function SubscriptionsPage() {
     setRegenerating(true);
     try {
       const r = await subscriptionsApi.regenerate();
-      showMsg(`Обновлено подписок: ${r.data.updated}`);
-    } catch (e) {
+      showMsg(`Обновлено подписок: ${(r.data as { updated: number }).updated}`);
+    } catch {
       showMsg('Ошибка при обновлении', 'error');
     } finally {
       setRegenerating(false);
@@ -107,7 +106,7 @@ export default function SubscriptionsPage() {
     showMsg('Настройки сохранены');
   };
 
-  const deleteSub = async (id) => {
+  const deleteSub = async (id: string) => {
     if (!confirm('Удалить подписку?')) return;
     await subscriptionsApi.delete(id);
     setSubs(s => s.filter(x => x.id !== id));
@@ -126,11 +125,11 @@ export default function SubscriptionsPage() {
         </div>
         {/* Tabs */}
         <div style={{ display: 'flex', gap: 4, marginTop: 16 }}>
-          {[
+          {([
             { id: 'subs', label: `Подписки (${subs.length})` },
             { id: 'template', label: 'Шаблон' },
             { id: 'settings', label: 'Настройки' },
-          ].map(t => (
+          ] as Array<{ id: Tab; label: string }>).map(t => (
             <button
               key={t.id}
               className={`btn btn-sm ${activeTab === t.id ? 'btn-primary' : 'btn-outline'}`}

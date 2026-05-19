@@ -66,15 +66,24 @@ export interface ExecResult {
 }
 
 // Конфиги протоколов (то, что хранится в protocols.config после JSON.parse).
+//
+// h1-h4 и i1-i5 — это магические маркеры пакетов AWG. installAWG2 кладёт их
+// строкой (либо число от пользователя, либо range "min-max" от randRange);
+// scanExistingProtocols читает их из awg0.conf тоже строкой. Поэтому в типе
+// они всегда string, не number.
+//
+// jc/jmin/jmax/s1-s4 — числовые junk-параметры. installAWG2 кладёт число
+// (randInt при default'е или валидированный shInt от пользователя), но
+// scanExistingProtocols читает их строкой из конфига — отсюда number | string.
 export interface Awg2Config {
   port: number;
   subnetIp: string;
   subnetCidr: string;
   serverPubKey: string;
-  jc: number; jmin: number; jmax: number;
-  s1: number; s2: number; s3: number; s4: number;
-  h1: number; h2: number; h3: number; h4: number;
-  i1: number; i2: number; i3: number; i4: number; i5: number;
+  jc: number | string; jmin: number | string; jmax: number | string;
+  s1: number | string; s2: number | string; s3: number | string; s4: number | string;
+  h1: string; h2: string; h3: string; h4: string;
+  i1: string; i2: string; i3: string; i4: string; i5: string;
 }
 
 export interface WireGuardConfig {

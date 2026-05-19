@@ -1,9 +1,24 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { serversApi } from '../api';
+import { serversApi, type ServerRecord } from '../api';
 
-function AddServerModal({ onClose, onAdded }) {
-  const [form, setForm] = useState({ name: '', host: '', port: 22, username: 'root', auth_type: 'password', password: '', private_key: '' });
+interface AddServerForm {
+  name: string;
+  host: string;
+  port: number;
+  username: string;
+  auth_type: 'password' | 'key';
+  password: string;
+  private_key: string;
+}
+
+interface AddServerModalProps {
+  onClose: () => void;
+  onAdded: (server: ServerRecord) => void;
+}
+
+function AddServerModal({ onClose, onAdded }: AddServerModalProps) {
+  const [form, setForm] = useState<AddServerForm>({ name: '', host: '', port: 22, username: 'root', auth_type: 'password', password: '', private_key: '' });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const navigate = useNavigate();
@@ -16,17 +31,17 @@ function AddServerModal({ onClose, onAdded }) {
     }
   }, []);
 
-  const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
+  const set = <K extends keyof AddServerForm>(k: K, v: AddServerForm[K]) => setForm(f => ({ ...f, [k]: v }));
 
   const submit = async () => {
     setLoading(true);
     setError('');
     try {
-      const r = await serversApi.create(form as any);
+      const r = await serversApi.create(form);
       onAdded(r.data);
       // Переходим на страницу сервера — там покажем результаты сканирования
       navigate(`/server/${r.data.id}?scan=1`);
-    } catch (e) {
+    } catch (e: any) {
       setError(e.response?.data?.error || 'Failed to add server');
       setLoading(false);
     }
@@ -58,7 +73,7 @@ function AddServerModal({ onClose, onAdded }) {
           </div>
           <div className="input-group">
             <label className="input-label">Auth Type</label>
-            <select className="input" value={form.auth_type} onChange={e => set('auth_type', e.target.value)}>
+            <select className="input" value={form.auth_type} onChange={e => set('auth_type', e.target.value as 'password' | 'key')}>
               <option value="password">Password</option>
               <option value="key">SSH Key</option>
             </select>
@@ -89,17 +104,24 @@ function AddServerModal({ onClose, onAdded }) {
   );
 }
 
-function ServerCard({ server, onDelete }) {
+interface ServerCardProps {
+  server: ServerRecord;
+  onDelete: (id: string) => void;
+}
+
+interface TestResult { ok: boolean; dockerAvailable?: boolean; error?: string }
+
+function ServerCard({ server, onDelete }: ServerCardProps) {
   const navigate = useNavigate();
   const [testing, setTesting] = useState(false);
-  const [testResult, setTestResult] = useState(null);
+  const [testResult, setTestResult] = useState<TestResult | null>(null);
 
-  const test = async (e) => {
+  const test = async (e: React.MouseEvent) => {
     e.stopPropagation();
     setTesting(true);
     try {
       const r = await serversApi.test(server.id);
-      setTestResult(r.data);
+      setTestResult(r.data as TestResult);
     } catch {
       setTestResult({ ok: false, error: 'Connection failed' });
     } finally {
@@ -131,7 +153,7 @@ function ServerCard({ server, onDelete }) {
 }
 
 export default function DashboardPage() {
-  const [servers, setServers] = useState([]);
+  const [servers, setServers] = useState<ServerRecord[]>([]);
   const [showAdd, setShowAdd] = useState(false);
   const [loading, setLoading] = useState(true);
 
@@ -139,7 +161,7 @@ export default function DashboardPage() {
     serversApi.list().then(r => setServers(r.data)).finally(() => setLoading(false));
   }, []);
 
-  const del = async (id) => {
+  const del = async (id: string) => {
     if (!confirm('Remove server?')) return;
     await serversApi.delete(id);
     setServers(s => s.filter(x => x.id !== id));

@@ -33,8 +33,21 @@ app.set('trust proxy', 1);
 
 // CORS не нужен: фронт и API ходят через один nginx (same-origin).
 // /sub/:slug потребляется не браузерами (Clash/FLClash) — CORS им безразличен.
+//
+// Backend отдаёт только JSON и текстовые YAML — никаких HTML/JS/CSS,
+// поэтому CSP с default-src 'none' максимально жёсткая: даже если по
+// ошибке route вернёт HTML, ничего не выполнится. HTML фронта отдаёт
+// nginx со своим CSP (frontend/nginx.conf).
 app.use(helmet({
-  contentSecurityPolicy: false,
+  contentSecurityPolicy: {
+    useDefaults: false,
+    directives: {
+      defaultSrc: ["'none'"],
+      frameAncestors: ["'none'"],
+      baseUri: ["'none'"],
+      formAction: ["'none'"],
+    },
+  },
   hsts: process.env.NODE_ENV === 'production',
   crossOriginResourcePolicy: { policy: 'same-site' },
 }));
@@ -59,6 +72,10 @@ try {
   logger.fatal({ err }, 'Database init FAILED');
   process.exit(1);
 }
+
+// Без авторизации и CSRF (csrfMiddleware пропускает GET).
+// Используется docker compose healthcheck'ом и внешним мониторингом.
+app.get('/api/health', (_req, res) => res.json({ ok: true }));
 
 app.use('/api/auth',          authRoutes);
 app.use('/api/servers',       serverRoutes);

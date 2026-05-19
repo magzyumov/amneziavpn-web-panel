@@ -106,12 +106,12 @@ export async function installAWG2(server: Server, options: InstallOptions = {}):
   const serverPubKey = await readRemoteFile(server, '/opt/amnezia/awg/wireguard_server_public_key.key');
   if (!serverPubKey) throw new Error('AWG2 configure script did not generate server public key');
 
-  const config: Awg2Config & { [key: string]: any } = {
+  const config: Awg2Config = {
     port, subnetIp, subnetCidr, serverPubKey,
-    jc: jc as any, jmin: jmin as any, jmax: jmax as any,
-    s1: s1 as any, s2: s2 as any, s3: s3 as any, s4: s4 as any,
-    h1: String(h1) as any, h2: String(h2) as any, h3: String(h3) as any, h4: String(h4) as any,
-    i1: String(i1) as any, i2: String(i2) as any, i3: String(i3) as any, i4: String(i4) as any, i5: String(i5) as any,
+    jc, jmin, jmax,
+    s1, s2, s3, s4,
+    h1: String(h1), h2: String(h2), h3: String(h3), h4: String(h4),
+    i1: String(i1), i2: String(i2), i3: String(i3), i4: String(i4), i5: String(i5),
   };
   return { containerName, port, config };
 }
