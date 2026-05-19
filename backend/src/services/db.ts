@@ -33,8 +33,19 @@ export async function getDb(): Promise<Database> {
 }
 
 // Одноразовая миграция: шифрует plaintext password / private_key в существующих записях.
+// После успешного запуска ставит settings.enc_migration_v1=done, чтобы при каждом старте
+// не дёргать SELECT по таблице servers.
+const ENC_MIGRATION_KEY = 'enc_migration_v1';
+
 function migrateEncryption(): void {
   const d = assertDb();
+
+  const flag = d.prepare("SELECT value FROM settings WHERE key = ?");
+  flag.bind([ENC_MIGRATION_KEY]);
+  const done = flag.step();
+  flag.free();
+  if (done) return;
+
   const stmt = d.prepare('SELECT id, password, private_key FROM servers');
   const updates: Array<{ id: string; password: string | null; private_key: string | null }> = [];
   while (stmt.step()) {
@@ -46,11 +57,13 @@ function migrateEncryption(): void {
     }
   }
   stmt.free();
-  if (!updates.length) return;
   for (const u of updates) {
     d.run('UPDATE servers SET password = ?, private_key = ? WHERE id = ?', [u.password, u.private_key, u.id]);
   }
-  logger.info({ count: updates.length }, 'Encrypted plaintext credentials in DB');
+  d.run('INSERT INTO settings (key, value) VALUES (?, ?)', [ENC_MIGRATION_KEY, 'done']);
+  if (updates.length) {
+    logger.info({ count: updates.length }, 'Encrypted plaintext credentials in DB');
+  }
   save();
 }
 
