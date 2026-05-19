@@ -1,30 +1,39 @@
-import { Router } from 'express';
+import { Router, type Request, type Response } from 'express';
 import { v4 as uuidv4 } from 'uuid';
 import QRCode from 'qrcode';
+import { z } from 'zod';
 import { deflateSync } from 'zlib';
 import { query, queryOne, run } from '../services/db.js';
 import { authMiddleware, verifyAuth } from '../middleware/auth.js';
-import { addAWG2Client, addXrayClient, addWireGuardClient } from '../services/protocols.js';
+import { validateBody } from '../middleware/validate.js';
+import { addAWG2Client, addXrayClient, addWireGuardClient } from '../services/protocols/index.js';
 import { createSubscription, getVpsHost } from '../services/subscription.js';
+import { logger } from '../services/logger.js';
+import type { Server, Protocol, Client, ProtocolType } from '../types.js';
 
 const router = Router();
 
 // ─── Утилиты ─────────────────────────────────────────────────────────────────
 
-function requireAuth(req, res) {
+const createClientSchema = z.object({
+  protocolId: z.string().min(1),
+  name: z.string().min(1).max(128),
+});
+
+function requireAuth(req: Request, res: Response): { id: string; username: string } | null {
   const user = verifyAuth(req);
   if (!user) { res.status(401).json({ error: 'Unauthorized' }); return null; }
   return user;
 }
 
 // Официальный формат Amnezia JSON — восстановлен по декодированным реальным vpn:// URI
-function buildAmneziaExportJson(client, protocol, server) {
-  const parts = client.config.split('\n---AMNEZIA_JSON---\n');
+function buildAmneziaExportJson(client: Client, protocol: any, server: Server | null): string {
+  const parts = (client.config ?? '').split('\n---AMNEZIA_JSON---\n');
   const conf = parts[0]; // оригинальный .conf текст
 
   // [ \t]* вместо \s* — не захватываем \n, иначе пустые строки поглощают следующую
   // .* вместо .+ — разрешаем пустые значения (I1-I5 могут быть пустыми)
-  const getConf = (key) => {
+  const getConf = (key: string): string => {
     const m = conf.match(new RegExp(`^${key}[ \\t]*=[ \\t]*(.*)$`, 'm'));
     return m ? m[1].trim() : '';
   };
@@ -36,7 +45,7 @@ function buildAmneziaExportJson(client, protocol, server) {
     try { return JSON.parse(parts[1]).client_pub_key || ''; } catch { return ''; }
   };
 
-  let containerData = {};
+  let containerData: { container?: string; [k: string]: any } = {};
 
   if (protocol.type === 'awg2') {
     const clientPrivKey  = getConf('PrivateKey');
@@ -46,7 +55,7 @@ function buildAmneziaExportJson(client, protocol, server) {
     const clientAddr     = getConf('Address');
     const clientIp       = clientAddr.split('/')[0];
     const endpoint       = getConf('Endpoint');
-    const port           = endpoint.split(':').pop();
+    const port           = endpoint.split(':').pop() ?? '';
     const hostName       = server?.host || endpoint.split(':')[0] || '';
     const Jc = getConf('Jc'), Jmin = getConf('Jmin'), Jmax = getConf('Jmax');
     const S1 = getConf('S1'), S2 = getConf('S2'), S3 = getConf('S3'), S4 = getConf('S4');
@@ -92,7 +101,7 @@ function buildAmneziaExportJson(client, protocol, server) {
     const clientAddr     = getConf('Address');
     const clientIp       = clientAddr.split('/')[0];
     const endpoint       = getConf('Endpoint');
-    const port           = endpoint.split(':').pop();
+    const port           = endpoint.split(':').pop() ?? '';
     const hostName       = server?.host || endpoint.split(':')[0] || '';
 
     const lastConfigObj = {
@@ -142,7 +151,7 @@ function buildAmneziaExportJson(client, protocol, server) {
 
 // Строит сжатый блок в формате qCompress (4 байта big-endian размер + zlib data).
 // Используется и для vpn:// URI (текст), и как источник данных для chunked QR.
-function buildQCompressedData(amneziaJson) {
+function buildQCompressedData(amneziaJson: string): Buffer {
   const jsonBuf = Buffer.from(amneziaJson, 'utf8');
   const sizeBuf = Buffer.alloc(4);
   sizeBuf.writeUInt32BE(jsonBuf.length, 0);
@@ -152,7 +161,7 @@ function buildQCompressedData(amneziaJson) {
 
 // Генерация vpn:// URI для текстового/clipboard импорта.
 // AmneziaVPN декодирует через QByteArray::fromBase64(..., Base64UrlEncoding).
-function buildVpnUriSync(amneziaJson) {
+function buildVpnUriSync(amneziaJson: string): string {
   return `vpn://${buildQCompressedData(amneziaJson).toString('base64url')}`;
 }
 
@@ -170,14 +179,14 @@ function buildVpnUriSync(amneziaJson) {
 const QR_MAGIC  = 0x07C0;   // 1984
 const CHUNK_SIZE = 850;
 
-async function buildChunkedAmneziaQr(amneziaJson) {
+async function buildChunkedAmneziaQr(amneziaJson: string): Promise<string[]> {
   const compressed = buildQCompressedData(amneziaJson);
-  const chunks = [];
+  const chunks: Buffer[] = [];
   for (let i = 0; i < compressed.length; i += CHUNK_SIZE) {
-    chunks.push(compressed.slice(i, i + CHUNK_SIZE));
+    chunks.push(compressed.subarray(i, i + CHUNK_SIZE));
   }
 
-  const qrImages = [];
+  const qrImages: string[] = [];
   for (let i = 0; i < chunks.length; i++) {
     const data = chunks[i];
     // QDataStream big-endian: qint16 + quint8 + quint8 + uint32 + bytes
@@ -199,12 +208,12 @@ async function buildChunkedAmneziaQr(amneziaJson) {
 // ─── Endpoints скачивания конфигов (auth через httpOnly cookie) ──────────────
 
 // GET /api/clients/:id/config — скачать оригинальный .conf
-router.get('/:id/config', async (req, res) => {
+router.get('/:id/config', (req: Request, res: Response) => {
   if (!requireAuth(req, res)) return;
-  const client = queryOne('SELECT * FROM clients WHERE id = ?', [req.params.id]);
+  const client = queryOne<Client>('SELECT * FROM clients WHERE id = ?', [req.params.id]);
   if (!client) return res.status(404).json({ error: 'Not found' });
   if (!client.config) return res.status(409).json({ error: 'Config unavailable: client was imported from an existing server and the original private key is not stored' });
-  const protocol = queryOne('SELECT type FROM protocols WHERE id = ?', [client.protocol_id]);
+  const protocol = queryOne<{ type: ProtocolType }>('SELECT type FROM protocols WHERE id = ?', [client.protocol_id]);
   const ext = protocol?.type === 'xray' ? 'txt' : 'conf';
   const config = client.config.split('\n---AMNEZIA_JSON---\n')[0];
   res.setHeader('Content-Disposition', `attachment; filename="${client.name}.${ext}"`);
@@ -213,13 +222,13 @@ router.get('/:id/config', async (req, res) => {
 });
 
 // GET /api/clients/:id/config-amnezia — скачать Amnezia JSON (.json файл)
-router.get('/:id/config-amnezia', async (req, res) => {
+router.get('/:id/config-amnezia', (req: Request, res: Response) => {
   if (!requireAuth(req, res)) return;
-  const client = queryOne('SELECT * FROM clients WHERE id = ?', [req.params.id]);
+  const client = queryOne<Client>('SELECT * FROM clients WHERE id = ?', [req.params.id]);
   if (!client) return res.status(404).json({ error: 'Not found' });
   if (!client.config) return res.status(409).json({ error: 'Config unavailable: client was imported from an existing server and the original private key is not stored' });
   const protocol = queryOne('SELECT type FROM protocols WHERE id = ?', [client.protocol_id]);
-  const server   = queryOne('SELECT * FROM servers WHERE id = ?', [client.server_id]);
+  const server   = queryOne<Server>('SELECT * FROM servers WHERE id = ?', [client.server_id]);
   const amneziaJson = buildAmneziaExportJson(client, protocol, server);
   res.setHeader('Content-Disposition', `attachment; filename="${client.name}_amnezia.json"`);
   res.setHeader('Content-Type', 'application/json');
@@ -229,7 +238,7 @@ router.get('/:id/config-amnezia', async (req, res) => {
 // ─── Защищённые endpoints ─────────────────────────────────────────────────────
 router.use(authMiddleware);
 
-router.get('/protocol/:protocolId', async (req, res) => {
+router.get('/protocol/:protocolId', (req, res) => {
   const clients = query(
     'SELECT id, name, created_at, (config IS NOT NULL) as has_config FROM clients WHERE protocol_id = ?',
     [req.params.protocolId]
@@ -237,12 +246,12 @@ router.get('/protocol/:protocolId', async (req, res) => {
   res.json(clients);
 });
 
-router.post('/', async (req, res) => {
-  const { protocolId, name } = req.body;
-  if (!protocolId || !name) return res.status(400).json({ error: 'protocolId and name required' });
-  const protocol = queryOne('SELECT * FROM protocols WHERE id = ?', [protocolId]);
+router.post('/', validateBody(createClientSchema), async (req: Request, res: Response) => {
+  const { protocolId, name } = req.body as { protocolId: string; name: string };
+  const protocol = queryOne<Protocol>('SELECT * FROM protocols WHERE id = ?', [protocolId]);
   if (!protocol) return res.status(404).json({ error: 'Protocol not found' });
-  const server = queryOne('SELECT * FROM servers WHERE id = ?', [protocol.server_id]);
+  const server = queryOne<Server>('SELECT * FROM servers WHERE id = ?', [protocol.server_id]);
+  if (!server) return res.status(404).json({ error: 'Server not found' });
   const safeName = name.trim().replace(/[^a-zA-Z0-9_\-А-Яа-яёЁ ]/g, '').trim();
   if (!safeName) return res.status(400).json({ error: 'Invalid client name' });
 
@@ -259,78 +268,73 @@ router.post('/', async (req, res) => {
   run('INSERT INTO clients (id, protocol_id, server_id, name, config) VALUES (?, ?, ?, ?, ?)',
     [id, protocolId, server.id, safeName, storedConfig]);
 
-  let subscriptionSlug = null;
+  let subscriptionSlug: string | null = null;
   if (protocol.type === 'xray') {
     try {
       const vpsHost = getVpsHost() || server.host;
       const { slug } = createSubscription({ clientId: id, clientName: safeName, serverHost: vpsHost, vlessUrl: result.config });
       subscriptionSlug = slug;
-    } catch (e) { console.error('Failed to create subscription:', e.message); }
+    } catch (e) { logger.error({ err: e }, 'Failed to create subscription'); }
   }
 
-  const created = queryOne('SELECT created_at FROM clients WHERE id = ?', [id]);
+  const created = queryOne<{ created_at: string }>('SELECT created_at FROM clients WHERE id = ?', [id]);
   res.json({ id, name: safeName, config: result.config, type: result.type, subscriptionSlug, has_config: 1, created_at: created?.created_at });
 });
 
 // GET /api/clients/:id/qr — QR для оригинального формата (.conf / VLESS URI)
 router.get('/:id/qr', async (req, res) => {
-  const client   = queryOne('SELECT * FROM clients WHERE id = ?', [req.params.id]);
+  const client   = queryOne<Client>('SELECT * FROM clients WHERE id = ?', [req.params.id]);
   if (!client) return res.status(404).json({ error: 'Not found' });
   if (!client.config) return res.json({ qr: null, amneziaQr: null, vpnUri: null, noConfig: true });
-  const protocol = queryOne('SELECT type FROM protocols WHERE id = ?', [client.protocol_id]);
-  const server   = queryOne('SELECT * FROM servers WHERE id = ?', [client.server_id]);
+  const protocol = queryOne<{ type: ProtocolType }>('SELECT type FROM protocols WHERE id = ?', [client.protocol_id]);
+  const server   = queryOne<Server>('SELECT * FROM servers WHERE id = ?', [client.server_id]);
 
-  // Оригинальный QR — .conf для WG/AWG, VLESS URI для Xray
   const origConfig = client.config.split('\n---AMNEZIA_JSON---\n')[0];
   const origQr = await QRCode.toDataURL(origConfig, { width: 400, margin: 2, errorCorrectionLevel: 'L' });
 
-  // Amnezia QR — chunked binary format для сканирования камерой (все протоколы).
-  // vpnUri — текстовый vpn:// URI для clipboard-импорта.
-  let amneziaQrParts = null;
-  let vpnUri = null;
+  let amneziaQrParts: string[] | null = null;
+  let vpnUri: string | null = null;
   if (protocol?.type === 'awg2' || protocol?.type === 'wireguard' || protocol?.type === 'xray') {
     try {
       const amneziaJson = buildAmneziaExportJson(client, protocol, server);
       vpnUri = buildVpnUriSync(amneziaJson);
       amneziaQrParts = await buildChunkedAmneziaQr(amneziaJson);
     } catch (e) {
-      console.error('Amnezia QR error:', e.message);
+      logger.error({ err: e }, 'Amnezia QR error');
     }
   }
 
-  // amneziaQr оставляем для обратной совместимости (первая часть)
   const amneziaQr = amneziaQrParts?.[0] ?? null;
   res.json({ qr: origQr, amneziaQr, amneziaQrParts, vpnUri });
 });
 
 // GET /api/clients/:id/config-text — текст оригинального конфига
-router.get('/:id/config-text', async (req, res) => {
-  const client = queryOne('SELECT * FROM clients WHERE id = ?', [req.params.id]);
+router.get('/:id/config-text', (req, res) => {
+  const client = queryOne<Client>('SELECT * FROM clients WHERE id = ?', [req.params.id]);
   if (!client) return res.status(404).json({ error: 'Not found' });
   if (!client.config) return res.json({ config: null, vpnUri: null, name: client.name, noConfig: true });
-  const protocol = queryOne('SELECT type FROM protocols WHERE id = ?', [client.protocol_id]);
-  const server   = queryOne('SELECT * FROM servers WHERE id = ?', [client.server_id]);
+  const protocol = queryOne<{ type: ProtocolType }>('SELECT type FROM protocols WHERE id = ?', [client.protocol_id]);
+  const server   = queryOne<Server>('SELECT * FROM servers WHERE id = ?', [client.server_id]);
   const origConfig = client.config.split('\n---AMNEZIA_JSON---\n')[0];
 
-  // Для AWG/WG также отдаём vpn:// URI
-  let vpnUri = null;
+  let vpnUri: string | null = null;
   if (protocol?.type === 'awg2' || protocol?.type === 'wireguard') {
     try {
       const amneziaJson = buildAmneziaExportJson(client, protocol, server);
       vpnUri = buildVpnUriSync(amneziaJson);
-    } catch {}
+    } catch { /* ignore */ }
   }
 
   res.json({ config: origConfig, vpnUri, name: client.name });
 });
 
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', (req, res) => {
   run('DELETE FROM clients WHERE id = ?', [req.params.id]);
   res.json({ ok: true });
 });
 
-router.get('/:id/subscription', async (req, res) => {
-  const subs = query('SELECT slug FROM subscriptions WHERE client_id = ?', [req.params.id]);
+router.get('/:id/subscription', (req, res) => {
+  const subs = query<{ slug: string }>('SELECT slug FROM subscriptions WHERE client_id = ?', [req.params.id]);
   res.json({ slug: subs[0]?.slug || null });
 });
 

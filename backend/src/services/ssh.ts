@@ -1,7 +1,8 @@
 import { NodeSSH } from 'node-ssh';
 import { decrypt } from './crypto.js';
+import type { Server, ExecResult } from '../types.js';
 
-const connections = new Map();
+const connections = new Map<string, NodeSSH>();
 
 // Сообщения, по которым считаем что SSH-канал умер и нужно переподключиться.
 const RECONNECT_PATTERNS = [
@@ -14,17 +15,18 @@ const RECONNECT_PATTERNS = [
   /Client network socket/i,
 ];
 
-function shouldReconnect(err) {
-  const msg = err?.message || String(err);
+function shouldReconnect(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
   return RECONNECT_PATTERNS.some(re => re.test(msg));
 }
 
-export async function getConnection(server) {
+export async function getConnection(server: Server): Promise<NodeSSH> {
   const key = server.id;
-  if (connections.has(key)) return connections.get(key);
+  const cached = connections.get(key);
+  if (cached) return cached;
 
   const ssh = new NodeSSH();
-  const config = {
+  const config: Parameters<NodeSSH['connect']>[0] = {
     host: server.host,
     port: server.port || 22,
     username: server.username,
@@ -35,9 +37,9 @@ export async function getConnection(server) {
   };
 
   if (server.auth_type === 'key' && server.private_key) {
-    config.privateKey = decrypt(server.private_key);
+    config.privateKey = decrypt(server.private_key) as string;
   } else {
-    config.password = decrypt(server.password);
+    config.password = decrypt(server.password) as string;
   }
 
   await ssh.connect(config);
@@ -45,7 +47,7 @@ export async function getConnection(server) {
   return ssh;
 }
 
-async function execOnce(server, command) {
+async function execOnce(server: Server, command: string): Promise<ExecResult> {
   const ssh = await getConnection(server);
   const result = await ssh.execCommand(command);
   return {
@@ -55,33 +57,40 @@ async function execOnce(server, command) {
   };
 }
 
-export async function exec(server, command) {
+export async function exec(server: Server, command: string): Promise<ExecResult> {
   try {
     return await execOnce(server, command);
   } catch (e) {
     if (!shouldReconnect(e)) throw e;
-    // Stale connection — drop and retry once.
     disconnect(server.id);
     return await execOnce(server, command);
   }
 }
 
-export async function execSudo(server, command) {
+export async function execSudo(server: Server, command: string): Promise<ExecResult> {
   return exec(server, `sudo bash -c '${command.replace(/'/g, "'\\''")}'`);
 }
 
-export function disconnect(serverId) {
-  if (connections.has(serverId)) {
-    try { connections.get(serverId).dispose(); } catch {}
+export function disconnect(serverId: string): void {
+  const conn = connections.get(serverId);
+  if (conn) {
+    try { conn.dispose(); } catch { /* ignore */ }
     connections.delete(serverId);
   }
 }
 
-export function disconnectAll() {
+export function disconnectAll(): void {
   for (const id of [...connections.keys()]) disconnect(id);
 }
 
-export async function testConnection(server) {
+export interface TestConnectionResult {
+  ok: boolean;
+  info?: string;
+  dockerAvailable?: boolean;
+  error?: string;
+}
+
+export async function testConnection(server: Server): Promise<TestConnectionResult> {
   try {
     const ssh = await getConnection(server);
     const result = await ssh.execCommand('uname -a && docker --version 2>/dev/null || echo "docker-not-found"');
@@ -91,6 +100,6 @@ export async function testConnection(server) {
       dockerAvailable: !result.stdout.includes('docker-not-found'),
     };
   } catch (e) {
-    return { ok: false, error: e.message };
+    return { ok: false, error: e instanceof Error ? e.message : String(e) };
   }
 }

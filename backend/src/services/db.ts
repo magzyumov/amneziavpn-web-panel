@@ -1,15 +1,21 @@
-import initSqlJs from 'sql.js';
+import initSqlJs, { type Database } from 'sql.js';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { encrypt, isEncrypted } from './crypto.js';
+import { logger } from './logger.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DB_PATH = process.env.DB_PATH || path.join(__dirname, '../../data/panel.db');
 
-let db = null;
+let db: Database | null = null;
 
-export async function getDb() {
+function assertDb(): Database {
+  if (!db) throw new Error('Database not initialized — call getDb() first.');
+  return db;
+}
+
+export async function getDb(): Promise<Database> {
   if (db) return db;
 
   const SQL = await initSqlJs();
@@ -27,13 +33,14 @@ export async function getDb() {
 }
 
 // Одноразовая миграция: шифрует plaintext password / private_key в существующих записях.
-function migrateEncryption() {
-  const stmt = db.prepare('SELECT id, password, private_key FROM servers');
-  const updates = [];
+function migrateEncryption(): void {
+  const d = assertDb();
+  const stmt = d.prepare('SELECT id, password, private_key FROM servers');
+  const updates: Array<{ id: string; password: string | null; private_key: string | null }> = [];
   while (stmt.step()) {
-    const row = stmt.getAsObject();
-    const newPass = row.password && !isEncrypted(row.password) ? encrypt(row.password) : null;
-    const newKey  = row.private_key && !isEncrypted(row.private_key) ? encrypt(row.private_key) : null;
+    const row = stmt.getAsObject() as { id: string; password: string | null; private_key: string | null };
+    const newPass = row.password && !isEncrypted(row.password) ? (encrypt(row.password) ?? null) : null;
+    const newKey  = row.private_key && !isEncrypted(row.private_key) ? (encrypt(row.private_key) ?? null) : null;
     if (newPass || newKey) {
       updates.push({ id: row.id, password: newPass ?? row.password, private_key: newKey ?? row.private_key });
     }
@@ -41,14 +48,15 @@ function migrateEncryption() {
   stmt.free();
   if (!updates.length) return;
   for (const u of updates) {
-    db.run('UPDATE servers SET password = ?, private_key = ? WHERE id = ?', [u.password, u.private_key, u.id]);
+    d.run('UPDATE servers SET password = ?, private_key = ? WHERE id = ?', [u.password, u.private_key, u.id]);
   }
-  console.log(`[db] Encrypted credentials for ${updates.length} server(s).`);
+  logger.info({ count: updates.length }, 'Encrypted plaintext credentials in DB');
   save();
 }
 
-function initSchema() {
-  db.run(`
+function initSchema(): void {
+  const d = assertDb();
+  d.run(`
     CREATE TABLE IF NOT EXISTS servers (
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
@@ -115,52 +123,54 @@ function initSchema() {
 // save() — синхронная запись прямо сейчас (для миграций, shutdown).
 // requestSave() — дебаунс: при шторме run() пишем диск 1 раз в SAVE_DEBOUNCE_MS.
 const SAVE_DEBOUNCE_MS = 250;
-let saveTimer = null;
+let saveTimer: NodeJS.Timeout | null = null;
 let saveDirty = false;
 
-export function save() {
+export function save(): void {
   saveDirty = false;
   if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; }
-  const data = db.export();
+  const data = assertDb().export();
   const dir = path.dirname(DB_PATH);
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(DB_PATH, Buffer.from(data));
 }
 
-function requestSave() {
+function requestSave(): void {
   saveDirty = true;
   if (saveTimer) return;
   saveTimer = setTimeout(() => {
     saveTimer = null;
     if (saveDirty) {
       try { save(); }
-      catch (e) { console.error('[db] save failed:', e.stack || e.message); }
+      catch (e) { logger.error({ err: e }, 'DB save failed'); }
     }
   }, SAVE_DEBOUNCE_MS);
 }
 
 // Вызывается при graceful shutdown — гарантирует, что незаписанные данные на диске.
-export function flushSave() {
+export function flushSave(): void {
   if (saveDirty) save();
 }
 
-export function query(sql, params = []) {
-  const stmt = db.prepare(sql);
-  stmt.bind(params);
-  const rows = [];
+type SqlParams = ReadonlyArray<string | number | null | Uint8Array>;
+
+export function query<T = Record<string, unknown>>(sql: string, params: SqlParams = []): T[] {
+  const stmt = assertDb().prepare(sql);
+  stmt.bind(params as any);
+  const rows: T[] = [];
   while (stmt.step()) {
-    rows.push(stmt.getAsObject());
+    rows.push(stmt.getAsObject() as T);
   }
   stmt.free();
   return rows;
 }
 
-export function run(sql, params = []) {
-  db.run(sql, params);
+export function run(sql: string, params: SqlParams = []): void {
+  assertDb().run(sql, params as any);
   requestSave();
 }
 
-export function queryOne(sql, params = []) {
-  const rows = query(sql, params);
+export function queryOne<T = Record<string, unknown>>(sql: string, params: SqlParams = []): T | null {
+  const rows = query<T>(sql, params);
   return rows[0] || null;
 }

@@ -2,13 +2,16 @@
 
 // Оборачивает значение в одинарные кавычки, экранируя любые ' внутри.
 // Использовать ВСЕГДА, когда подставляешь произвольную строку в shell-команду.
-export function sh(value) {
+export function sh(value: unknown): string {
   if (value == null) return "''";
   return `'${String(value).replace(/'/g, "'\\''")}'`;
 }
 
+interface IntOpts { min?: number; max?: number; label?: string }
+
 // Валидирует целое число в диапазоне. Возвращает число (готовое для интерполяции без кавычек).
-export function shInt(value, { min = -Infinity, max = Infinity, label = 'value' } = {}) {
+export function shInt(value: unknown, opts: IntOpts = {}): number {
+  const { min = -Infinity, max = Infinity, label = 'value' } = opts;
   const n = Number(value);
   if (!Number.isInteger(n) || n < min || n > max) {
     throw new Error(`Invalid ${label}: expected integer in [${min}, ${max}], got ${value}`);
@@ -18,7 +21,7 @@ export function shInt(value, { min = -Infinity, max = Infinity, label = 'value' 
 
 // Проверяет, что имя контейнера состоит только из допустимых docker-символов.
 // Docker container names: [a-zA-Z0-9][a-zA-Z0-9_.-]*
-export function assertContainerName(name) {
+export function assertContainerName(name: unknown): string {
   if (typeof name !== 'string' || !/^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$/.test(name)) {
     throw new Error(`Invalid container name: ${name}`);
   }
@@ -27,7 +30,7 @@ export function assertContainerName(name) {
 
 // Проверяет, что строка — это валидный domain (для SNI и т.п.). Не идеальный regex,
 // но достаточный, чтобы блокировать shell-метасимволы.
-export function assertDomain(value) {
+export function assertDomain(value: unknown): string {
   if (typeof value !== 'string' || !/^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$/.test(value)) {
     throw new Error(`Invalid domain: ${value}`);
   }
@@ -35,6 +38,6 @@ export function assertDomain(value) {
 }
 
 // Проверяет TCP/UDP порт.
-export function assertPort(value, label = 'port') {
+export function assertPort(value: unknown, label = 'port'): number {
   return shInt(value, { min: 1, max: 65535, label });
 }

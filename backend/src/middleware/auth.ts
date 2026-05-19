@@ -1,20 +1,22 @@
 import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
+import type { Request, Response, NextFunction, CookieOptions } from 'express';
+import type { AuthPayload } from '../types.js';
 
-const JWT_SECRET = process.env.JWT_SECRET;
+const JWT_SECRET = process.env.JWT_SECRET as string;
 const SECURE_COOKIE = process.env.NODE_ENV === 'production';
 
 export const AUTH_COOKIE = 'panel_token';
 export const CSRF_COOKIE = 'panel_csrf';
 export const CSRF_HEADER = 'x-csrf-token';
 
-const COOKIE_BASE = {
+const COOKIE_BASE: CookieOptions = {
   sameSite: 'strict',
   secure: SECURE_COOKIE,
   path: '/',
 };
 
-export function setAuthCookies(res, token) {
+export function setAuthCookies(res: Response, token: string): void {
   const csrf = crypto.randomBytes(32).toString('hex');
   res.cookie(AUTH_COOKIE, token, {
     ...COOKIE_BASE,
@@ -28,20 +30,27 @@ export function setAuthCookies(res, token) {
   });
 }
 
-export function clearAuthCookies(res) {
+export function clearAuthCookies(res: Response): void {
   res.clearCookie(AUTH_COOKIE, COOKIE_BASE);
   res.clearCookie(CSRF_COOKIE, COOKIE_BASE);
 }
 
-function readToken(req) {
+function readToken(req: Request): string | null {
   return req.cookies?.[AUTH_COOKIE] || null;
 }
 
-export function authMiddleware(req, res, next) {
+// Расширяем Request с req.user для авторизованных хендлеров.
+declare module 'express-serve-static-core' {
+  interface Request {
+    user?: AuthPayload;
+  }
+}
+
+export function authMiddleware(req: Request, res: Response, next: NextFunction): void {
   const token = readToken(req);
-  if (!token) return res.status(401).json({ error: 'Unauthorized' });
+  if (!token) { res.status(401).json({ error: 'Unauthorized' }); return; }
   try {
-    req.user = jwt.verify(token, JWT_SECRET);
+    req.user = jwt.verify(token, JWT_SECRET) as AuthPayload;
     next();
   } catch {
     res.status(401).json({ error: 'Invalid token' });
@@ -56,25 +65,26 @@ const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
 // req.path не содержит mount-префикс (/api), middleware подключён через app.use('/api', csrfMiddleware).
 const CSRF_EXEMPT_PATHS = new Set(['/auth/login', '/auth/setup']);
 
-export function csrfMiddleware(req, res, next) {
-  if (SAFE_METHODS.has(req.method)) return next();
-  if (CSRF_EXEMPT_PATHS.has(req.path)) return next();
+export function csrfMiddleware(req: Request, res: Response, next: NextFunction): void {
+  if (SAFE_METHODS.has(req.method)) { next(); return; }
+  if (CSRF_EXEMPT_PATHS.has(req.path)) { next(); return; }
   const cookieToken = req.cookies?.[CSRF_COOKIE];
   const headerToken = req.headers[CSRF_HEADER];
   if (!cookieToken || !headerToken || cookieToken !== headerToken) {
-    return res.status(403).json({ error: 'CSRF token mismatch' });
+    res.status(403).json({ error: 'CSRF token mismatch' });
+    return;
   }
   next();
 }
 
-export function signToken(payload) {
+export function signToken(payload: AuthPayload): string {
   return jwt.sign(payload, JWT_SECRET, { expiresIn: '7d' });
 }
 
-export function verifyAuth(req) {
+export function verifyAuth(req: Request): AuthPayload | null {
   const token = readToken(req);
   if (!token) return null;
-  try { return jwt.verify(token, JWT_SECRET); } catch { return null; }
+  try { return jwt.verify(token, JWT_SECRET) as AuthPayload; } catch { return null; }
 }
 
 export { JWT_SECRET };
