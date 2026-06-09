@@ -24,6 +24,7 @@ export default function ClientModal({ client, protocolType, onClose }: Props) {
   const [loadingQr,      setLoadingQr]      = useState(true);
 
   const isXray = protocolType === 'xray';
+  const isProxy = protocolType === 'mtproxy' || protocolType === 'telemt';
   const hasAmnezia = protocolType === 'awg2' || protocolType === 'wireguard';
   const hasAmneziaQr = hasAmnezia || isXray;
 
@@ -62,17 +63,18 @@ export default function ClientModal({ client, protocolType, onClose }: Props) {
         ? `Часть ${qrPartIdx + 1} из ${totalParts} — сканируйте по очереди в AmneziaVPN`
         : 'Сканируйте в приложении AmneziaVPN')
     : isXray ? 'Сканируйте в FLClash, v2rayNG или совместимом клиенте'
+    : isProxy ? 'Отсканируйте камерой телефона или откройте ссылку — прокси добавится в Telegram'
              : 'Сканируйте в стандартном WireGuard клиенте';
 
   const activeDownloadUrl      = showAmnezia ? clientsApi.configAmneziaUrl(client.id) : clientsApi.configDownloadUrl(client.id);
-  const activeDownloadLabel    = showAmnezia ? '⬇ JSON для Amnezia' : isXray ? '⬇ Скачать .txt' : '⬇ Скачать .conf';
+  const activeDownloadLabel    = showAmnezia ? '⬇ JSON для Amnezia' : (isXray || isProxy) ? '⬇ Скачать .txt' : '⬇ Скачать .conf';
   const activeDownloadFilename = showAmnezia
     ? `${client.name}_amnezia.json`
-    : isXray ? `${client.name}.txt` : `${client.name}.conf`;
+    : (isXray || isProxy) ? `${client.name}.txt` : `${client.name}.conf`;
 
   const tabs: Array<{ id: Tab; label: string }> = client.has_config ? [
     { id: 'qr',  label: 'QR-код' },
-    { id: 'cfg', label: isXray ? 'VLESS URI' : format === 'amnezia' ? 'vpn:// URI' : '.conf' },
+    { id: 'cfg', label: isProxy ? 'tg:// ссылка' : isXray ? 'VLESS URI' : format === 'amnezia' ? 'vpn:// URI' : '.conf' },
   ] : [];
 
   return (
@@ -203,6 +205,11 @@ export default function ClientModal({ client, protocolType, onClose }: Props) {
                   {isXray && (
                     <div className="notice notice-info" style={{ marginBottom: 8, fontSize: 11 }}>
                       VLESS URI — для FLClash, Clash Meta, v2rayNG
+                    </div>
+                  )}
+                  {isProxy && (
+                    <div className="notice notice-info" style={{ marginBottom: 8, fontSize: 11 }}>
+                      Ссылка для Telegram — откройте на устройстве, чтобы добавить прокси
                     </div>
                   )}
                   <div className="config-box" style={{ maxHeight: 260, overflowY: 'auto' }}>

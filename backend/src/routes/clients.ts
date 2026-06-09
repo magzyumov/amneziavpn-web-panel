@@ -5,7 +5,7 @@ import { z } from 'zod';
 import { query, queryOne, run } from '../services/db.js';
 import { authMiddleware, verifyAuth } from '../middleware/auth.js';
 import { validateBody } from '../middleware/validate.js';
-import { addAWG2Client, addXrayClient, addWireGuardClient } from '../services/protocols/index.js';
+import { addAWG2Client, addXrayClient, addWireGuardClient, addMtproxyClient, addTelemtClient } from '../services/protocols/index.js';
 import { createSubscription, getVpsHost } from '../services/subscription.js';
 import { buildAmneziaExportJson, buildVpnUri, buildChunkedAmneziaQr } from '../services/amneziaExport.js';
 import { extractPeerId } from '../services/peerId.js';
@@ -36,7 +36,7 @@ router.get('/:id/config', (req: Request, res: Response) => {
   if (!client) return res.status(404).json({ error: 'Not found' });
   if (!client.config) return res.status(409).json({ error: 'Config unavailable: client was imported from an existing server and the original private key is not stored' });
   const protocol = queryOne<{ type: ProtocolType }>('SELECT type FROM protocols WHERE id = ?', [client.protocol_id]);
-  const ext = protocol?.type === 'xray' ? 'txt' : 'conf';
+  const ext = (protocol?.type === 'xray' || protocol?.type === 'mtproxy' || protocol?.type === 'telemt') ? 'txt' : 'conf';
   const config = client.config.split('\n---AMNEZIA_JSON---\n')[0];
   res.setHeader('Content-Disposition', `attachment; filename="${client.name}.${ext}"`);
   res.setHeader('Content-Type', 'text/plain');
@@ -82,6 +82,8 @@ router.post('/', validateBody(createClientSchema), async (req: Request, res: Res
   if      (protocol.type === 'awg2')      result = await addAWG2Client(server, protocol, safeName);
   else if (protocol.type === 'xray')      result = await addXrayClient(server, protocol, safeName);
   else if (protocol.type === 'wireguard') result = await addWireGuardClient(server, protocol, safeName);
+  else if (protocol.type === 'mtproxy')   result = await addMtproxyClient(server, protocol, safeName);
+  else if (protocol.type === 'telemt')    result = await addTelemtClient(server, protocol, safeName);
   else return res.status(400).json({ error: `Unsupported protocol: ${protocol.type}` });
 
   const id = uuidv4();

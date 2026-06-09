@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { protocolsApi } from '../../api';
 
-type ProtocolType = 'awg2' | 'wireguard' | 'xray';
+type ProtocolType = 'awg2' | 'wireguard' | 'xray' | 'mtproxy' | 'telemt';
 
 interface Props {
   serverId: string;
@@ -13,6 +13,8 @@ const DEFAULTS: Record<ProtocolType, Record<string, any>> = {
   awg2:      { port: '', jc: 6, jmin: 10, jmax: 50, s1: 143, s2: 122, s3: 59, s4: 17 },
   xray:      { port: 443, sni: 'www.googletagmanager.com' },
   wireguard: { port: '' },
+  mtproxy:   { port: '', tlsDomain: 'www.google.com' },
+  telemt:    { port: '', tlsDomain: 'www.google.com' },
 };
 
 export default function InstallProtocolModal({ serverId, onClose, onInstalled }: Props) {
@@ -56,6 +58,8 @@ export default function InstallProtocolModal({ serverId, onClose, onInstalled }:
             <option value="awg2">🛡️ AmneziaWG 2.0</option>
             <option value="xray">⚡ Xray VLESS Reality</option>
             <option value="wireguard">🔒 WireGuard</option>
+            <option value="mtproxy">✈️ MTProxy (Telegram)</option>
+            <option value="telemt">📨 Telemt (Telegram)</option>
           </select>
         </div>
 
@@ -110,6 +114,28 @@ export default function InstallProtocolModal({ serverId, onClose, onInstalled }:
               <label className="input-label">UDP Port (пусто = random)</label>
               <input className="input input-mono" type="number" placeholder="auto"
                 value={opts.port ?? ''} onChange={e => set('port', e.target.value === '' ? '' : +e.target.value)} />
+            </div>
+          </div>
+        )}
+
+        {(type === 'mtproxy' || type === 'telemt') && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            <div className="notice notice-info" style={{ fontSize: 11 }}>
+              {type === 'telemt'
+                ? 'Telegram-прокси с FakeTLS-маскировкой. Проксирует только трафик Telegram. Каждый клиент — отдельный секрет с tg:// ссылкой.'
+                : 'Официальный MTProto-прокси Telegram. Проксирует только трафик Telegram. Каждый клиент — отдельный секрет с tg:// ссылкой.'}
+            </div>
+            <div className="input-group">
+              <label className="input-label">TCP Port (пусто = random)</label>
+              <input className="input input-mono" type="number" placeholder="auto"
+                value={opts.port ?? ''} onChange={e => set('port', e.target.value === '' ? '' : +e.target.value)} />
+            </div>
+            <div className="input-group">
+              <label className="input-label">
+                FakeTLS домен {type === 'mtproxy' ? '(пусто = secure mode)' : '(обязателен)'}
+              </label>
+              <input className="input input-mono" placeholder="www.google.com"
+                value={opts.tlsDomain ?? ''} onChange={e => set('tlsDomain', e.target.value)} />
             </div>
           </div>
         )}

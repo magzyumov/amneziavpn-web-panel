@@ -26,7 +26,7 @@ const serverSchema = z.object({
 });
 
 const importSchema = z.object({
-  type: z.enum(['awg2', 'wireguard', 'xray']),
+  type: z.enum(['awg2', 'wireguard', 'xray', 'mtproxy', 'telemt']),
   containerName: z.string().min(1).max(128),
   port: z.coerce.number().int().min(1).max(65535).nullable().optional(),
   config: z.record(z.unknown()).optional(),
@@ -134,7 +134,7 @@ router.post('/:id/import-protocol', validateBody(importSchema), (req: Request, r
   const existing = queryOne<{ id: string }>('SELECT id FROM protocols WHERE server_id = ? AND container_name = ?', [server.id, containerName]);
   if (existing) return res.status(409).json({ error: 'Protocol already imported', id: existing.id });
 
-  const names: Record<ProtocolType, string> = { awg2: 'AmneziaWG 2.0', wireguard: 'WireGuard', xray: 'Xray VLESS Reality' };
+  const names: Record<ProtocolType, string> = { awg2: 'AmneziaWG 2.0', wireguard: 'WireGuard', xray: 'Xray VLESS Reality', mtproxy: 'MTProxy', telemt: 'Telemt' };
   const protocolId = uuidv4();
   run(
     'INSERT INTO protocols (id, server_id, type, name, port, container_name, status, config) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',

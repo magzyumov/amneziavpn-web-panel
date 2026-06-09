@@ -159,4 +159,6 @@ export const PROTOCOLS: Record<ProtocolType, { name: string; description: string
   awg2:      { name: 'AmneziaWG 2.0',     description: 'WireGuard + расширенная обфускация DPI',  icon: '🛡️' },
   xray:      { name: 'Xray VLESS Reality', description: 'VLESS + Reality — имитирует TLS трафик',  icon: '⚡' },
   wireguard: { name: 'WireGuard',          description: 'Классический WireGuard без обфускации',   icon: '🔒' },
+  mtproxy:   { name: 'MTProxy',            description: 'Telegram MTProto-прокси (только Telegram)', icon: '✈️' },
+  telemt:    { name: 'Telemt',             description: 'Telegram-прокси с FakeTLS-маскировкой',    icon: '📨' },
 };

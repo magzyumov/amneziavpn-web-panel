@@ -4,6 +4,8 @@
 export { installAWG2, addAWG2Client } from './awg2.js';
 export { installXray, addXrayClient } from './xray.js';
 export { installWireGuard, addWireGuardClient } from './wireguard.js';
+export { installMtproxy, addMtproxyClient } from './mtproxy.js';
+export { installTelemt, addTelemtClient } from './telemt.js';
 export {
   getContainerStatus, getContainersHealth, startContainer, stopContainer,
   removeContainer, getContainerLogs, listAmneziaContainers, ensureDocker,

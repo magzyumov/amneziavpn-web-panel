@@ -21,5 +21,11 @@ export function extractPeerId(config: string | null, protocolType: string): stri
     return m ? m[1] : null;
   }
 
+  // MTProxy / Telemt: config — это tg://proxy ссылка, peer_id = MTProto secret.
+  if (protocolType === 'mtproxy' || protocolType === 'telemt') {
+    const m = config.match(/[?&]secret=([0-9a-fA-F]+)/);
+    return m ? m[1] : null;
+  }
+
   return null;
 }
