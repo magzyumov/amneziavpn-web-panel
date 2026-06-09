@@ -6,6 +6,7 @@ import {
 } from '../../api';
 import AddClientModal from './AddClientModal';
 import ClientModal from './ClientModal';
+import StatsModal from './StatsModal';
 import CopySubButton from './CopySubButton';
 
 interface ProtocolCardProps {
@@ -22,6 +23,7 @@ function ProtocolCard({ protocol, server: _server, onDelete, dragHandleProps }: 
   const [loadingClients, setLoadingClients] = useState(true);
   const [showAddClient, setShowAddClient] = useState(false);
   const [selectedClient, setSelectedClient] = useState<ClientRecord | null>(null);
+  const [statsClient, setStatsClient] = useState<ClientRecord | null>(null);
   const [status, setStatus] = useState(protocol.status);
   const [toggling, setToggling] = useState(false);
 
@@ -221,13 +223,29 @@ function ProtocolCard({ protocol, server: _server, onDelete, dragHandleProps }: 
                   </div>
                 )}
 
-                {filtered.length > 0 && (
+                {filtered.length > 0 && (() => {
+                  const isXray = protocol.type === 'xray';
+                  // grid: SHARE | STATISTIC | (SUBSCRIPTION для xray) | ✕
+                  const gridTemplate = isXray ? '1fr 1fr 1fr 32px' : '1fr 1fr 32px';
+                  // По умолчанию col-actions = 186px (App.css). Для xray этого мало —
+                  // 4 кнопки сжимаются и текст наезжает. Расширяем под фактический контент.
+                  const actionsWidth = isXray ? 320 : 220;
+                  const hdrCell: React.CSSProperties = {
+                    fontSize: 11, color: 'var(--text-dim)', fontFamily: 'var(--font-mono)',
+                    textTransform: 'uppercase', letterSpacing: '0.05em', textAlign: 'center',
+                  };
+                  return (
                   <>
                     <div style={{ display: 'flex', alignItems: 'center', padding: '0 0 6px 0', borderBottom: '1px solid var(--border)' }}>
                       <span className="col-name" style={{ fontSize: 11, color: 'var(--text-dim)', fontFamily: 'var(--font-mono)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Name</span>
-                      <div style={{ flex: 1, display: 'flex', alignItems: 'center' }}>
+                      <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                         <span className="col-date-hdr">Created</span>
-                        <span className="col-actions-hdr"></span>
+                        <div className="col-actions-hdr" style={{ display: 'grid', gridTemplateColumns: gridTemplate, gap: 8, width: actionsWidth }}>
+                          <span style={hdrCell}>Share</span>
+                          <span style={hdrCell}>Statistic</span>
+                          {isXray && <span style={hdrCell}>Subscription</span>}
+                          <span />
+                        </div>
                       </div>
                     </div>
                     {filtered.map(c => (
@@ -240,14 +258,22 @@ function ProtocolCard({ protocol, server: _server, onDelete, dragHandleProps }: 
                             <span className="mono text-muted" style={{ fontSize: 10, marginLeft: 6 }}>[без конфига]</span>
                           )}
                         </div>
-                        <div style={{ flex: 1, display: 'flex', alignItems: 'center' }}>
+                        <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                           <div className="col-date mono text-muted">
                             {c.created_at ? new Date(c.created_at.replace(' ', 'T')).toLocaleDateString() : '—'}
                           </div>
-                          <div className="col-actions">
-                            <button className="btn btn-ghost btn-sm" onClick={() => setSelectedClient(c)}>⬡ View</button>
-                            {protocol.type === 'xray' && c.has_config && (
-                              <CopySubButton clientId={c.id} />
+                          <div className="col-actions" style={{ display: 'grid', gridTemplateColumns: gridTemplate, gap: 8, width: actionsWidth }}>
+                            <button
+                              className="btn btn-outline btn-sm"
+                              onClick={() => setSelectedClient(c)}
+                              disabled={!c.has_config}
+                              title={c.has_config ? undefined : 'Импортированный клиент — конфиг недоступен'}
+                            >⬡ View</button>
+                            <button className="btn btn-outline btn-sm" onClick={() => setStatsClient(c)} title="Статистика клиента">📊 Stats</button>
+                            {isXray && (
+                              c.has_config
+                                ? <CopySubButton clientId={c.id} />
+                                : <span />
                             )}
                             <button className="btn btn-danger btn-sm" onClick={() => delClient(c.id)}>✕</button>
                           </div>
@@ -255,7 +281,8 @@ function ProtocolCard({ protocol, server: _server, onDelete, dragHandleProps }: 
                       </div>
                     ))}
                   </>
-                )}
+                  );
+                })()}
               </div>
             );
           })()
@@ -270,6 +297,7 @@ function ProtocolCard({ protocol, server: _server, onDelete, dragHandleProps }: 
         />
       )}
       {selectedClient && <ClientModal client={selectedClient} protocolType={protocol.type} onClose={() => setSelectedClient(null)} />}
+      {statsClient && <StatsModal client={statsClient} protocolType={protocol.type} onClose={() => setStatsClient(null)} />}
     </div>
   );
 }

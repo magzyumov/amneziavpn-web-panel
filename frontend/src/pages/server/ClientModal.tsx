@@ -1,6 +1,5 @@
 import { useState, useEffect } from 'react';
 import { clientsApi, downloadWithAuth, type ClientRecord, type ProtocolRecord } from '../../api';
-import StatsTab from './StatsTab';
 
 interface Props {
   client: ClientRecord;
@@ -9,14 +8,13 @@ interface Props {
 }
 
 type Format = 'amnezia' | 'original';
-type Tab = 'qr' | 'cfg' | 'stats';
+type Tab = 'qr' | 'cfg';
 
 const QR_AUTO_INTERVAL = 3000;
 
 export default function ClientModal({ client, protocolType, onClose }: Props) {
   const [format, setFormat] = useState<Format>('amnezia');
-  // Импортированные клиенты не имеют конфига — для них дефолтная вкладка stats.
-  const [tab, setTab]       = useState<Tab>(client.has_config ? 'qr' : 'stats');
+  const [tab, setTab]       = useState<Tab>('qr');
 
   const [origQr,         setOrigQr]         = useState<string | null>(null);
   const [amneziaQrParts, setAmneziaQrParts] = useState<string[] | null>(null);
@@ -72,18 +70,10 @@ export default function ClientModal({ client, protocolType, onClose }: Props) {
     ? `${client.name}_amnezia.json`
     : isXray ? `${client.name}.txt` : `${client.name}.conf`;
 
-  // Stats доступна для всех трёх протоколов. Для Xray на старых установках
-  // (без `stats` в server.json) бэкенд вернёт пустой series — StatsTab покажет
-  // подсказку про "Enable stats" на ProtocolCard.
-  const hasStats = (protocolType === 'awg2' || protocolType === 'wireguard' || protocolType === 'xray');
-  const configTabs: Array<{ id: Tab; label: string }> = client.has_config ? [
+  const tabs: Array<{ id: Tab; label: string }> = client.has_config ? [
     { id: 'qr',  label: 'QR-код' },
     { id: 'cfg', label: isXray ? 'VLESS URI' : format === 'amnezia' ? 'vpn:// URI' : '.conf' },
   ] : [];
-  const tabs: Array<{ id: Tab; label: string }> = [
-    ...configTabs,
-    ...(hasStats ? [{ id: 'stats' as const, label: '📊 Stats' }] : []),
-  ];
 
   return (
     <div className="modal-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
@@ -136,9 +126,7 @@ export default function ClientModal({ client, protocolType, onClose }: Props) {
           </div>
         )}
 
-        {/* Tab nav — рендерим всегда когда есть хоть одна вкладка
-            (т.е. либо has_config, либо hasStats для импортированного клиента) */}
-        {tabs.length > 0 && (
+        {tabs.length > 1 && (
           <div style={{ display: 'flex', gap: 4, marginBottom: 16 }}>
             {tabs.map(t => (
               <button key={t.id}
@@ -147,8 +135,6 @@ export default function ClientModal({ client, protocolType, onClose }: Props) {
             ))}
           </div>
         )}
-
-        {tab === 'stats' && hasStats && <StatsTab clientId={client.id} />}
 
         {!!client.has_config && (<>
           {tab === 'qr' && (
