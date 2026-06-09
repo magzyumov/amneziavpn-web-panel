@@ -17,7 +17,7 @@
  */
 
 import { query, queryOne, run } from './db.js';
-import { readAwgWgPeerStats, readXrayPeerStats, type PeerStats } from './protocols/index.js';
+import { readAwgWgPeerStats, readXrayPeerStats, readTelemtPeerStats, type PeerStats } from './protocols/index.js';
 import { logger } from './logger.js';
 import type { Server, Protocol } from '../types.js';
 
@@ -75,7 +75,7 @@ async function pollOnce(): Promise<void> {
       s.auth_type AS s_auth_type, s.password AS s_password, s.private_key AS s_private_key
     FROM protocols p
     JOIN servers s ON s.id = p.server_id
-    WHERE p.status = 'running' AND p.type IN ('awg2', 'wireguard', 'xray')
+    WHERE p.status = 'running' AND p.type IN ('awg2', 'wireguard', 'xray', 'telemt')
   `);
 
   for (const row of rows) {
@@ -90,6 +90,8 @@ async function pollOnce(): Promise<void> {
         peers = await readAwgWgPeerStats(server, row.container_name, 'awg', 'awg0');
       } else if (row.type === 'wireguard') {
         peers = await readAwgWgPeerStats(server, row.container_name, 'wg', 'wg0');
+      } else if (row.type === 'telemt') {
+        peers = await readTelemtPeerStats(server, row.container_name);
       } else {
         // xray
         peers = await readXrayPeerStats(server, row.container_name);
@@ -117,7 +119,17 @@ async function pollOnce(): Promise<void> {
       // Для Xray считаем handshake виртуально: если в этом снимке rx/tx
       // увеличились относительно предыдущего, клиент сейчас активен.
       let handshake = peer.lastHandshake;
-      if (row.type === 'xray') {
+      if (row.type === 'telemt') {
+        // telemt отдаёт "активен сейчас" (есть соединения) → now, иначе 0.
+        // Чтобы сохранить "последний онлайн", при 0 берём прошлый снимок.
+        if (!handshake) {
+          const prev = queryOne<{ last_handshake: number | null }>(
+            'SELECT last_handshake FROM client_stats WHERE client_id = ? ORDER BY ts DESC LIMIT 1',
+            [clientId],
+          );
+          handshake = prev?.last_handshake ?? 0;
+        }
+      } else if (row.type === 'xray') {
         const prev = queryOne<{ rx_bytes: number; tx_bytes: number; last_handshake: number | null }>(
           'SELECT rx_bytes, tx_bytes, last_handshake FROM client_stats WHERE client_id = ? ORDER BY ts DESC LIMIT 1',
           [clientId],
