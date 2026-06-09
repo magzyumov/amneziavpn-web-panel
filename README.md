@@ -234,7 +234,7 @@ peer-id → client делается через колонку `clients.peer_id`,
 | Протокол | Команда | Per-user счётчик |
 |---|---|---|
 | AmneziaWG / WireGuard | `awg\|wg show <iface> dump` | public key |
-| Xray VLESS Reality | `xray api stats --pattern user>>>` через 127.0.0.1:10085 | email (== UUID) |
+| Xray VLESS Reality | `xray api statsquery -pattern user>>>` через 127.0.0.1:10085 | email (== UUID) |
 
 **Что в UI:** клик на клиента → вкладка **📊 Stats**:
 - online/offline + last handshake (для Xray синтезируется из дельты трафика)
