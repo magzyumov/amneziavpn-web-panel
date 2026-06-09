@@ -16,7 +16,7 @@ interface ProtocolCardProps {
   dragHandleProps?: Record<string, any>;
 }
 
-const ICONS: Record<ProtocolRecord['type'], string> = { awg2: '🛡️', xray: '⚡', wireguard: '🔒' };
+const ICONS: Record<ProtocolRecord['type'], string> = { awg2: '🛡️', xray: '⚡', wireguard: '🔒', mtproxy: '✈️', telemt: '📨' };
 
 function ProtocolCard({ protocol, server: _server, onDelete, dragHandleProps }: ProtocolCardProps) {
   const [clients, setClients] = useState<ClientRecord[]>([]);
