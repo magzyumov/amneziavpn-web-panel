@@ -84,7 +84,7 @@ interface XrayStatsResponse { stat?: XrayStatRow[] }
 
 export async function readXrayPeerStats(server: Server, containerName: string): Promise<PeerStats[]> {
   assertContainerName(containerName);
-  const cmd = `docker exec ${containerName} xray api stats --server=127.0.0.1:10085 --pattern "user>>>" 2>/dev/null`;
+  const cmd = `docker exec ${containerName} xray api statsquery --server=127.0.0.1:10085 -pattern "user>>>" 2>/dev/null`;
   const res = await exec(server, cmd);
   if (res.code !== 0 || !res.stdout.trim()) return [];
 

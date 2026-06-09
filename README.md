@@ -122,7 +122,8 @@ amnezia-panel/
 │   │           ├── clipboard.ts
 │   │           ├── format.ts        — formatBytes / formatBitsPerSec / ...
 │   │           ├── Sparkline.tsx    — минималистичный SVG-чарт
-│   │           └── StatsTab.tsx     — вкладка статистики в ClientModal
+│   │           ├── StatsTab.tsx     — содержимое статистики (online, rx/tx, графики)
+│   │           └── StatsModal.tsx   — модалка статистики (кнопка 📊 Stats в строке клиента)
 │   ├── tsconfig.json
 │   ├── vite.config.ts
 │   └── Dockerfile
@@ -234,9 +235,9 @@ peer-id → client делается через колонку `clients.peer_id`,
 | Протокол | Команда | Per-user счётчик |
 |---|---|---|
 | AmneziaWG / WireGuard | `awg\|wg show <iface> dump` | public key |
-| Xray VLESS Reality | `xray api stats --pattern user>>>` через 127.0.0.1:10085 | email (== UUID) |
+| Xray VLESS Reality | `xray api statsquery -pattern user>>>` через 127.0.0.1:10085 | email (== UUID) |
 
-**Что в UI:** клик на клиента → вкладка **📊 Stats**:
+**Что в UI:** в строке клиента кнопка **📊 Stats** → модалка:
 - online/offline + last handshake (для Xray синтезируется из дельты трафика)
 - накопительные rx/tx (сбрасываются при рестарте VPN-контейнера)
 - график rx/tx rate за 1 ч / 24 ч / 7 дней / 30 дней
