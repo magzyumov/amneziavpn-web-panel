@@ -21,10 +21,18 @@ export function extractPeerId(config: string | null, protocolType: string): stri
     return m ? m[1] : null;
   }
 
-  // MTProxy / Telemt: config — это tg://proxy ссылка, peer_id = MTProto secret.
+  // MTProxy / Telemt: config — это tg://proxy ссылка с secret=<linkSecret>.
+  // linkSecret = dd<secret32> (secure) либо ee<secret32><domainHex> (FakeTLS).
   if (protocolType === 'mtproxy' || protocolType === 'telemt') {
     const m = config.match(/[?&]secret=([0-9a-fA-F]+)/);
-    return m ? m[1] : null;
+    if (!m) return null;
+    const linkSecret = m[1];
+    // Вырезаем «сырой» 32-символьный secret из-под dd/ee префикса.
+    const raw = /^(dd|ee)/i.test(linkSecret) ? linkSecret.slice(2, 34) : linkSecret.slice(0, 32);
+    // Для Telemt peer_id должен совпадать с username в [access.users]
+    // (addTelemtClient: c_<первые 12 hex секрета>) — по нему мапим API-статистику.
+    if (protocolType === 'telemt') return `c_${raw.slice(0, 12)}`;
+    return raw;
   }
 
   return null;

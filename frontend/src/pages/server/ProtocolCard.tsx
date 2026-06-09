@@ -225,11 +225,19 @@ function ProtocolCard({ protocol, server: _server, onDelete, dragHandleProps }: 
 
                 {filtered.length > 0 && (() => {
                   const isXray = protocol.type === 'xray';
-                  // grid: SHARE | STATISTIC | (SUBSCRIPTION для xray) | ✕
-                  const gridTemplate = isXray ? '1fr 1fr 1fr 32px' : '1fr 1fr 32px';
+                  // MTProxy не даёт per-client статистику (официальный mtproto-proxy
+                  // отдаёт только глобальные счётчики) — прячем колонку Statistic.
+                  const hasStats = protocol.type !== 'mtproxy';
+                  // grid: SHARE | (STATISTIC) | (SUBSCRIPTION для xray) | ✕
+                  const gridTemplate = [
+                    '1fr',
+                    hasStats ? '1fr' : null,
+                    isXray ? '1fr' : null,
+                    '32px',
+                  ].filter(Boolean).join(' ');
                   // По умолчанию col-actions = 186px (App.css). Для xray этого мало —
                   // 4 кнопки сжимаются и текст наезжает. Расширяем под фактический контент.
-                  const actionsWidth = isXray ? 320 : 220;
+                  const actionsWidth = isXray ? 320 : hasStats ? 220 : 140;
                   const hdrCell: React.CSSProperties = {
                     fontSize: 11, color: 'var(--text-dim)', fontFamily: 'var(--font-mono)',
                     textTransform: 'uppercase', letterSpacing: '0.05em', textAlign: 'center',
@@ -242,7 +250,7 @@ function ProtocolCard({ protocol, server: _server, onDelete, dragHandleProps }: 
                         <span className="col-date-hdr">Created</span>
                         <div className="col-actions-hdr" style={{ display: 'grid', gridTemplateColumns: gridTemplate, gap: 8, width: actionsWidth }}>
                           <span style={hdrCell}>Share</span>
-                          <span style={hdrCell}>Statistic</span>
+                          {hasStats && <span style={hdrCell}>Statistic</span>}
                           {isXray && <span style={hdrCell}>Subscription</span>}
                           <span />
                         </div>
@@ -269,7 +277,9 @@ function ProtocolCard({ protocol, server: _server, onDelete, dragHandleProps }: 
                               disabled={!c.has_config}
                               title={c.has_config ? undefined : 'Импортированный клиент — конфиг недоступен'}
                             >⬡ View</button>
-                            <button className="btn btn-outline btn-sm" onClick={() => setStatsClient(c)} title="Статистика клиента">📊 Stats</button>
+                            {hasStats && (
+                              <button className="btn btn-outline btn-sm" onClick={() => setStatsClient(c)} title="Статистика клиента">📊 Stats</button>
+                            )}
                             {isXray && (
                               c.has_config
                                 ? <CopySubButton clientId={c.id} />
