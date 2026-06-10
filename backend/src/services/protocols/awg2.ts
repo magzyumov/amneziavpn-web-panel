@@ -103,6 +103,15 @@ export async function installAWG2(server: Server, options: InstallOptions = {}):
     throw new Error(`AWG2 configure script failed (exit ${awg2ConfigureRes.code}): ${awg2ConfigureRes.stderr || awg2ConfigureRes.stdout}`);
   }
 
+  // start.sh поднимает awg0 только если awg0.conf существует на момент старта
+  // контейнера. При установке конфиг создаётся configure-скриптом ПОСЛЕ старта,
+  // поэтому интерфейс остаётся не поднятым (awg set падает с "No such device").
+  // Перезапускаем — теперь start.sh найдёт awg0.conf и поднимет интерфейс.
+  const awg2RestartRes = await execSudo(server, `docker restart ${containerName}`);
+  if (awg2RestartRes.code !== 0) {
+    throw new Error(`Failed to restart AWG2 container after configure: ${awg2RestartRes.stderr || awg2RestartRes.stdout}`);
+  }
+
   const serverPubKey = await readRemoteFile(server, '/opt/amnezia/awg/wireguard_server_public_key.key');
   if (!serverPubKey) throw new Error('AWG2 configure script did not generate server public key');
 

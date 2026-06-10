@@ -59,6 +59,15 @@ export async function installWireGuard(server: Server, options: WgInstallOptions
     throw new Error(`WireGuard configure script failed (exit ${wgConfigureRes.code}): ${wgConfigureRes.stderr || wgConfigureRes.stdout}`);
   }
 
+  // start.sh поднимает wg0 только если wg0.conf существует на момент старта
+  // контейнера. При установке конфиг создаётся configure-скриптом ПОСЛЕ старта,
+  // поэтому интерфейс остаётся не поднятым (wg set падает с "No such device").
+  // Перезапускаем — теперь start.sh найдёт wg0.conf и поднимет интерфейс.
+  const wgRestartRes = await execSudo(server, `docker restart ${containerName}`);
+  if (wgRestartRes.code !== 0) {
+    throw new Error(`Failed to restart WireGuard container after configure: ${wgRestartRes.stderr || wgRestartRes.stdout}`);
+  }
+
   const serverPubKey = await readRemoteFile(server, '/opt/amnezia/wireguard/wireguard_server_public_key.key');
   if (!serverPubKey) throw new Error('WireGuard configure script did not generate server public key');
 
