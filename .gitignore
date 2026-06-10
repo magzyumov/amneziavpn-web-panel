@@ -19,8 +19,8 @@ data/
 *.swo
 *~
 
-# Claude
-.claude/
+# Claude — share config/agents/context, but keep personal local settings out
+.claude/settings.local.json
 
 # OS
 .DS_Store
