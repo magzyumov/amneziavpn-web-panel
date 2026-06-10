@@ -118,6 +118,52 @@ export async function readXrayPeerStats(server: Server, containerName: string): 
   return peers;
 }
 
+// ─── Telemt ──────────────────────────────────────────────────────────────────
+//
+// Telemt (v3.x) поднимает локальный JSON-API (мы конфигурим его на
+// 127.0.0.1:9091). GET /v1/users отдаёт по каждому пользователю:
+//   { username, current_connections, active_unique_ips, total_octets, ... }
+// total_octets — суммарный (rx+tx) накопительный трафик; раздельных up/down
+// telemt не даёт, поэтому кладём всё в rxBytes, а txBytes=0 (UI для telemt
+// показывает один общий счётчик трафика).
+//
+// pubkey возвращаем = username, что совпадает с clients.peer_id для telemt
+// (см. extractPeerId: c_<первые 12 hex секрета>).
+interface TelemtUserRow {
+  username: string;
+  current_connections?: number;
+  active_unique_ips?: number;
+  total_octets?: number;
+}
+interface TelemtUsersResponse { ok?: boolean; data?: TelemtUserRow[] }
+
+export async function readTelemtPeerStats(server: Server, containerName: string): Promise<PeerStats[]> {
+  assertContainerName(containerName);
+  const now = Math.floor(Date.now() / 1000);
+  const cmd = `docker exec ${containerName} curl -s -m 5 http://127.0.0.1:9091/v1/users 2>/dev/null`;
+  const res = await exec(server, cmd);
+  if (res.code !== 0 || !res.stdout.trim()) return [];
+
+  let parsed: TelemtUsersResponse;
+  try { parsed = JSON.parse(res.stdout); }
+  catch { return []; }
+  if (!parsed.data?.length) return [];
+
+  const peers: PeerStats[] = [];
+  for (const u of parsed.data) {
+    if (!u.username) continue;
+    const active = (u.current_connections ?? 0) > 0 || (u.active_unique_ips ?? 0) > 0;
+    peers.push({
+      pubkey: u.username,
+      rxBytes: u.total_octets ?? 0,
+      txBytes: 0,
+      lastHandshake: active ? now : 0,  // 0 → воркер подставит прошлый last-seen
+      endpoint: null,
+    });
+  }
+  return peers;
+}
+
 // Проверяем серверный конфиг Xray на наличие stats. Используется для UI
 // (показать "Enable stats" кнопку) и воркером (skip опроса если не настроено).
 export async function isXrayStatsEnabled(server: Server, containerName: string): Promise<boolean> {

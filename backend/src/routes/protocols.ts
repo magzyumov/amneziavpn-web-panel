@@ -5,7 +5,7 @@ import { query, queryOne, run } from '../services/db.js';
 import { authMiddleware } from '../middleware/auth.js';
 import { validateBody } from '../middleware/validate.js';
 import {
-  installAWG2, installXray, installWireGuard,
+  installAWG2, installXray, installWireGuard, installMtproxy, installTelemt,
   getContainerStatus, getContainersHealth, startContainer, stopContainer,
   removeContainer, getContainerLogs, PROTOCOLS,
   isXrayStatsEnabled, enableXrayStats,
@@ -17,7 +17,7 @@ const router = Router();
 router.use(authMiddleware);
 
 const installSchema = z.object({
-  type: z.enum(['awg2', 'wireguard', 'xray']),
+  type: z.enum(['awg2', 'wireguard', 'xray', 'mtproxy', 'telemt']),
   options: z.record(z.unknown()).optional().default({}),
 });
 
@@ -57,6 +57,8 @@ router.post('/server/:serverId', validateBody(installSchema), async (req: Reques
   let result;
   if      (type === 'awg2')      result = await installAWG2(server, options);
   else if (type === 'xray')      result = await installXray(server, options);
+  else if (type === 'mtproxy')   result = await installMtproxy(server, options);
+  else if (type === 'telemt')    result = await installTelemt(server, options);
   else                            result = await installWireGuard(server, options);
 
   const id = uuidv4();

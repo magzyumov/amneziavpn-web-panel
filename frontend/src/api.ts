@@ -46,7 +46,7 @@ export interface ServerRecord {
 export interface ProtocolRecord {
   id: string;
   server_id: string;
-  type: 'awg2' | 'wireguard' | 'xray';
+  type: 'awg2' | 'wireguard' | 'xray' | 'mtproxy' | 'telemt';
   name: string | null;
   container_name: string;
   port: number;

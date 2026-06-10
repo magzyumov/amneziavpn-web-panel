@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react';
-import { clientsApi, type ClientStatsResponse, type StatsRange } from '../../api';
+import { clientsApi, type ClientStatsResponse, type ProtocolRecord, type StatsRange } from '../../api';
 import { formatBytes, formatBitsPerSec, formatRelativeTime } from './format';
 import Sparkline from './Sparkline';
 
 interface Props {
   clientId: string;
+  protocolType?: ProtocolRecord['type'];
 }
 
 const RANGES: Array<{ id: StatsRange; label: string }> = [
@@ -14,7 +15,10 @@ const RANGES: Array<{ id: StatsRange; label: string }> = [
   { id: '30d', label: '30 дней' },
 ];
 
-export default function StatsTab({ clientId }: Props) {
+export default function StatsTab({ clientId, protocolType }: Props) {
+  // Telemt отдаёт только суммарный трафик (total_octets в rxBytes, tx=0) и
+  // "онлайн" по числу активных соединений, а не handshake.
+  const combinedTraffic = protocolType === 'telemt';
   const [range, setRange] = useState<StatsRange>('24h');
   const [data, setData]   = useState<ClientStatsResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -46,30 +50,43 @@ export default function StatsTab({ clientId }: Props) {
           {data?.online ? <b style={{ color: '#3fb950' }}>online</b> : <span className="text-muted">offline</span>}
         </span>
         <span className="text-muted mono" style={{ fontSize: 11 }}>
-          last handshake: {formatRelativeTime(data?.lastHandshake ?? null)}
+          {combinedTraffic ? 'последняя активность' : 'last handshake'}: {formatRelativeTime(data?.lastHandshake ?? null)}
         </span>
       </div>
 
       {/* Total traffic — обнуляется при рестарте контейнера, поэтому называем
           "С момента старта контейнера", не "за всё время" */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 16 }}>
-        <div className="card" style={{ padding: 12 }}>
-          <div className="text-muted mono" style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-            ↓ Принято (rx)
-          </div>
-          <div style={{ fontSize: 20, fontWeight: 600, marginTop: 2, color: '#3fb950' }}>
-            {formatBytes(data?.totalRx ?? 0)}
-          </div>
-        </div>
-        <div className="card" style={{ padding: 12 }}>
-          <div className="text-muted mono" style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-            ↑ Отправлено (tx)
-          </div>
-          <div style={{ fontSize: 20, fontWeight: 600, marginTop: 2, color: '#f0883e' }}>
-            {formatBytes(data?.totalTx ?? 0)}
+      {combinedTraffic ? (
+        <div style={{ marginBottom: 16 }}>
+          <div className="card" style={{ padding: 12 }}>
+            <div className="text-muted mono" style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+              ⇅ Трафик (всего)
+            </div>
+            <div style={{ fontSize: 20, fontWeight: 600, marginTop: 2, color: '#3fb950' }}>
+              {formatBytes(data?.totalRx ?? 0)}
+            </div>
           </div>
         </div>
-      </div>
+      ) : (
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 16 }}>
+          <div className="card" style={{ padding: 12 }}>
+            <div className="text-muted mono" style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+              ↓ Принято (rx)
+            </div>
+            <div style={{ fontSize: 20, fontWeight: 600, marginTop: 2, color: '#3fb950' }}>
+              {formatBytes(data?.totalRx ?? 0)}
+            </div>
+          </div>
+          <div className="card" style={{ padding: 12 }}>
+            <div className="text-muted mono" style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+              ↑ Отправлено (tx)
+            </div>
+            <div style={{ fontSize: 20, fontWeight: 600, marginTop: 2, color: '#f0883e' }}>
+              {formatBytes(data?.totalTx ?? 0)}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Range tabs */}
       <div style={{ display: 'flex', gap: 4, marginBottom: 12 }}>
@@ -90,8 +107,14 @@ export default function StatsTab({ clientId }: Props) {
         <>
           <Sparkline data={data?.series ?? []} />
           <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 6, fontSize: 11 }}>
-            <span className="mono" style={{ color: '#3fb950' }}>● rx peak: {formatBitsPerSec(peakRx)}</span>
-            <span className="mono" style={{ color: '#f0883e' }}>● tx peak: {formatBitsPerSec(peakTx)}</span>
+            {combinedTraffic ? (
+              <span className="mono" style={{ color: '#3fb950' }}>● пик трафика: {formatBitsPerSec(peakRx)}</span>
+            ) : (
+              <>
+                <span className="mono" style={{ color: '#3fb950' }}>● rx peak: {formatBitsPerSec(peakRx)}</span>
+                <span className="mono" style={{ color: '#f0883e' }}>● tx peak: {formatBitsPerSec(peakTx)}</span>
+              </>
+            )}
           </div>
         </>
       )}

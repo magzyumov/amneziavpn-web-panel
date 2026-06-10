@@ -22,7 +22,7 @@ export default function StatsModal({ client, protocolType, onClose }: Props) {
           <button className="btn btn-ghost btn-sm" onClick={onClose} style={{ fontSize: 18, lineHeight: 1 }}>×</button>
         </div>
 
-        <StatsTab clientId={client.id} />
+        <StatsTab clientId={client.id} protocolType={protocolType} />
 
         <div className="modal-actions" style={{ marginTop: 16 }}>
           <button className="btn btn-outline" onClick={onClose}>Закрыть</button>

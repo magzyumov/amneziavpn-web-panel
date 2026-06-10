@@ -15,37 +15,8 @@ RUN mkdir -p /opt/amnezia
 RUN echo -e "#!/bin/bash\\ntail -f /dev/null" > /opt/amnezia/start.sh
 RUN chmod a+x /opt/amnezia/start.sh
 
-# Tune network
-RUN echo -e " \n\
-  fs.file-max = 51200 \n\
-  \n\
-  net.core.rmem_max = 67108864 \n\
-  net.core.wmem_max = 67108864 \n\
-  net.core.netdev_max_backlog = 250000 \n\
-  net.core.somaxconn = 4096 \n\
-  \n\
-  net.ipv4.tcp_syncookies = 1 \n\
-  net.ipv4.tcp_tw_reuse = 1 \n\
-  net.ipv4.tcp_tw_recycle = 0 \n\
-  net.ipv4.tcp_fin_timeout = 30 \n\
-  net.ipv4.tcp_keepalive_time = 1200 \n\
-  net.ipv4.ip_local_port_range = 10000 65000 \n\
-  net.ipv4.tcp_max_syn_backlog = 8192 \n\
-  net.ipv4.tcp_max_tw_buckets = 5000 \n\
-  net.ipv4.tcp_fastopen = 3 \n\
-  net.ipv4.tcp_mem = 25600 51200 102400 \n\
-  net.ipv4.tcp_rmem = 4096 87380 67108864 \n\
-  net.ipv4.tcp_wmem = 4096 65536 67108864 \n\
-  net.ipv4.tcp_mtu_probing = 1 \n\
-  net.ipv4.tcp_congestion_control = hybla \n\
-  # for low-latency network, use cubic instead \n\
-  # net.ipv4.tcp_congestion_control = cubic \n\
-  " | sed -e 's/^\\s\\+//g' | tee -a /etc/sysctl.conf && \\
-  mkdir -p /etc/security && \\
-  echo -e " \n\
-  * soft nofile 51200 \n\
-  * hard nofile 51200 \n\
-  " | sed -e 's/^\\s\\+//g' | tee -a /etc/security/limits.conf
+# Network tuning RUN removed: writing sysctl.conf/limits.conf inside an
+# image has no effect in containers (applied via docker --sysctl at runtime)
 
 ENTRYPOINT [ "dumb-init", "/opt/amnezia/start.sh" ]
 CMD [ "" ]`,
@@ -66,34 +37,8 @@ RUN mkdir -p /opt/amnezia/xray
 
 RUN curl -L https://github.com/XTLS/Xray-core/releases/download/\${XRAY_RELEASE}/Xray-linux-64.zip > /root/xray.zip;\\\n  unzip /root/xray.zip -d /usr/bin/;\\\n  chmod a+x /usr/bin/xray;
 
-# Tune network
-RUN echo -e " \n\
-  fs.file-max = 51200 \n\
-  \n\
-  net.core.rmem_max = 67108864 \n\
-  net.core.wmem_max = 67108864 \n\
-  net.core.netdev_max_backlog = 250000 \n\
-  net.core.somaxconn = 4096 \n\
-  net.core.default_qdisc=fq \n\
-  \n\
-  net.ipv4.tcp_syncookies = 1 \n\
-  net.ipv4.tcp_tw_reuse = 1 \n\
-  net.ipv4.tcp_tw_recycle = 0 \n\
-  net.ipv4.tcp_fin_timeout = 30 \n\
-  net.ipv4.tcp_keepalive_time = 1200 \n\
-  net.ipv4.ip_local_port_range = 10000 65000 \n\
-  net.ipv4.tcp_max_syn_backlog = 8192 \n\
-  net.ipv4.tcp_max_tw_buckets = 5000 \n\
-  net.ipv4.tcp_fastopen = 3 \n\
-  net.ipv4.tcp_mem = 25600 51200 102400 \n\
-  net.ipv4.tcp_rmem = 4096 87380 67108864 \n\
-  net.ipv4.tcp_wmem = 4096 65536 67108864 \n\
-  net.ipv4.tcp_mtu_probing = 1 \n\
-  net.ipv4.tcp_congestion_control = bbr \n\
-  " | sed -e 's/^\\s\\+//g' | tee -a /etc/sysctl.conf && \\\n  mkdir -p /etc/security && \\\n  echo -e " \n\
-  * soft nofile 51200 \n\
-  * hard nofile 51200 \n\
-  " | sed -e 's/^\\s\\+//g' | tee -a /etc/security/limits.conf
+# Network tuning RUN removed: writing sysctl.conf/limits.conf inside an
+# image has no effect in containers (applied via docker --sysctl at runtime)
 
 ENV TZ=Asia/Shanghai
 
@@ -111,39 +56,56 @@ RUN mkdir -p /opt/amnezia
 RUN echo -e "#!/bin/bash\\ntail -f /dev/null" > /opt/amnezia/start.sh
 RUN chmod a+x /opt/amnezia/start.sh
 
-# Tune network
-RUN echo -e " \n\
-  fs.file-max = 51200 \n\
-  \n\
-  net.core.rmem_max = 67108864 \n\
-  net.core.wmem_max = 67108864 \n\
-  net.core.netdev_max_backlog = 250000 \n\
-  net.core.somaxconn = 4096 \n\
-  \n\
-  net.ipv4.tcp_syncookies = 1 \n\
-  net.ipv4.tcp_tw_reuse = 1 \n\
-  net.ipv4.tcp_tw_recycle = 0 \n\
-  net.ipv4.tcp_fin_timeout = 30 \n\
-  net.ipv4.tcp_keepalive_time = 1200 \n\
-  net.ipv4.ip_local_port_range = 10000 65000 \n\
-  net.ipv4.tcp_max_syn_backlog = 8192 \n\
-  net.ipv4.tcp_max_tw_buckets = 5000 \n\
-  net.ipv4.tcp_fastopen = 3 \n\
-  net.ipv4.tcp_mem = 25600 51200 102400 \n\
-  net.ipv4.tcp_rmem = 4096 87380 67108864 \n\
-  net.ipv4.tcp_wmem = 4096 65536 67108864 \n\
-  net.ipv4.tcp_mtu_probing = 1 \n\
-  net.ipv4.tcp_congestion_control = hybla \n\
-  # for low-latency network, use cubic instead \n\
-  # net.ipv4.tcp_congestion_control = cubic \n\
-  " | sed -e 's/^\\s\\+//g' | tee -a /etc/sysctl.conf && \\
-  mkdir -p /etc/security && \\
-  echo -e " \n\
-  * soft nofile 51200 \n\
-  * hard nofile 51200 \n\
-  " | sed -e 's/^\\s\\+//g' | tee -a /etc/security/limits.conf
+# Network tuning RUN removed: writing sysctl.conf/limits.conf inside an
+# image has no effect in containers (applied via docker --sysctl at runtime)
 
 ENTRYPOINT [ "dumb-init", "/opt/amnezia/start.sh" ]
+CMD [ "" ]`,
+
+  // Telegram MTProto-прокси (официальный mtproto-proxy от Telegram).
+  // start.sh подкладывается с хоста в /opt/amnezia/mtproxy/start.sh (свой путь,
+  // чтобы не конфликтовать с общим /opt/amnezia/start.sh других протоколов).
+  mtproxy: `FROM amneziavpn/mtproxy:latest
+
+RUN mkdir -p /opt/amnezia/mtproxy
+RUN printf '#!/bin/sh\\ntail -f /dev/null\\n' > /opt/amnezia/mtproxy/start.sh && \\
+    chmod a+x /opt/amnezia/mtproxy/start.sh
+
+ENTRYPOINT [ "/bin/sh", "/opt/amnezia/mtproxy/start.sh" ]
+CMD [ "" ]`,
+
+  // Telemt — сторонняя реализация MTProto-прокси с продвинутой FakeTLS-маскировкой.
+  // Бинарник тянется из releases telemt/telemt с проверкой sha256.
+  telemt: `FROM debian:12-slim
+
+RUN apt-get update \\
+    && apt-get install -y --no-install-recommends \\
+        binutils ca-certificates curl jq openssl tar \\
+    && rm -rf /var/lib/apt/lists/*
+
+RUN set -eux; \\
+    ARCH="$(uname -m)"; \\
+    case "$ARCH" in \\
+        x86_64) ASSET="telemt-x86_64-linux-musl.tar.gz" ;; \\
+        aarch64|arm64) ASSET="telemt-aarch64-linux-musl.tar.gz" ;; \\
+        *) echo "Unsupported architecture: $ARCH" >&2; exit 1 ;; \\
+    esac; \\
+    curl -fL --retry 5 --retry-delay 3 --connect-timeout 10 --max-time 120 \\
+        -o "/tmp/\${ASSET}" "https://github.com/telemt/telemt/releases/latest/download/\${ASSET}"; \\
+    curl -fL --retry 5 --retry-delay 3 --connect-timeout 10 --max-time 120 \\
+        -o "/tmp/\${ASSET}.sha256" "https://github.com/telemt/telemt/releases/latest/download/\${ASSET}.sha256"; \\
+    cd /tmp && sha256sum -c "\${ASSET}.sha256"; \\
+    tar -xzf "\${ASSET}" -C /tmp; \\
+    test -f /tmp/telemt; \\
+    install -m 0755 /tmp/telemt /usr/local/bin/telemt; \\
+    strip --strip-unneeded /usr/local/bin/telemt || true; \\
+    rm -f "/tmp/\${ASSET}" "/tmp/\${ASSET}.sha256" /tmp/telemt
+
+RUN mkdir -p /opt/amnezia/telemt
+RUN printf '#!/bin/sh\\ntail -f /dev/null\\n' > /opt/amnezia/telemt/start.sh && \\
+    chmod a+x /opt/amnezia/telemt/start.sh
+
+ENTRYPOINT [ "/bin/sh", "/opt/amnezia/telemt/start.sh" ]
 CMD [ "" ]`,
 };
 
@@ -226,6 +188,65 @@ iptables -t nat -A POSTROUTING -s ${subnetIp}/${subnetCidr} -o eth0 -j MASQUERAD
 iptables -t nat -A POSTROUTING -s ${subnetIp}/${subnetCidr} -o eth1 -j MASQUERADE
 
 tail -f /dev/null`,
+
+  // MTProxy: запускается каждый раз при старте контейнера. Секреты клиентов
+  // лежат в /opt/amnezia/mtproxy/secrets (по одному hex-секрету на строку) —
+  // их дописывает addMtproxyClient. tlsDomain непустой => FakeTLS (--domain).
+  mtproxy: (port: number, tlsDomain: string) => `#!/bin/sh
+echo "Container startup (MTProxy)"
+DIR=/opt/amnezia/mtproxy
+mkdir -p "$DIR"
+
+# Конфиги Telegram (обновляем при отсутствии)
+[ -s "$DIR/proxy-secret" ]    || curl -s https://core.telegram.org/getProxySecret -o "$DIR/proxy-secret"
+[ -s "$DIR/proxy-multi.conf" ] || curl -s https://core.telegram.org/getProxyConfig -o "$DIR/proxy-multi.conf"
+
+# Собираем -S аргументы из файла секретов
+SECRETS_ARG=""
+if [ -f "$DIR/secrets" ]; then
+  while IFS= read -r s; do
+    s=$(echo "$s" | tr -d ' \\r\\n')
+    [ -n "$s" ] && SECRETS_ARG="$SECRETS_ARG -S $s"
+  done < "$DIR/secrets"
+fi
+
+if [ -z "$SECRETS_ARG" ]; then
+  echo "MTProxy: пока нет ни одного секрета — добавьте клиента в панели. Idling."
+  exec tail -f /dev/null
+fi
+
+# FakeTLS-домен (опционально)
+DOMAIN_ARG=""
+[ -n "${tlsDomain}" ] && DOMAIN_ARG="--domain ${tlsDomain}"
+
+# NAT: контейнер за docker-bridge — сообщаем внешний IP
+INTERNAL_IP=$(hostname -i 2>/dev/null | awk '{print $1}')
+EXTERNAL_IP=$(curl -s --max-time 5 https://api.ipify.org 2>/dev/null)
+[ -z "$EXTERNAL_IP" ] && EXTERNAL_IP=$(curl -s --max-time 5 https://ifconfig.me 2>/dev/null)
+NAT_ARG=""
+if [ -n "$INTERNAL_IP" ] && [ -n "$EXTERNAL_IP" ] && [ "$INTERNAL_IP" != "$EXTERNAL_IP" ]; then
+  NAT_ARG="--nat-info \${INTERNAL_IP}:\${EXTERNAL_IP}"
+fi
+
+exec mtproto-proxy -u root -p 2398 -H ${port} $SECRETS_ARG --aes-pwd "$DIR/proxy-secret" -M 1 -C 60000 --allow-skip-dh $NAT_ARG $DOMAIN_ARG "$DIR/proxy-multi.conf"`,
+
+  // Telemt: собирает config.toml из базового шаблона (config.base.toml) +
+  // секции пользователей (файл users, дописывается addTelemtClient).
+  telemt: () => `#!/bin/sh
+echo "Container startup (Telemt)"
+DIR=/opt/amnezia/telemt
+mkdir -p "$DIR/tlsfront"
+[ -f "$DIR/users" ] || touch "$DIR/users"
+
+if [ ! -s "$DIR/users" ]; then
+  echo "Telemt: пока нет ни одного пользователя — добавьте клиента в панели. Idling."
+  exec tail -f /dev/null
+fi
+
+cat "$DIR/config.base.toml" > "$DIR/config.toml"
+cat "$DIR/users" >> "$DIR/config.toml"
+
+exec /usr/local/bin/telemt "$DIR/config.toml"`,
 };
 
 export const CONFIGURE_SCRIPTS = {
@@ -468,3 +489,41 @@ export const WG_CLIENT_JSON_TEMPLATE = `{
         "psk": "$WIREGUARD_PSK"
     }
 }`;
+
+// Базовый config.toml для Telemt (без секции пользователей — её дописывает
+// addTelemtClient в файл users, а start.sh склеивает base + users).
+// $TELEMT_PORT / $TELEMT_HOST / $TELEMT_TLS_DOMAIN подставляются renderTemplate.
+export const TELEMT_BASE_CONFIG_TEMPLATE = `### Amnezia Telemt — panel generated
+[general]
+use_middle_proxy = false
+log_level = "normal"
+
+[general.modes]
+classic = false
+secure = false
+tls = true
+
+[general.links]
+show = "*"
+public_host = "$TELEMT_HOST"
+public_port = $TELEMT_PORT
+
+[server]
+port = $TELEMT_PORT
+
+[server.api]
+enabled = true
+listen = "127.0.0.1:9091"
+whitelist = ["127.0.0.0/8"]
+
+[[server.listeners]]
+ip = "0.0.0.0"
+
+[censorship]
+tls_domain = "$TELEMT_TLS_DOMAIN"
+mask = true
+tls_emulation = true
+tls_front_dir = "/opt/amnezia/telemt/tlsfront"
+
+[access.users]
+`;

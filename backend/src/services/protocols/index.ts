@@ -4,11 +4,13 @@
 export { installAWG2, addAWG2Client } from './awg2.js';
 export { installXray, addXrayClient } from './xray.js';
 export { installWireGuard, addWireGuardClient } from './wireguard.js';
+export { installMtproxy, addMtproxyClient } from './mtproxy.js';
+export { installTelemt, addTelemtClient } from './telemt.js';
 export {
   getContainerStatus, getContainersHealth, startContainer, stopContainer,
   removeContainer, getContainerLogs, listAmneziaContainers, ensureDocker,
   scanExistingProtocols, PROTOCOLS,
 } from './containers.js';
 export type { AmneziaContainerListing, ScannedProtocol, ScannedClient } from './containers.js';
-export { readAwgWgPeerStats, readXrayPeerStats, isXrayStatsEnabled, enableXrayStats } from './stats.js';
+export { readAwgWgPeerStats, readXrayPeerStats, readTelemtPeerStats, isXrayStatsEnabled, enableXrayStats } from './stats.js';
 export type { PeerStats } from './stats.js';
