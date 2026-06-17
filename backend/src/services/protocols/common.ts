@@ -5,11 +5,6 @@ export function randInt(min: number, max: number): number {
   return Math.floor(Math.random() * (max - min + 1)) + min;
 }
 
-export function randRange(min: number, max: number): string {
-  const a = randInt(min, max), b = randInt(min, max);
-  return `${Math.min(a, b)}-${Math.max(a, b)}`;
-}
-
 export function randPort(): number {
   return randInt(10000, 62000);
 }
