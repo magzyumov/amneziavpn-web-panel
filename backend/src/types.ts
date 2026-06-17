@@ -67,8 +67,9 @@ export interface ExecResult {
 
 // Конфиги протоколов (то, что хранится в protocols.config после JSON.parse).
 //
-// h1-h4 и i1-i5 — это магические маркеры пакетов AWG. installAWG2 кладёт их
-// строкой (либо число от пользователя, либо range "min-max" от randRange);
+// h1-h4 и i1-i5 — это магические маркеры пакетов AWG (одиночные целые;
+// userspace amneziawg-go не принимает range "min-max"). installAWG2 кладёт их
+// строкой (число от пользователя или сгенерированный randInt);
 // scanExistingProtocols читает их из awg0.conf тоже строкой. Поэтому в типе
 // они всегда string, не number.
 //

@@ -1,7 +1,7 @@
 import { exec, execSudo } from '../ssh.js';
 import { assertContainerName, assertPort, shInt } from '../shell.js';
 import {
-  randInt, randRange, randPort,
+  randInt, randPort,
   writeRemoteFile, readRemoteFile, buildImage, renderTemplate,
 } from './common.js';
 import {
@@ -38,15 +38,18 @@ export async function installAWG2(server: Server, options: InstallOptions = {}):
   const s2   = intOpt(options.s2,   randInt(100, 200),             's2');
   const s3   = intOpt(options.s3,   randInt(30, 100),              's3');
   const s4   = intOpt(options.s4,   randInt(10, 50),               's4');
-  const h1   = intOpt(options.h1,   randRange(600000000, 1500000000),  'h1');
-  const h2   = intOpt(options.h2,   randRange(1500000000, 1900000000), 'h2');
-  const h3   = intOpt(options.h3,   randRange(1800000000, 2100000000), 'h3');
-  const h4   = intOpt(options.h4,   randRange(2100000000, 2139000000), 'h4');
-  const i1   = intOpt(options.i1,   randRange(600000000, 1500000000),  'i1');
-  const i2   = intOpt(options.i2,   randRange(1500000000, 1900000000), 'i2');
-  const i3   = intOpt(options.i3,   randRange(600000000, 1500000000),  'i3');
-  const i4   = intOpt(options.i4,   randRange(1500000000, 1900000000), 'i4');
-  const i5   = intOpt(options.i5,   randRange(600000000, 1500000000),  'i5');
+  // H1-H4 (magic headers) и I1-I5 (special junk) обязаны быть ОДИНОЧНЫМИ целыми:
+  // userspace amneziawg-go в образе не принимает range "min-max" в setconf
+  // ("Unable to modify interface: Invalid argument") — интерфейс не поднимается.
+  const h1   = intOpt(options.h1,   randInt(600000000, 1500000000),  'h1');
+  const h2   = intOpt(options.h2,   randInt(1500000000, 1900000000), 'h2');
+  const h3   = intOpt(options.h3,   randInt(1800000000, 2100000000), 'h3');
+  const h4   = intOpt(options.h4,   randInt(2100000000, 2139000000), 'h4');
+  const i1   = intOpt(options.i1,   randInt(600000000, 1500000000),  'i1');
+  const i2   = intOpt(options.i2,   randInt(1500000000, 1900000000), 'i2');
+  const i3   = intOpt(options.i3,   randInt(600000000, 1500000000),  'i3');
+  const i4   = intOpt(options.i4,   randInt(1500000000, 1900000000), 'i4');
+  const i5   = intOpt(options.i5,   randInt(600000000, 1500000000),  'i5');
 
   await buildImage(server, imageName, buildDir, DOCKERFILES.awg2);
 
@@ -185,15 +188,15 @@ export async function addAWG2Client(server: Server, protocol: Protocol, _clientN
     RESPONSE_PACKET_JUNK_SIZE: c.s2 ?? randInt(100, 200),
     COOKIE_REPLY_PACKET_JUNK_SIZE: c.s3 ?? randInt(30, 100),
     TRANSPORT_PACKET_JUNK_SIZE: c.s4 ?? randInt(10, 50),
-    INIT_PACKET_MAGIC_HEADER: c.h1 ?? randRange(600000000, 1500000000),
-    RESPONSE_PACKET_MAGIC_HEADER: c.h2 ?? randRange(1500000000, 1900000000),
-    UNDERLOAD_PACKET_MAGIC_HEADER: c.h3 ?? randRange(1800000000, 2100000000),
-    TRANSPORT_PACKET_MAGIC_HEADER: c.h4 ?? randRange(2100000000, 2139000000),
-    SPECIAL_JUNK_1: c.i1 ?? randRange(600000000, 1500000000),
-    SPECIAL_JUNK_2: c.i2 ?? randRange(1500000000, 1900000000),
-    SPECIAL_JUNK_3: c.i3 ?? randRange(600000000, 1500000000),
-    SPECIAL_JUNK_4: c.i4 ?? randRange(1500000000, 1900000000),
-    SPECIAL_JUNK_5: c.i5 ?? randRange(600000000, 1500000000),
+    INIT_PACKET_MAGIC_HEADER: c.h1 ?? randInt(600000000, 1500000000),
+    RESPONSE_PACKET_MAGIC_HEADER: c.h2 ?? randInt(1500000000, 1900000000),
+    UNDERLOAD_PACKET_MAGIC_HEADER: c.h3 ?? randInt(1800000000, 2100000000),
+    TRANSPORT_PACKET_MAGIC_HEADER: c.h4 ?? randInt(2100000000, 2139000000),
+    SPECIAL_JUNK_1: c.i1 ?? randInt(600000000, 1500000000),
+    SPECIAL_JUNK_2: c.i2 ?? randInt(1500000000, 1900000000),
+    SPECIAL_JUNK_3: c.i3 ?? randInt(600000000, 1500000000),
+    SPECIAL_JUNK_4: c.i4 ?? randInt(1500000000, 1900000000),
+    SPECIAL_JUNK_5: c.i5 ?? randInt(600000000, 1500000000),
     WIREGUARD_SERVER_PUBLIC_KEY: c.serverPubKey,
     WIREGUARD_PSK: presharedKey,
     SERVER_IP_ADDRESS: server.host,
