@@ -18,8 +18,8 @@ export async function installXray(server: Server, options: XrayInstallOptions = 
   await buildImage(server, imageName, buildDir, DOCKERFILES.xray);
 
   await execSudo(server, `mkdir -p /opt/amnezia/xray`);
-  await writeRemoteFile(server, `/opt/amnezia/start.sh`, START_SCRIPTS.xray(port, server.host));
-  await execSudo(server, `chmod +x /opt/amnezia/start.sh`);
+  await writeRemoteFile(server, `/opt/amnezia/xray/start.sh`, START_SCRIPTS.xray(port, server.host));
+  await execSudo(server, `chmod +x /opt/amnezia/xray/start.sh`);
 
   await execSudo(server, `docker rm -f ${containerName} 2>/dev/null || true`);
   await execSudo(server, [

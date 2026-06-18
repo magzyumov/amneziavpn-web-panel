@@ -23,8 +23,8 @@ export async function installWireGuard(server: Server, options: WgInstallOptions
   await buildImage(server, imageName, buildDir, DOCKERFILES.wireguard);
 
   await execSudo(server, `mkdir -p /opt/amnezia/wireguard`);
-  await writeRemoteFile(server, `/opt/amnezia/start.sh`, START_SCRIPTS.wireguard(subnetIp, subnetCidr, server.host));
-  await execSudo(server, `chmod +x /opt/amnezia/start.sh`);
+  await writeRemoteFile(server, `/opt/amnezia/wireguard/start.sh`, START_SCRIPTS.wireguard(subnetIp, subnetCidr, server.host));
+  await execSudo(server, `chmod +x /opt/amnezia/wireguard/start.sh`);
 
   await execSudo(server, `docker rm -f ${containerName} 2>/dev/null || true`);
   await execSudo(server, [

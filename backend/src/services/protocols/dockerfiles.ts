@@ -3,6 +3,9 @@
 
 export const DOCKERFILES = {
 
+  // start.sh лежит в /opt/amnezia/awg/start.sh (свой путь, чтобы не конфликтовать
+  // с общим /opt/amnezia/start.sh — иначе configure другого протокола на том же
+  // хосте затирал бы запуск awg0).
   awg2: `FROM amneziavpn/amneziawg-go:latest
 
 LABEL maintainer="AmneziaVPN"
@@ -11,16 +14,19 @@ LABEL maintainer="AmneziaVPN"
 RUN apk add --no-cache bash curl dumb-init
 RUN apk --update upgrade --no-cache
 
-RUN mkdir -p /opt/amnezia
-RUN echo -e "#!/bin/bash\\ntail -f /dev/null" > /opt/amnezia/start.sh
-RUN chmod a+x /opt/amnezia/start.sh
+RUN mkdir -p /opt/amnezia/awg
+RUN printf '#!/bin/bash\\ntail -f /dev/null\\n' > /opt/amnezia/awg/start.sh && \\
+    chmod a+x /opt/amnezia/awg/start.sh
 
 # Network tuning RUN removed: writing sysctl.conf/limits.conf inside an
 # image has no effect in containers (applied via docker --sysctl at runtime)
 
-ENTRYPOINT [ "dumb-init", "/opt/amnezia/start.sh" ]
+ENTRYPOINT [ "dumb-init", "/opt/amnezia/awg/start.sh" ]
 CMD [ "" ]`,
 
+  // start.sh лежит в /opt/amnezia/xray/start.sh (свой путь, чтобы не конфликтовать
+  // с общим /opt/amnezia/start.sh, который делят wireguard/awg2 на том же хосте —
+  // их configure затирал бы xray-овский запуск демона).
   xray: `FROM alpine:3.15
 LABEL maintainer="AmneziaVPN"
 
@@ -29,11 +35,9 @@ ARG XRAY_RELEASE="v25.8.3"
 RUN apk add --no-cache curl unzip bash openssl netcat-openbsd dumb-init rng-tools xz
 RUN apk --update upgrade --no-cache
 
-RUN mkdir -p /opt/amnezia
-RUN echo -e "#!/bin/bash\\ntail -f /dev/null" > /opt/amnezia/start.sh
-RUN chmod a+x /opt/amnezia/start.sh
-
 RUN mkdir -p /opt/amnezia/xray
+RUN printf '#!/bin/bash\\ntail -f /dev/null\\n' > /opt/amnezia/xray/start.sh && \\
+    chmod a+x /opt/amnezia/xray/start.sh
 
 RUN curl -L https://github.com/XTLS/Xray-core/releases/download/\${XRAY_RELEASE}/Xray-linux-64.zip > /root/xray.zip;\\\n  unzip /root/xray.zip -d /usr/bin/;\\\n  chmod a+x /usr/bin/xray;
 
@@ -42,8 +46,11 @@ RUN curl -L https://github.com/XTLS/Xray-core/releases/download/\${XRAY_RELEASE}
 
 ENV TZ=Asia/Shanghai
 
-ENTRYPOINT [ "dumb-init", "/opt/amnezia/start.sh" ]`,
+ENTRYPOINT [ "dumb-init", "/opt/amnezia/xray/start.sh" ]`,
 
+  // start.sh лежит в /opt/amnezia/wireguard/start.sh (свой путь, чтобы не
+  // конфликтовать с общим /opt/amnezia/start.sh — иначе configure другого
+  // протокола на том же хосте затирал бы запуск wg0).
   wireguard: `FROM alpine:3.15
 
 LABEL maintainer="AmneziaVPN"
@@ -52,14 +59,14 @@ LABEL maintainer="AmneziaVPN"
 RUN apk add --no-cache curl wireguard-tools dumb-init
 RUN apk --update upgrade --no-cache
 
-RUN mkdir -p /opt/amnezia
-RUN echo -e "#!/bin/bash\\ntail -f /dev/null" > /opt/amnezia/start.sh
-RUN chmod a+x /opt/amnezia/start.sh
+RUN mkdir -p /opt/amnezia/wireguard
+RUN printf '#!/bin/bash\\ntail -f /dev/null\\n' > /opt/amnezia/wireguard/start.sh && \\
+    chmod a+x /opt/amnezia/wireguard/start.sh
 
 # Network tuning RUN removed: writing sysctl.conf/limits.conf inside an
 # image has no effect in containers (applied via docker --sysctl at runtime)
 
-ENTRYPOINT [ "dumb-init", "/opt/amnezia/start.sh" ]
+ENTRYPOINT [ "dumb-init", "/opt/amnezia/wireguard/start.sh" ]
 CMD [ "" ]`,
 
   // Telegram MTProto-прокси (официальный mtproto-proxy от Telegram).
