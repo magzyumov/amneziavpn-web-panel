@@ -54,8 +54,8 @@ export async function installAWG2(server: Server, options: InstallOptions = {}):
   await buildImage(server, imageName, buildDir, DOCKERFILES.awg2);
 
   await execSudo(server, `mkdir -p /opt/amnezia/awg`);
-  await writeRemoteFile(server, `/opt/amnezia/start.sh`, START_SCRIPTS.awg2(subnetIp, subnetCidr, server.host));
-  await execSudo(server, `chmod +x /opt/amnezia/start.sh`);
+  await writeRemoteFile(server, `/opt/amnezia/awg/start.sh`, START_SCRIPTS.awg2(subnetIp, subnetCidr, server.host));
+  await execSudo(server, `chmod +x /opt/amnezia/awg/start.sh`);
 
   await execSudo(server, `docker rm -f ${containerName} 2>/dev/null || true`);
   await execSudo(server, [
