@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { exec, execSudo } from '../ssh.js';
-import { assertContainerName, assertPort, assertDomain } from '../shell.js';
-import { randPort, writeRemoteFile, buildImage, renderTemplate } from './common.js';
+import { assertContainerName, assertPort, assertDomain, sh } from '../shell.js';
+import { randPort, writeRemoteFile, buildImage, renderTemplate, assertPortFree } from './common.js';
 import { DOCKERFILES, START_SCRIPTS, TELEMT_BASE_CONFIG_TEMPLATE } from './dockerfiles.js';
 import { buildMtprotoLink } from './mtproxy.js';
 import type { Server, Protocol, AddClientResult, InstallResult, TelemtConfig } from '../../types.js';
@@ -15,6 +15,11 @@ export async function installTelemt(server: Server, options: TelemtInstallOption
   const containerName = 'amnezia-telemt';
   const imageName = 'amnezia-telemt:latest';
   const buildDir = '/opt/amnezia/amnezia-telemt';
+
+  // Освобождаем порт от своего старого контейнера (переустановка), затем проверяем,
+  // что порт не занят кем-то ещё на хосте.
+  await execSudo(server, `docker rm -f ${containerName} 2>/dev/null || true`);
+  await assertPortFree(server, port, containerName);
 
   await buildImage(server, imageName, buildDir, DOCKERFILES.telemt);
 
@@ -30,7 +35,6 @@ export async function installTelemt(server: Server, options: TelemtInstallOption
   await execSudo(server, `chmod +x /opt/amnezia/telemt/start.sh`);
   await execSudo(server, `touch /opt/amnezia/telemt/users`);
 
-  await execSudo(server, `docker rm -f ${containerName} 2>/dev/null || true`);
   await execSudo(server, [
     `docker run -d`,
     `--name ${containerName}`,
@@ -75,4 +79,13 @@ export async function addTelemtClient(server: Server, protocol: Protocol, _clien
   // Telemt всегда FakeTLS — ee-secret с доменом.
   const link = buildMtprotoLink(server.host, c.port, secret, c.tlsDomain || 'www.google.com');
   return { config: link, type: 'telemt' };
+}
+
+// Отзыв клиента: удаляем строку пользователя из users и рестартим (peerId = c_<12hex> username).
+export async function removeTelemtClient(server: Server, protocol: Protocol, peerId: string): Promise<void> {
+  assertContainerName(protocol.container_name);
+  const cn = protocol.container_name;
+  const f = '/opt/amnezia/telemt/users';
+  await execSudo(server, `grep -vE ${sh('^' + peerId + ' ')} ${f} > ${f}.tmp 2>/dev/null; mv ${f}.tmp ${f} 2>/dev/null || true`);
+  await execSudo(server, `docker restart ${cn} 2>/dev/null || true`);
 }

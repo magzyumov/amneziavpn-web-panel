@@ -1,11 +1,11 @@
 // Barrel-файл для сервисов протоколов.
 // Внешний код импортирует всё отсюда: `from './services/protocols/index.js'`.
 
-export { installAWG2, addAWG2Client } from './awg2.js';
-export { installXray, addXrayClient } from './xray.js';
-export { installWireGuard, addWireGuardClient } from './wireguard.js';
-export { installMtproxy, addMtproxyClient } from './mtproxy.js';
-export { installTelemt, addTelemtClient } from './telemt.js';
+export { installAWG2, addAWG2Client, removeAWG2Client } from './awg2.js';
+export { installXray, addXrayClient, removeXrayClient } from './xray.js';
+export { installWireGuard, addWireGuardClient, removeWireGuardClient } from './wireguard.js';
+export { installMtproxy, addMtproxyClient, removeMtproxyClient } from './mtproxy.js';
+export { installTelemt, addTelemtClient, removeTelemtClient } from './telemt.js';
 export {
   getContainerStatus, getContainersHealth, startContainer, stopContainer,
   removeContainer, getContainerLogs, listAmneziaContainers, ensureDocker,
@@ -14,3 +14,4 @@ export {
 export type { AmneziaContainerListing, ScannedProtocol, ScannedClient } from './containers.js';
 export { readAwgWgPeerStats, readXrayPeerStats, readTelemtPeerStats, isXrayStatsEnabled, enableXrayStats } from './stats.js';
 export type { PeerStats } from './stats.js';
+export { installDns, removeDns, isDnsRunning, resolveClientDns, AMNEZIA_DNS_IP } from './dns.js';

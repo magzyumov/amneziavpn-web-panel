@@ -40,6 +40,8 @@ export default function ServerPage() {
   const [loading, setLoading] = useState(true);
   const [installingDocker, setInstallingDocker] = useState(false);
   const [dockerMsg, setDockerMsg] = useState('');
+  const [dnsInstalled, setDnsInstalled] = useState<boolean | null>(null);
+  const [dnsBusy, setDnsBusy] = useState(false);
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
@@ -61,6 +63,12 @@ export default function ServerPage() {
         window.history.replaceState({}, '', window.location.pathname);
       }
     }).then(() => { protocolsLoadedRef.current = true; }).finally(() => setLoading(false));
+  }, [id]);
+
+  // Статус AmneziaDNS (отдельно — SSH-вызов не должен блокировать загрузку страницы)
+  useEffect(() => {
+    if (!id) return;
+    serversApi.dnsStatus(id).then(r => setDnsInstalled(r.data.installed)).catch(() => setDnsInstalled(null));
   }, [id]);
 
   // Polling реальных статусов каждые 30 секунд
@@ -102,6 +110,27 @@ export default function ServerPage() {
     }
   };
 
+  const toggleDns = async () => {
+    if (!id || dnsBusy) return;
+    setDnsBusy(true);
+    setDockerMsg('');
+    try {
+      if (dnsInstalled) {
+        await serversApi.removeDns(id);
+        setDnsInstalled(false);
+        setDockerMsg('AmneziaDNS удалён. Новые клиенты WG/AWG будут на публичном DNS.');
+      } else {
+        await serversApi.installDns(id);
+        setDnsInstalled(true);
+        setDockerMsg('AmneziaDNS установлен. Новые клиенты WG/AWG будут использовать его (защита от DNS-leak).');
+      }
+    } catch (e: any) {
+      setDockerMsg('Error: ' + (e.response?.data?.error || e.message));
+    } finally {
+      setDnsBusy(false);
+    }
+  };
+
   const delProtocol = async (pid: string) => {
     if (!confirm('Remove protocol and all its clients?')) return;
     await protocolsApi.delete(pid);
@@ -126,6 +155,12 @@ export default function ServerPage() {
             <button className="btn btn-outline" onClick={() => setShowEdit(true)}>✎ Edit Server</button>
             <button className="btn btn-outline" onClick={ensureDocker} disabled={installingDocker}>
               {installingDocker ? <><span className="spinner" /> Installing Docker…</> : '🐳 Ensure Docker'}
+            </button>
+            <button className="btn btn-outline" onClick={toggleDns} disabled={dnsBusy || dnsInstalled === null}
+              title="AmneziaDNS — серверный DNS-резолвер, защита от DNS-leak (DoT к Cloudflare)">
+              {dnsBusy
+                ? <><span className="spinner" /> AmneziaDNS…</>
+                : `🛡️ AmneziaDNS: ${dnsInstalled === null ? '—' : dnsInstalled ? 'On' : 'Off'}`}
             </button>
             <button className="btn btn-outline" onClick={() => setShowScan(true)}>🔍 Scan Server</button>
             <button className="btn btn-primary" onClick={() => setShowInstall(true)}>+ Install Protocol</button>

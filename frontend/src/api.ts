@@ -79,6 +79,9 @@ export const serversApi = {
   update: (id: string, data: Partial<ServerRecord> & { password?: string; private_key?: string }) => api.put(`/servers/${id}`, data),
   scanProtocols: (id: string) => api.post(`/servers/${id}/scan-protocols`),
   importProtocol: (id: string, data: any) => api.post(`/servers/${id}/import-protocol`, data),
+  dnsStatus: (id: string) => api.get<{ installed: boolean }>(`/servers/${id}/dns`),
+  installDns: (id: string) => api.post(`/servers/${id}/dns`),
+  removeDns: (id: string) => api.delete(`/servers/${id}/dns`),
 };
 
 export const protocolsApi = {

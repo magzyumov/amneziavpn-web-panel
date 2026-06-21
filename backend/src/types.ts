@@ -38,6 +38,7 @@ export interface Client {
   server_id: string;
   name: string;
   config: string | null;
+  peer_id?: string | null;
   created_at?: string;
 }
 
@@ -81,6 +82,7 @@ export interface Awg2Config {
   subnetIp: string;
   subnetCidr: string;
   serverPubKey: string;
+  protocolVersion: string;
   jc: number | string; jmin: number | string; jmax: number | string;
   s1: number | string; s2: number | string; s3: number | string; s4: number | string;
   h1: string; h2: string; h3: string; h4: string;
@@ -100,6 +102,12 @@ export interface XrayConfig {
   publicKey: string;
   shortId: string;
   firstUuid: string;
+  // Транспорт поверх Reality: 'tcp' (raw, flow xtls-rprx-vision) или 'xhttp'
+  // (SplitHTTP, без flow). Старые конфиги без поля трактуем как 'tcp'.
+  transport?: 'tcp' | 'xhttp';
+  xhttpHost?: string;
+  xhttpPath?: string;
+  xhttpMode?: string;
 }
 
 // Telegram MTProto-прокси (mtproxy / telemt). Это не VPN: проксируют только

@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { exec, execSudo } from '../ssh.js';
-import { assertContainerName, assertPort, assertDomain } from '../shell.js';
-import { randPort, writeRemoteFile, buildImage } from './common.js';
+import { assertContainerName, assertPort, assertDomain, sh } from '../shell.js';
+import { randPort, writeRemoteFile, buildImage, assertPortFree } from './common.js';
 import { DOCKERFILES, START_SCRIPTS } from './dockerfiles.js';
 import type { Server, Protocol, AddClientResult, InstallResult, MtproxyConfig } from '../../types.js';
 
@@ -23,6 +23,11 @@ export async function installMtproxy(server: Server, options: MtproxyInstallOpti
   const imageName = 'amnezia-mtproxy:latest';
   const buildDir = '/opt/amnezia/amnezia-mtproxy';
 
+  // Освобождаем порт от своего старого контейнера (переустановка), затем проверяем,
+  // что порт не занят кем-то ещё на хосте.
+  await execSudo(server, `docker rm -f ${containerName} 2>/dev/null || true`);
+  await assertPortFree(server, port, containerName);
+
   await buildImage(server, imageName, buildDir, DOCKERFILES.mtproxy);
 
   await execSudo(server, `mkdir -p /opt/amnezia/mtproxy`);
@@ -31,7 +36,6 @@ export async function installMtproxy(server: Server, options: MtproxyInstallOpti
   await execSudo(server, `chmod +x /opt/amnezia/mtproxy/start.sh`);
   await execSudo(server, `touch /opt/amnezia/mtproxy/secrets`);
 
-  await execSudo(server, `docker rm -f ${containerName} 2>/dev/null || true`);
   await execSudo(server, [
     `docker run -d`,
     `--name ${containerName}`,
@@ -73,4 +77,13 @@ export async function addMtproxyClient(server: Server, protocol: Protocol, _clie
 
   const link = buildMtprotoLink(server.host, c.port, secret, c.tlsDomain || '');
   return { config: link, type: 'mtproxy' };
+}
+
+// Отзыв клиента: удаляем секрет из файла secrets и рестартим (peerId = raw 32-hex secret).
+export async function removeMtproxyClient(server: Server, protocol: Protocol, peerId: string): Promise<void> {
+  assertContainerName(protocol.container_name);
+  const cn = protocol.container_name;
+  const f = '/opt/amnezia/mtproxy/secrets';
+  await execSudo(server, `grep -vxF ${sh(peerId)} ${f} > ${f}.tmp 2>/dev/null; mv ${f}.tmp ${f} 2>/dev/null || true`);
+  await execSudo(server, `docker restart ${cn} 2>/dev/null || true`);
 }

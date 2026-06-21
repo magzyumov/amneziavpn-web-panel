@@ -11,7 +11,7 @@ interface Props {
 
 const DEFAULTS: Record<ProtocolType, Record<string, any>> = {
   awg2:      { port: '', jc: 6, jmin: 10, jmax: 50, s1: 143, s2: 122, s3: 59, s4: 17 },
-  xray:      { port: 443, sni: 'www.googletagmanager.com' },
+  xray:      { port: 443, sni: 'www.googletagmanager.com', transport: 'tcp' },
   wireguard: { port: '' },
   mtproxy:   { port: '', tlsDomain: 'www.google.com' },
   telemt:    { port: '', tlsDomain: 'www.google.com' },
@@ -35,6 +35,15 @@ export default function InstallProtocolModal({ serverId, onClose, onInstalled }:
     try {
       const options: Record<string, any> = { ...opts };
       if (!options.port) delete options.port;
+      // Пустые опциональные строки убираем, чтобы backend применил свои дефолты
+      // (assertDomain('') и т.п. бросили бы ошибку на пустой строке).
+      for (const k of ['sni', 'xhttpHost', 'xhttpPath', 'xhttpMode', 'tlsDomain']) {
+        if (options[k] === '') delete options[k];
+      }
+      // Поля XHTTP актуальны только для transport=xhttp
+      if (type === 'xray' && options.transport !== 'xhttp') {
+        delete options.xhttpHost; delete options.xhttpPath; delete options.xhttpMode;
+      }
       const r = await protocolsApi.install(serverId, { type, options });
       setLog(l => l + `\n✓ Done!\n  Container: ${r.data.containerName}\n  Port: ${r.data.port}\n`);
       setTimeout(() => { onInstalled(r.data); }, 1200);
@@ -102,6 +111,38 @@ export default function InstallProtocolModal({ serverId, onClose, onInstalled }:
               <input className="input input-mono" value={opts.sni ?? ''}
                 onChange={e => set('sni', e.target.value)} />
             </div>
+            <div className="input-group">
+              <label className="input-label">Transport (поверх Reality)</label>
+              <select className="input" value={opts.transport ?? 'tcp'}
+                onChange={e => set('transport', e.target.value)}>
+                <option value="tcp">TCP / raw (flow xtls-rprx-vision)</option>
+                <option value="xhttp">XHTTP / SplitHTTP (без flow)</option>
+              </select>
+            </div>
+            {opts.transport === 'xhttp' && (
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                <div className="input-group">
+                  <label className="input-label">XHTTP Host (пусто = SNI)</label>
+                  <input className="input input-mono" placeholder={opts.sni ?? 'www.googletagmanager.com'}
+                    value={opts.xhttpHost ?? ''} onChange={e => set('xhttpHost', e.target.value)} />
+                </div>
+                <div className="input-group">
+                  <label className="input-label">XHTTP Path</label>
+                  <input className="input input-mono" placeholder="/"
+                    value={opts.xhttpPath ?? ''} onChange={e => set('xhttpPath', e.target.value)} />
+                </div>
+                <div className="input-group">
+                  <label className="input-label">XHTTP Mode</label>
+                  <select className="input" value={opts.xhttpMode ?? 'auto'}
+                    onChange={e => set('xhttpMode', e.target.value)}>
+                    <option value="auto">auto</option>
+                    <option value="packet-up">packet-up</option>
+                    <option value="stream-up">stream-up</option>
+                    <option value="stream-one">stream-one</option>
+                  </select>
+                </div>
+              </div>
+            )}
             <div className="notice notice-info" style={{ fontSize: 11 }}>
               Reality ключи генерируются автоматически через xray x25519
             </div>

@@ -1,13 +1,14 @@
 import { exec, execSudo } from '../ssh.js';
-import { assertContainerName, assertPort, shInt } from '../shell.js';
+import { assertContainerName, assertPort, shInt, assertMagicHeader, sh } from '../shell.js';
 import {
   randInt, randPort,
-  writeRemoteFile, readRemoteFile, buildImage, renderTemplate,
+  writeRemoteFile, readRemoteFile, buildImage, renderTemplate, assertPortFree, removePeerBlock,
 } from './common.js';
 import {
   DOCKERFILES, START_SCRIPTS, CONFIGURE_SCRIPTS,
   AWG2_CLIENT_TEMPLATE, AWG2_CLIENT_JSON_TEMPLATE,
 } from './dockerfiles.js';
+import { resolveClientDns } from './dns.js';
 import type {
   Server, Protocol, AddClientResult, InstallResult, Awg2Config,
 } from '../../types.js';
@@ -16,8 +17,54 @@ interface InstallOptions {
   port?: number;
   jc?: number; jmin?: number; jmax?: number;
   s1?: number; s2?: number; s3?: number; s4?: number;
-  h1?: number; h2?: number; h3?: number; h4?: number;
-  i1?: number; i2?: number; i3?: number; i4?: number; i5?: number;
+  // H1-H4 в AWG 2.0 — диапазоны "min-max" либо одиночные uint32.
+  h1?: number | string; h2?: number | string; h3?: number | string; h4?: number | string;
+}
+
+// Базовые размеры handshake-пакетов AmneziaWG (AwgConstant). Нужны, чтобы итоговые
+// размеры (base + S) не совпадали между собой — иначе amneziawg-go отвергнет конфиг.
+const MSG_INIT = 148, MSG_RESP = 92, MSG_COOKIE = 64, MSG_TRANSPORT = 32;
+const INT32_MAX = 2147483647;
+
+// Дефолтный special junk пакет I1 из AmneziaVPN (protocolConstants.h:194) —
+// мимикрирует под DNS-ответ для icloud.com. I2-I5 в апстриме пустые.
+// На текущем образе amneziawg-go I-пакеты не поддерживаются, поэтому в конфигах
+// они закомментированы (как и в оригинальном configure_container.sh), но значения
+// храним один-в-один с апстримом для записи в client-config.
+const DEFAULT_I1 = '<r 2><b 0x858000010001000000000669636c6f756403636f6d0000010001c00c000100010000105a00044d583737>';
+
+// Дефолтные magic headers AmneziaVPN — используются как fallback для старых
+// конфигов, где H1-H4 ещё не сохранены (protocolConstants.h:191-194).
+const DEFAULT_H = { h1: '1020325451', h2: '3288052141', h3: '1766607858', h4: '2528465083' };
+
+// Генерация S1-S4 — точная копия AwgInstaller::generateAwgParameters: значения
+// уникальны и не дают совпадающих итоговых размеров пакетов.
+function genPacketSizes(): { s1: number; s2: number; s3: number; s4: number } {
+  const used = new Set<number>();
+  const s1 = randInt(15, 149); used.add(s1);
+  let s2 = randInt(15, 149);
+  while (used.has(s2) || s1 + MSG_INIT === s2 + MSG_RESP) s2 = randInt(15, 149);
+  used.add(s2);
+  let s3 = randInt(0, 63);
+  while (used.has(s3) || s1 + MSG_INIT === s3 + MSG_COOKIE || s2 + MSG_RESP === s3 + MSG_COOKIE) s3 = randInt(0, 63);
+  used.add(s3);
+  let s4 = randInt(0, 19);
+  while (used.has(s4)) s4 = randInt(0, 19);
+  return { s1, s2, s3, s4 };
+}
+
+// Генерация H1-H4 как диапазонов "min-max" (формат AWG 2.0, AwgInstaller isAwg2).
+// Диапазоны возрастающие и непересекающиеся → заголовки гарантированно различны.
+function genMagicHeaderRanges(): [string, string, string, string] {
+  const out: string[] = [];
+  let min = 5;
+  while (out.length < 4) {
+    const first = randInt(min, INT32_MAX - 1);
+    const second = randInt(first, INT32_MAX - 1);
+    min = second;
+    out.push(`${first}-${second}`);
+  }
+  return out as [string, string, string, string];
 }
 
 export async function installAWG2(server: Server, options: InstallOptions = {}): Promise<InstallResult> {
@@ -28,28 +75,35 @@ export async function installAWG2(server: Server, options: InstallOptions = {}):
   const imageName = 'amnezia-awg2:latest';
   const buildDir  = '/opt/amnezia/amnezia-awg2';
 
-  // Параметры обфускации AWG2 — все integer, валидируем чтобы не пустить shell-injection в configure-script.
-  const intOpt = (v: number | undefined, fallback: number | string, label: string): number | string =>
+  // Параметры обфускации AWG 2.0 — дефолты и алгоритм один-в-один с апстримом
+  // (AwgInstaller::generateAwgParameters). Все значения валидируем перед
+  // интерполяцией в configure-script.
+  const intOpt = (v: number | undefined, fallback: number, label: string): number =>
     v == null ? fallback : shInt(v, { min: 0, max: 4294967295, label });
-  const jc   = intOpt(options.jc,   randInt(3, 10),                'jc');
-  const jmin = intOpt(options.jmin, randInt(10, 50),               'jmin');
-  const jmax = intOpt(options.jmax, randInt(200, 1000),            'jmax');
-  const s1   = intOpt(options.s1,   randInt(100, 200),             's1');
-  const s2   = intOpt(options.s2,   randInt(100, 200),             's2');
-  const s3   = intOpt(options.s3,   randInt(30, 100),              's3');
-  const s4   = intOpt(options.s4,   randInt(10, 50),               's4');
-  // H1-H4 (magic headers) и I1-I5 (special junk) обязаны быть ОДИНОЧНЫМИ целыми:
-  // userspace amneziawg-go в образе не принимает range "min-max" в setconf
-  // ("Unable to modify interface: Invalid argument") — интерфейс не поднимается.
-  const h1   = intOpt(options.h1,   randInt(600000000, 1500000000),  'h1');
-  const h2   = intOpt(options.h2,   randInt(1500000000, 1900000000), 'h2');
-  const h3   = intOpt(options.h3,   randInt(1800000000, 2100000000), 'h3');
-  const h4   = intOpt(options.h4,   randInt(2100000000, 2139000000), 'h4');
-  const i1   = intOpt(options.i1,   randInt(600000000, 1500000000),  'i1');
-  const i2   = intOpt(options.i2,   randInt(1500000000, 1900000000), 'i2');
-  const i3   = intOpt(options.i3,   randInt(600000000, 1500000000),  'i3');
-  const i4   = intOpt(options.i4,   randInt(1500000000, 1900000000), 'i4');
-  const i5   = intOpt(options.i5,   randInt(600000000, 1500000000),  'i5');
+  const jc   = intOpt(options.jc,   randInt(4, 6), 'jc');   // upstream bounded(4,7)
+  const jmin = intOpt(options.jmin, 10,            'jmin');
+  const jmax = intOpt(options.jmax, 50,            'jmax');
+
+  // S1-S4 генерируем единым набором (уникальны + без коллизий размеров пакетов),
+  // одиночные override'ы валидируем поверх.
+  const gen = genPacketSizes();
+  const s1 = intOpt(options.s1, gen.s1, 's1');
+  const s2 = intOpt(options.s2, gen.s2, 's2');
+  const s3 = intOpt(options.s3, gen.s3, 's3');
+  const s4 = intOpt(options.s4, gen.s4, 's4');
+
+  // H1-H4 — диапазоны "min-max" (AWG 2.0). amneziawg-go в образе их поддерживает
+  // (формат "%d-%d", h как строка в UAPI).
+  const gh = genMagicHeaderRanges();
+  const h1 = options.h1 != null ? assertMagicHeader(options.h1, 'h1') : gh[0];
+  const h2 = options.h2 != null ? assertMagicHeader(options.h2, 'h2') : gh[1];
+  const h3 = options.h3 != null ? assertMagicHeader(options.h3, 'h3') : gh[2];
+  const h4 = options.h4 != null ? assertMagicHeader(options.h4, 'h4') : gh[3];
+
+  // Освобождаем порт от своего старого контейнера (переустановка), затем проверяем,
+  // что порт не занят кем-то ещё на хосте.
+  await execSudo(server, `docker rm -f ${containerName} 2>/dev/null || true`);
+  await assertPortFree(server, port, containerName);
 
   await buildImage(server, imageName, buildDir, DOCKERFILES.awg2);
 
@@ -57,7 +111,6 @@ export async function installAWG2(server: Server, options: InstallOptions = {}):
   await writeRemoteFile(server, `/opt/amnezia/awg/start.sh`, START_SCRIPTS.awg2(subnetIp, subnetCidr, server.host));
   await execSudo(server, `chmod +x /opt/amnezia/awg/start.sh`);
 
-  await execSudo(server, `docker rm -f ${containerName} 2>/dev/null || true`);
   await execSudo(server, [
     `docker run -d`,
     `--log-driver none`,
@@ -72,7 +125,6 @@ export async function installAWG2(server: Server, options: InstallOptions = {}):
     `--name ${containerName}`,
     imageName,
   ].join(' \\\n  '));
-  await execSudo(server, `docker network create amnezia-dns-net 2>/dev/null || true`);
   await execSudo(server, `docker network connect amnezia-dns-net ${containerName}`);
 
   const awg2ConfigureScript = [
@@ -90,11 +142,6 @@ export async function installAWG2(server: Server, options: InstallOptions = {}):
     `export RESPONSE_PACKET_MAGIC_HEADER=${h2}`,
     `export UNDERLOAD_PACKET_MAGIC_HEADER=${h3}`,
     `export TRANSPORT_PACKET_MAGIC_HEADER=${h4}`,
-    `export SPECIAL_JUNK_1=${i1}`,
-    `export SPECIAL_JUNK_2=${i2}`,
-    `export SPECIAL_JUNK_3=${i3}`,
-    `export SPECIAL_JUNK_4=${i4}`,
-    `export SPECIAL_JUNK_5=${i5}`,
     '',
     CONFIGURE_SCRIPTS.awg2,
   ].join('\n');
@@ -120,10 +167,11 @@ export async function installAWG2(server: Server, options: InstallOptions = {}):
 
   const config: Awg2Config = {
     port, subnetIp, subnetCidr, serverPubKey,
+    protocolVersion: '2',
     jc, jmin, jmax,
     s1, s2, s3, s4,
-    h1: String(h1), h2: String(h2), h3: String(h3), h4: String(h4),
-    i1: String(i1), i2: String(i2), i3: String(i3), i4: String(i4), i5: String(i5),
+    h1, h2, h3, h4,
+    i1: DEFAULT_I1, i2: '', i3: '', i4: '', i5: '',
   };
   return { containerName, port, config };
 }
@@ -175,28 +223,28 @@ export async function addAWG2Client(server: Server, protocol: Protocol, _clientN
   const awgPeerEntry = Buffer.from(`\n[Peer]\nPublicKey = ${clientPubKey}\nPresharedKey = ${presharedKey}\nAllowedIPs = ${clientIp}/32\n`).toString('base64');
   await execSudo(server, `echo '${awgPeerEntry}' | base64 -d | docker exec -i ${cn} tee -a /opt/amnezia/awg/awg0.conf > /dev/null`);
 
+  const clientDns = await resolveClientDns(server);
   const templateVars: Record<string, string | number> = {
     WIREGUARD_CLIENT_IP: clientIp,
-    PRIMARY_DNS: '1.1.1.1',
-    SECONDARY_DNS: '8.8.8.8',
+    CLIENT_DNS: clientDns,
     WIREGUARD_CLIENT_PRIVATE_KEY: clientPrivKey,
     WIREGUARD_CLIENT_PUBLIC_KEY: clientPubKey,
-    JUNK_PACKET_COUNT: c.jc ?? randInt(3, 10),
-    JUNK_PACKET_MIN_SIZE: c.jmin ?? randInt(10, 50),
-    JUNK_PACKET_MAX_SIZE: c.jmax ?? randInt(200, 1000),
-    INIT_PACKET_JUNK_SIZE: c.s1 ?? randInt(100, 200),
-    RESPONSE_PACKET_JUNK_SIZE: c.s2 ?? randInt(100, 200),
-    COOKIE_REPLY_PACKET_JUNK_SIZE: c.s3 ?? randInt(30, 100),
-    TRANSPORT_PACKET_JUNK_SIZE: c.s4 ?? randInt(10, 50),
-    INIT_PACKET_MAGIC_HEADER: c.h1 ?? randInt(600000000, 1500000000),
-    RESPONSE_PACKET_MAGIC_HEADER: c.h2 ?? randInt(1500000000, 1900000000),
-    UNDERLOAD_PACKET_MAGIC_HEADER: c.h3 ?? randInt(1800000000, 2100000000),
-    TRANSPORT_PACKET_MAGIC_HEADER: c.h4 ?? randInt(2100000000, 2139000000),
-    SPECIAL_JUNK_1: c.i1 ?? randInt(600000000, 1500000000),
-    SPECIAL_JUNK_2: c.i2 ?? randInt(1500000000, 1900000000),
-    SPECIAL_JUNK_3: c.i3 ?? randInt(600000000, 1500000000),
-    SPECIAL_JUNK_4: c.i4 ?? randInt(1500000000, 1900000000),
-    SPECIAL_JUNK_5: c.i5 ?? randInt(600000000, 1500000000),
+    JUNK_PACKET_COUNT: c.jc ?? randInt(4, 6),
+    JUNK_PACKET_MIN_SIZE: c.jmin ?? 10,
+    JUNK_PACKET_MAX_SIZE: c.jmax ?? 50,
+    INIT_PACKET_JUNK_SIZE: c.s1 ?? 15,
+    RESPONSE_PACKET_JUNK_SIZE: c.s2 ?? 18,
+    COOKIE_REPLY_PACKET_JUNK_SIZE: c.s3 ?? 20,
+    TRANSPORT_PACKET_JUNK_SIZE: c.s4 ?? 23,
+    INIT_PACKET_MAGIC_HEADER: c.h1 ?? DEFAULT_H.h1,
+    RESPONSE_PACKET_MAGIC_HEADER: c.h2 ?? DEFAULT_H.h2,
+    UNDERLOAD_PACKET_MAGIC_HEADER: c.h3 ?? DEFAULT_H.h3,
+    TRANSPORT_PACKET_MAGIC_HEADER: c.h4 ?? DEFAULT_H.h4,
+    SPECIAL_JUNK_1: c.i1 ?? DEFAULT_I1,
+    SPECIAL_JUNK_2: c.i2 ?? '',
+    SPECIAL_JUNK_3: c.i3 ?? '',
+    SPECIAL_JUNK_4: c.i4 ?? '',
+    SPECIAL_JUNK_5: c.i5 ?? '',
     WIREGUARD_SERVER_PUBLIC_KEY: c.serverPubKey,
     WIREGUARD_PSK: presharedKey,
     SERVER_IP_ADDRESS: server.host,
@@ -207,4 +255,15 @@ export async function addAWG2Client(server: Server, protocol: Protocol, _clientN
   const configJson = renderTemplate(AWG2_CLIENT_JSON_TEMPLATE, templateVars);
 
   return { config: clientConf, configJson, type: 'awg2' };
+}
+
+// Отзыв клиента: убираем peer из живого awg0 и из awg0.conf (peerId = pubkey).
+export async function removeAWG2Client(server: Server, protocol: Protocol, peerId: string): Promise<void> {
+  assertContainerName(protocol.container_name);
+  const cn = protocol.container_name;
+  await execSudo(server, `docker exec ${cn} awg set awg0 peer ${sh(peerId)} remove 2>/dev/null || true`);
+  const conf = await readRemoteFile(server, '/opt/amnezia/awg/awg0.conf');
+  if (conf) {
+    await writeRemoteFile(server, '/opt/amnezia/awg/awg0.conf', removePeerBlock(conf, peerId));
+  }
 }

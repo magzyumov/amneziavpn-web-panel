@@ -114,6 +114,49 @@ RUN printf '#!/bin/sh\\ntail -f /dev/null\\n' > /opt/amnezia/telemt/start.sh && 
 
 ENTRYPOINT [ "/bin/sh", "/opt/amnezia/telemt/start.sh" ]
 CMD [ "" ]`,
+
+  // AmneziaDNS — unbound-резолвер. Резолвит на сервере, наружу ходит к Cloudflare
+  // по DNS-over-TLS (:853). Stub-зоны Emercoin (.coin/.emc/.lib/.bazar/.enum) — как
+  // в оригинале. mvance/unbound подключает forward-records.conf автоматически.
+  dns: `FROM mvance/unbound:latest
+LABEL maintainer="AmneziaVPN"
+RUN printf '%s\\n' \\
+  'domain-insecure: "coin."' \\
+  'domain-insecure: "emc."' \\
+  'domain-insecure: "lib."' \\
+  'domain-insecure: "bazar."' \\
+  'domain-insecure: "enum."' \\
+  'stub-zone:' \\
+  '   name: coin.' \\
+  '   stub-host: seed1.emercoin.com' \\
+  '   stub-host: seed2.emercoin.com' \\
+  '   stub-first: yes' \\
+  'stub-zone:' \\
+  '   name: emc.' \\
+  '   stub-host: seed1.emercoin.com' \\
+  '   stub-host: seed2.emercoin.com' \\
+  '   stub-first: yes' \\
+  'stub-zone:' \\
+  '   name: lib.' \\
+  '   stub-host: seed1.emercoin.com' \\
+  '   stub-host: seed2.emercoin.com' \\
+  '   stub-first: yes' \\
+  'stub-zone:' \\
+  '   name: bazar.' \\
+  '   stub-host: seed1.emercoin.com' \\
+  '   stub-host: seed2.emercoin.com' \\
+  '   stub-first: yes' \\
+  'stub-zone:' \\
+  '   name: enum.' \\
+  '   stub-host: seed1.emercoin.com' \\
+  '   stub-host: seed2.emercoin.com' \\
+  '   stub-first: yes' \\
+  'forward-zone:' \\
+  '   name: .' \\
+  '   forward-tls-upstream: yes' \\
+  '   forward-addr: 1.1.1.1@853' \\
+  '   forward-addr: 1.0.0.1@853' \\
+  > /opt/unbound/etc/unbound/forward-records.conf`,
 };
 
 export const START_SCRIPTS = {
@@ -285,11 +328,13 @@ H1 = $INIT_PACKET_MAGIC_HEADER
 H2 = $RESPONSE_PACKET_MAGIC_HEADER
 H3 = $UNDERLOAD_PACKET_MAGIC_HEADER
 H4 = $TRANSPORT_PACKET_MAGIC_HEADER
-# I1 = $SPECIAL_JUNK_1
-# I2 = $SPECIAL_JUNK_2
-# I3 = $SPECIAL_JUNK_3
-# I4 = $SPECIAL_JUNK_4
-# I5 = $SPECIAL_JUNK_5
+# I1-I5 (special junk) — значения как в AmneziaVPN; закомментированы, т.к. образ
+# amneziawg-go их пока не поддерживает (как и оригинальный configure_container.sh).
+# I1 = <r 2><b 0x858000010001000000000669636c6f756403636f6d0000010001c00c000100010000105a00044d583737>
+# I2 =
+# I3 =
+# I4 =
+# I5 =
 EOF`,
 
   wireguard: `mkdir -p /opt/amnezia/wireguard
@@ -353,18 +398,18 @@ cat > /opt/amnezia/xray/server.json <<EOF
             "port": $XRAY_SERVER_PORT,
             "protocol": "vless",
             "settings": {
-                "clients": [{ "id": "$XRAY_CLIENT_ID", "email": "$XRAY_CLIENT_ID", "level": 0, "flow": "xtls-rprx-vision" }],
+                "clients": [{ "id": "$XRAY_CLIENT_ID", "email": "$XRAY_CLIENT_ID", "level": 0$XRAY_FLOW_SUFFIX }],
                 "decryption": "none"
             },
             "streamSettings": {
-                "network": "tcp",
+                "network": "$XRAY_NETWORK",
                 "security": "reality",
                 "realitySettings": {
                     "dest": "$XRAY_SITE_NAME:443",
                     "serverNames": ["$XRAY_SITE_NAME"],
                     "privateKey": "$XRAY_PRIVATE_KEY",
                     "shortIds": ["$XRAY_SHORT_ID"]
-                }
+                }$XRAY_XHTTP_BLOCK
             }
         }
     ],
@@ -378,8 +423,9 @@ EOF`,
 
 export const AWG2_CLIENT_TEMPLATE = `[Interface]
 Address = $WIREGUARD_CLIENT_IP/32
-DNS = $PRIMARY_DNS, $SECONDARY_DNS
+DNS = $CLIENT_DNS
 PrivateKey = $WIREGUARD_CLIENT_PRIVATE_KEY
+MTU = 1376
 Jc = $JUNK_PACKET_COUNT
 Jmin = $JUNK_PACKET_MIN_SIZE
 Jmax = $JUNK_PACKET_MAX_SIZE
@@ -406,8 +452,9 @@ PersistentKeepalive = 25`;
 
 export const WG_CLIENT_TEMPLATE = `[Interface]
 Address = $WIREGUARD_CLIENT_IP/32
-DNS = $PRIMARY_DNS, $SECONDARY_DNS
+DNS = $CLIENT_DNS
 PrivateKey = $WIREGUARD_CLIENT_PRIVATE_KEY
+MTU = 1420
 
 [Peer]
 PublicKey = $WIREGUARD_SERVER_PUBLIC_KEY
@@ -432,13 +479,12 @@ export const XRAY_CLIENT_TEMPLATE = `{
                 "port": $XRAY_SERVER_PORT,
                 "users": [{
                     "id": "$XRAY_CLIENT_ID",
-                    "flow": "xtls-rprx-vision",
-                    "encryption": "none"
+                    "encryption": "none"$XRAY_FLOW_SUFFIX
                 }]
             }]
         },
         "streamSettings": {
-            "network": "tcp",
+            "network": "$XRAY_NETWORK",
             "security": "reality",
             "realitySettings": {
                 "fingerprint": "chrome",
@@ -446,7 +492,7 @@ export const XRAY_CLIENT_TEMPLATE = `{
                 "publicKey": "$XRAY_PUBLIC_KEY",
                 "shortId": "$XRAY_SHORT_ID",
                 "spiderX": ""
-            }
+            }$XRAY_XHTTP_BLOCK
         }
     }]
 }`;
@@ -456,10 +502,11 @@ export const AWG2_CLIENT_JSON_TEMPLATE = `{
     "host": "$SERVER_IP_ADDRESS",
     "port": "$AWG_SERVER_PORT",
     "type": "awg2",
+    "protocol_version": "2",
     "client_pub_key": "$WIREGUARD_CLIENT_PUBLIC_KEY",
     "config": {
         "address": "$WIREGUARD_CLIENT_IP/32",
-        "dns": "$PRIMARY_DNS, $SECONDARY_DNS",
+        "dns": "$CLIENT_DNS",
         "private_key": "$WIREGUARD_CLIENT_PRIVATE_KEY",
         "public_key": "$WIREGUARD_SERVER_PUBLIC_KEY",
         "psk": "$WIREGUARD_PSK",
@@ -490,7 +537,7 @@ export const WG_CLIENT_JSON_TEMPLATE = `{
     "client_pub_key": "$WIREGUARD_CLIENT_PUBLIC_KEY",
     "config": {
         "address": "$WIREGUARD_CLIENT_IP/32",
-        "dns": "$PRIMARY_DNS, $SECONDARY_DNS",
+        "dns": "$CLIENT_DNS",
         "private_key": "$WIREGUARD_CLIENT_PRIVATE_KEY",
         "public_key": "$WIREGUARD_SERVER_PUBLIC_KEY",
         "psk": "$WIREGUARD_PSK"
