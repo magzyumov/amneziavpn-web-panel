@@ -114,6 +114,49 @@ RUN printf '#!/bin/sh\\ntail -f /dev/null\\n' > /opt/amnezia/telemt/start.sh && 
 
 ENTRYPOINT [ "/bin/sh", "/opt/amnezia/telemt/start.sh" ]
 CMD [ "" ]`,
+
+  // AmneziaDNS — unbound-резолвер. Резолвит на сервере, наружу ходит к Cloudflare
+  // по DNS-over-TLS (:853). Stub-зоны Emercoin (.coin/.emc/.lib/.bazar/.enum) — как
+  // в оригинале. mvance/unbound подключает forward-records.conf автоматически.
+  dns: `FROM mvance/unbound:latest
+LABEL maintainer="AmneziaVPN"
+RUN printf '%s\\n' \\
+  'domain-insecure: "coin."' \\
+  'domain-insecure: "emc."' \\
+  'domain-insecure: "lib."' \\
+  'domain-insecure: "bazar."' \\
+  'domain-insecure: "enum."' \\
+  'stub-zone:' \\
+  '   name: coin.' \\
+  '   stub-host: seed1.emercoin.com' \\
+  '   stub-host: seed2.emercoin.com' \\
+  '   stub-first: yes' \\
+  'stub-zone:' \\
+  '   name: emc.' \\
+  '   stub-host: seed1.emercoin.com' \\
+  '   stub-host: seed2.emercoin.com' \\
+  '   stub-first: yes' \\
+  'stub-zone:' \\
+  '   name: lib.' \\
+  '   stub-host: seed1.emercoin.com' \\
+  '   stub-host: seed2.emercoin.com' \\
+  '   stub-first: yes' \\
+  'stub-zone:' \\
+  '   name: bazar.' \\
+  '   stub-host: seed1.emercoin.com' \\
+  '   stub-host: seed2.emercoin.com' \\
+  '   stub-first: yes' \\
+  'stub-zone:' \\
+  '   name: enum.' \\
+  '   stub-host: seed1.emercoin.com' \\
+  '   stub-host: seed2.emercoin.com' \\
+  '   stub-first: yes' \\
+  'forward-zone:' \\
+  '   name: .' \\
+  '   forward-tls-upstream: yes' \\
+  '   forward-addr: 1.1.1.1@853' \\
+  '   forward-addr: 1.0.0.1@853' \\
+  > /opt/unbound/etc/unbound/forward-records.conf`,
 };
 
 export const START_SCRIPTS = {
@@ -380,7 +423,7 @@ EOF`,
 
 export const AWG2_CLIENT_TEMPLATE = `[Interface]
 Address = $WIREGUARD_CLIENT_IP/32
-DNS = $PRIMARY_DNS, $SECONDARY_DNS
+DNS = $CLIENT_DNS
 PrivateKey = $WIREGUARD_CLIENT_PRIVATE_KEY
 MTU = 1376
 Jc = $JUNK_PACKET_COUNT
@@ -409,7 +452,7 @@ PersistentKeepalive = 25`;
 
 export const WG_CLIENT_TEMPLATE = `[Interface]
 Address = $WIREGUARD_CLIENT_IP/32
-DNS = $PRIMARY_DNS, $SECONDARY_DNS
+DNS = $CLIENT_DNS
 PrivateKey = $WIREGUARD_CLIENT_PRIVATE_KEY
 MTU = 1420
 
@@ -463,7 +506,7 @@ export const AWG2_CLIENT_JSON_TEMPLATE = `{
     "client_pub_key": "$WIREGUARD_CLIENT_PUBLIC_KEY",
     "config": {
         "address": "$WIREGUARD_CLIENT_IP/32",
-        "dns": "$PRIMARY_DNS, $SECONDARY_DNS",
+        "dns": "$CLIENT_DNS",
         "private_key": "$WIREGUARD_CLIENT_PRIVATE_KEY",
         "public_key": "$WIREGUARD_SERVER_PUBLIC_KEY",
         "psk": "$WIREGUARD_PSK",
@@ -494,7 +537,7 @@ export const WG_CLIENT_JSON_TEMPLATE = `{
     "client_pub_key": "$WIREGUARD_CLIENT_PUBLIC_KEY",
     "config": {
         "address": "$WIREGUARD_CLIENT_IP/32",
-        "dns": "$PRIMARY_DNS, $SECONDARY_DNS",
+        "dns": "$CLIENT_DNS",
         "private_key": "$WIREGUARD_CLIENT_PRIVATE_KEY",
         "public_key": "$WIREGUARD_SERVER_PUBLIC_KEY",
         "psk": "$WIREGUARD_PSK"

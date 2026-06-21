@@ -8,6 +8,7 @@ import {
   DOCKERFILES, START_SCRIPTS, CONFIGURE_SCRIPTS,
   AWG2_CLIENT_TEMPLATE, AWG2_CLIENT_JSON_TEMPLATE,
 } from './dockerfiles.js';
+import { resolveClientDns } from './dns.js';
 import type {
   Server, Protocol, AddClientResult, InstallResult, Awg2Config,
 } from '../../types.js';
@@ -222,10 +223,10 @@ export async function addAWG2Client(server: Server, protocol: Protocol, _clientN
   const awgPeerEntry = Buffer.from(`\n[Peer]\nPublicKey = ${clientPubKey}\nPresharedKey = ${presharedKey}\nAllowedIPs = ${clientIp}/32\n`).toString('base64');
   await execSudo(server, `echo '${awgPeerEntry}' | base64 -d | docker exec -i ${cn} tee -a /opt/amnezia/awg/awg0.conf > /dev/null`);
 
+  const clientDns = await resolveClientDns(server);
   const templateVars: Record<string, string | number> = {
     WIREGUARD_CLIENT_IP: clientIp,
-    PRIMARY_DNS: '1.1.1.1',
-    SECONDARY_DNS: '8.8.8.8',
+    CLIENT_DNS: clientDns,
     WIREGUARD_CLIENT_PRIVATE_KEY: clientPrivKey,
     WIREGUARD_CLIENT_PUBLIC_KEY: clientPubKey,
     JUNK_PACKET_COUNT: c.jc ?? randInt(4, 6),

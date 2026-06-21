@@ -8,6 +8,7 @@ import {
   DOCKERFILES, START_SCRIPTS, CONFIGURE_SCRIPTS,
   WG_CLIENT_TEMPLATE, WG_CLIENT_JSON_TEMPLATE,
 } from './dockerfiles.js';
+import { resolveClientDns } from './dns.js';
 import type { Server, Protocol, AddClientResult, InstallResult, WireGuardConfig } from '../../types.js';
 
 interface WgInstallOptions { port?: number }
@@ -124,10 +125,10 @@ export async function addWireGuardClient(server: Server, protocol: Protocol, _cl
   const wgPeerEntry = Buffer.from(`\n[Peer]\nPublicKey = ${clientPubKey}\nPresharedKey = ${presharedKey}\nAllowedIPs = ${clientIp}/32\n`).toString('base64');
   await execSudo(server, `echo '${wgPeerEntry}' | base64 -d | docker exec -i ${cn} tee -a /opt/amnezia/wireguard/wg0.conf > /dev/null`);
 
+  const clientDns = await resolveClientDns(server);
   const templateVars: Record<string, string | number> = {
     WIREGUARD_CLIENT_IP: clientIp,
-    PRIMARY_DNS: '1.1.1.1',
-    SECONDARY_DNS: '8.8.8.8',
+    CLIENT_DNS: clientDns,
     WIREGUARD_CLIENT_PRIVATE_KEY: clientPrivKey,
     WIREGUARD_CLIENT_PUBLIC_KEY: clientPubKey,
     WIREGUARD_SERVER_PUBLIC_KEY: c.serverPubKey,

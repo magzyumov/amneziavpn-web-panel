@@ -6,7 +6,7 @@ import { encrypt } from '../services/crypto.js';
 import { authMiddleware } from '../middleware/auth.js';
 import { validateBody } from '../middleware/validate.js';
 import { testConnection, disconnect } from '../services/ssh.js';
-import { listAmneziaContainers, ensureDocker, scanExistingProtocols } from '../services/protocols/index.js';
+import { listAmneziaContainers, ensureDocker, scanExistingProtocols, installDns, removeDns, isDnsRunning } from '../services/protocols/index.js';
 import { assertContainerName, assertPort } from '../services/shell.js';
 import { createSubscription, getVpsHost } from '../services/subscription.js';
 import { logger } from '../services/logger.js';
@@ -91,6 +91,27 @@ router.post('/:id/ensure-docker', async (req, res) => {
   if (!server) return res.status(404).json({ error: 'Server not found' });
 
   await ensureDocker(server);
+  res.json({ ok: true });
+});
+
+// AmneziaDNS — серверный DNS-резолвер (защита от DNS-leak). Один на сервер.
+router.get('/:id/dns', async (req, res) => {
+  const server = queryOne<Server>('SELECT * FROM servers WHERE id = ?', [req.params.id]);
+  if (!server) return res.status(404).json({ error: 'Server not found' });
+  res.json({ installed: await isDnsRunning(server) });
+});
+
+router.post('/:id/dns', async (req, res) => {
+  const server = queryOne<Server>('SELECT * FROM servers WHERE id = ?', [req.params.id]);
+  if (!server) return res.status(404).json({ error: 'Server not found' });
+  const result = await installDns(server);
+  res.json({ ok: true, ...result });
+});
+
+router.delete('/:id/dns', async (req, res) => {
+  const server = queryOne<Server>('SELECT * FROM servers WHERE id = ?', [req.params.id]);
+  if (!server) return res.status(404).json({ error: 'Server not found' });
+  await removeDns(server);
   res.json({ ok: true });
 });
 
