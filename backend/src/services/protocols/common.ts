@@ -9,6 +9,35 @@ export function randPort(): number {
   return randInt(10000, 62000);
 }
 
+// Подготовка хоста перед установкой протокола (идемпотентно).
+// Включает IP-форвардинг и создаёт сеть amnezia-dns-net один раз.
+export async function prepareHost(server: Server): Promise<void> {
+  // Docker обычно включает форвардинг сам, но делаем явно. best-effort.
+  await execSudo(server, 'sysctl -w net.ipv4.ip_forward=1 >/dev/null 2>&1 || true');
+  // Параметры сети — как в оригинальном prepare_host.sh (фиксированная подсеть,
+  // чтобы будущий AmneziaDNS-контейнер мог получить статичный IP). Создаём один раз.
+  const exists = await exec(server, `docker network ls --format '{{.Name}}' | grep -qx amnezia-dns-net && echo yes || echo no`);
+  if (exists.stdout.trim() !== 'yes') {
+    await execSudo(server, 'docker network create --driver bridge --subnet=172.29.172.0/24 --opt com.docker.network.bridge.name=amn0 amnezia-dns-net 2>/dev/null || true');
+  }
+}
+
+// Проверяет, что TCP/UDP-порт свободен на хосте. Свой контейнер (selfName)
+// игнорируем — это переустановка. Бросает с понятным сообщением при конфликте.
+export async function assertPortFree(server: Server, port: number, selfName: string): Promise<void> {
+  // Контейнеры, публикующие этот порт (кроме нашего собственного).
+  const dockerRes = await execSudo(server, `docker ps --format '{{.Names}}' --filter publish=${port}`);
+  const others = dockerRes.stdout.split('\n').map(s => s.trim()).filter(n => n && n !== selfName);
+  if (others.length) {
+    throw new Error(`Порт ${port} уже занят контейнером: ${others.join(', ')}. Выберите другой порт или удалите конфликтующий контейнер.`);
+  }
+  // Не-docker сервисы на хосте. ss может отсутствовать — тогда проверку пропускаем.
+  const ssRes = await exec(server, `ss -Hltnu 'sport = :${port}' 2>/dev/null || true`);
+  if (ssRes.stdout.trim()) {
+    throw new Error(`Порт ${port} уже слушается процессом на хосте. Выберите другой порт.`);
+  }
+}
+
 // Запись файла через base64 — без проблем с экранированием.
 export async function writeRemoteFile(server: Server, remotePath: string, content: string): Promise<void> {
   const b64 = Buffer.from(content, 'utf8').toString('base64');
@@ -50,4 +79,33 @@ export async function buildImage(server: Server, imageName: string, buildDir: st
 export function renderTemplate(template: string, vars: Record<string, string | number>): string {
   return Object.entries(vars).reduce((str, [k, v]) =>
     str.replaceAll(`$${k}`, String(v)), template);
+}
+
+// Удаляет [Peer]-блок с указанным PublicKey из WG/AWG .conf.
+// [Interface] и остальные пиры сохраняются. Возвращает обновлённый текст.
+export function removePeerBlock(conf: string, pubKey: string): string {
+  const lines = conf.split('\n');
+  const out: string[] = [];
+  let block: string[] = [];
+  let inPeer = false;
+  const flush = () => {
+    if (block.length) {
+      const match = block.some(l => /^\s*publickey\s*=/i.test(l) && l.includes(pubKey));
+      if (!match) out.push(...block);
+    }
+    block = [];
+  };
+  for (const line of lines) {
+    if (line.trim().toLowerCase() === '[peer]') {
+      flush();
+      inPeer = true;
+      block.push(line);
+    } else if (inPeer) {
+      block.push(line);
+    } else {
+      out.push(line);
+    }
+  }
+  flush();
+  return out.join('\n');
 }

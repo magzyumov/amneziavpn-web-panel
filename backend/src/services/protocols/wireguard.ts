@@ -1,8 +1,8 @@
 import { exec, execSudo } from '../ssh.js';
-import { assertContainerName, assertPort } from '../shell.js';
+import { assertContainerName, assertPort, sh } from '../shell.js';
 import {
   randPort,
-  writeRemoteFile, readRemoteFile, readContainerFile, buildImage, renderTemplate,
+  writeRemoteFile, readRemoteFile, readContainerFile, buildImage, renderTemplate, assertPortFree, removePeerBlock,
 } from './common.js';
 import {
   DOCKERFILES, START_SCRIPTS, CONFIGURE_SCRIPTS,
@@ -20,13 +20,17 @@ export async function installWireGuard(server: Server, options: WgInstallOptions
   const imageName = 'amnezia-wireguard:latest';
   const buildDir  = '/opt/amnezia/amnezia-wireguard';
 
+  // Освобождаем порт от своего старого контейнера (переустановка), затем проверяем,
+  // что порт не занят кем-то ещё на хосте.
+  await execSudo(server, `docker rm -f ${containerName} 2>/dev/null || true`);
+  await assertPortFree(server, port, containerName);
+
   await buildImage(server, imageName, buildDir, DOCKERFILES.wireguard);
 
   await execSudo(server, `mkdir -p /opt/amnezia/wireguard`);
   await writeRemoteFile(server, `/opt/amnezia/wireguard/start.sh`, START_SCRIPTS.wireguard(subnetIp, subnetCidr, server.host));
   await execSudo(server, `chmod +x /opt/amnezia/wireguard/start.sh`);
 
-  await execSudo(server, `docker rm -f ${containerName} 2>/dev/null || true`);
   await execSudo(server, [
     `docker run -d`,
     `--log-driver none`,
@@ -41,7 +45,6 @@ export async function installWireGuard(server: Server, options: WgInstallOptions
     `--name ${containerName}`,
     imageName,
   ].join(' \\\n  '));
-  await execSudo(server, `docker network create amnezia-dns-net 2>/dev/null || true`);
   await execSudo(server, `docker network connect amnezia-dns-net ${containerName}`);
 
   const wgConfigureScript = [
@@ -137,4 +140,15 @@ export async function addWireGuardClient(server: Server, protocol: Protocol, _cl
   const configJson = renderTemplate(WG_CLIENT_JSON_TEMPLATE, templateVars);
 
   return { config: clientConf, configJson, type: 'wireguard' };
+}
+
+// Отзыв клиента: убираем peer из живого wg0 и из wg0.conf (peerId = pubkey).
+export async function removeWireGuardClient(server: Server, protocol: Protocol, peerId: string): Promise<void> {
+  assertContainerName(protocol.container_name);
+  const cn = protocol.container_name;
+  await execSudo(server, `docker exec ${cn} wg set wg0 peer ${sh(peerId)} remove 2>/dev/null || true`);
+  const conf = await readRemoteFile(server, '/opt/amnezia/wireguard/wg0.conf');
+  if (conf) {
+    await writeRemoteFile(server, '/opt/amnezia/wireguard/wg0.conf', removePeerBlock(conf, peerId));
+  }
 }

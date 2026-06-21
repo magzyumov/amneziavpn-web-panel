@@ -10,6 +10,7 @@ import {
   removeContainer, getContainerLogs, PROTOCOLS,
   isXrayStatsEnabled, enableXrayStats,
 } from '../services/protocols/index.js';
+import { prepareHost } from '../services/protocols/common.js';
 import { shInt } from '../services/shell.js';
 import type { Server, Protocol, ProtocolType } from '../types.js';
 
@@ -53,6 +54,9 @@ router.post('/server/:serverId', validateBody(installSchema), async (req: Reques
   if (!server) return res.status(404).json({ error: 'Server not found' });
 
   const { type, options } = req.body as { type: ProtocolType; options: Record<string, any> };
+
+  // Подготовка хоста (ip_forward + сеть amnezia-dns-net) — идемпотентно, один раз.
+  await prepareHost(server);
 
   let result;
   if      (type === 'awg2')      result = await installAWG2(server, options);

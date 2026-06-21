@@ -41,3 +41,42 @@ export function assertDomain(value: unknown): string {
 export function assertPort(value: unknown, label = 'port'): number {
   return shInt(value, { min: 1, max: 65535, label });
 }
+
+// Путь для XHTTP/SplitHTTP транспорта Xray. Только безопасные символы пути —
+// значение идёт и в shell (через sh), и в JSON-конфиг, поэтому без кавычек/$.
+export function assertXrayPath(value: unknown, label = 'xray path'): string {
+  const s = String(value);
+  if (!/^\/[A-Za-z0-9/_.~-]*$/.test(s)) {
+    throw new Error(`Invalid ${label}: expected URL path starting with "/", got ${value}`);
+  }
+  return s;
+}
+
+// Режим XHTTP-транспорта Xray (Xray-core SplitHTTP mode).
+export function assertXhttpMode(value: unknown, label = 'xhttp mode'): string {
+  const s = String(value).toLowerCase();
+  const allowed = ['auto', 'packet-up', 'stream-up', 'stream-one'];
+  if (!allowed.includes(s)) {
+    throw new Error(`Invalid ${label}: expected one of ${allowed.join('/')}, got ${value}`);
+  }
+  return s;
+}
+
+// Magic header AmneziaWG. В AWG 2.0 это либо uint32, либо диапазон "min-max"
+// (оба значения uint32, min <= max). Возвращает нормализованную строку, безопасную
+// для интерполяции в shell (только цифры и дефис).
+export function assertMagicHeader(value: unknown, label = 'magic header'): string {
+  const s = String(value);
+  const uint32 = { min: 1, max: 4294967295, label };
+  if (/^\d{1,10}$/.test(s)) {
+    return String(shInt(s, uint32));
+  }
+  const m = s.match(/^(\d{1,10})-(\d{1,10})$/);
+  if (m) {
+    const a = shInt(m[1], uint32);
+    const b = shInt(m[2], uint32);
+    if (a > b) throw new Error(`Invalid ${label}: range start > end (${s})`);
+    return `${a}-${b}`;
+  }
+  throw new Error(`Invalid ${label}: expected uint32 or "min-max" range, got ${value}`);
+}

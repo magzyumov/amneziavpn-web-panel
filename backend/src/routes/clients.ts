@@ -5,8 +5,11 @@ import { z } from 'zod';
 import { query, queryOne, run } from '../services/db.js';
 import { authMiddleware, verifyAuth } from '../middleware/auth.js';
 import { validateBody } from '../middleware/validate.js';
-import { addAWG2Client, addXrayClient, addWireGuardClient, addMtproxyClient, addTelemtClient } from '../services/protocols/index.js';
-import { createSubscription, getVpsHost } from '../services/subscription.js';
+import {
+  addAWG2Client, addXrayClient, addWireGuardClient, addMtproxyClient, addTelemtClient,
+  removeAWG2Client, removeXrayClient, removeWireGuardClient, removeMtproxyClient, removeTelemtClient,
+} from '../services/protocols/index.js';
+import { createSubscription, getVpsHost, deleteSubscription } from '../services/subscription.js';
 import { buildAmneziaExportJson, buildVpnUri, buildChunkedAmneziaQr } from '../services/amneziaExport.js';
 import { extractPeerId } from '../services/peerId.js';
 import { logger } from '../services/logger.js';
@@ -154,7 +157,31 @@ router.get('/:id/config-text', (req, res) => {
   res.json({ config: origConfig, vpnUri, name: client.name });
 });
 
-router.delete('/:id', (req, res) => {
+router.delete('/:id', async (req, res) => {
+  const client = queryOne<Client>('SELECT * FROM clients WHERE id = ?', [req.params.id]);
+  if (!client) return res.json({ ok: true }); // уже удалён
+
+  const protocol = queryOne<Protocol>('SELECT * FROM protocols WHERE id = ?', [client.protocol_id]);
+  const server = protocol ? queryOne<Server>('SELECT * FROM servers WHERE id = ?', [protocol.server_id]) : null;
+
+  // Отзыв доступа на сервере. При ошибке НЕ удаляем запись — админ повторит,
+  // когда сервер будет доступен (иначе «удалённый» клиент остался бы рабочим).
+  if (client.peer_id && protocol && server) {
+    try {
+      if      (protocol.type === 'awg2')      await removeAWG2Client(server, protocol, client.peer_id);
+      else if (protocol.type === 'xray')      await removeXrayClient(server, protocol, client.peer_id);
+      else if (protocol.type === 'wireguard') await removeWireGuardClient(server, protocol, client.peer_id);
+      else if (protocol.type === 'mtproxy')   await removeMtproxyClient(server, protocol, client.peer_id);
+      else if (protocol.type === 'telemt')    await removeTelemtClient(server, protocol, client.peer_id);
+    } catch (e) {
+      logger.error({ err: e }, 'Failed to revoke client on server');
+      return res.status(502).json({
+        error: `Не удалось отозвать клиента на сервере: ${(e as Error).message}. Клиент НЕ удалён — повторите, когда сервер будет доступен.`,
+      });
+    }
+  }
+
+  deleteSubscription(req.params.id);
   run('DELETE FROM clients WHERE id = ?', [req.params.id]);
   res.json({ ok: true });
 });
