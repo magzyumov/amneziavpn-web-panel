@@ -422,6 +422,9 @@ cat > /opt/amnezia/xray/server.json <<EOF
 EOF`,
 };
 
+// I1 активен (AWG 3 special junk, DSL). I2-I5 НЕ включаем в шаблон: по умолчанию
+// пустые, а awg setconf падает на строке "I2 =" ("Line unrecognized"). SPECIAL_JUNK_1
+// всегда непустой (DEFAULT_I1). Для кастомных I2-I5 собирать I-блок динамически в awg2.ts.
 export const AWG2_CLIENT_TEMPLATE = `[Interface]
 Address = $WIREGUARD_CLIENT_IP/32
 DNS = $CLIENT_DNS
@@ -439,9 +442,6 @@ H2 = $RESPONSE_PACKET_MAGIC_HEADER
 H3 = $UNDERLOAD_PACKET_MAGIC_HEADER
 H4 = $TRANSPORT_PACKET_MAGIC_HEADER
 I1 = $SPECIAL_JUNK_1
-# I2-I5 не задаём: по умолчанию пустые, а awg setconf падает на строке "I2 =" с
-# "Line unrecognized" (проверено 2026-07-31). SPECIAL_JUNK_1 всегда непустой
-# (DEFAULT_I1). Для кастомных I2-I5 нужно собирать I-блок динамически в awg2.ts.
 
 [Peer]
 PublicKey = $WIREGUARD_SERVER_PUBLIC_KEY
