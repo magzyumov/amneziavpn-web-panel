@@ -328,8 +328,9 @@ H1 = $INIT_PACKET_MAGIC_HEADER
 H2 = $RESPONSE_PACKET_MAGIC_HEADER
 H3 = $UNDERLOAD_PACKET_MAGIC_HEADER
 H4 = $TRANSPORT_PACKET_MAGIC_HEADER
-# I1-I5 (special junk) — значения как в AmneziaVPN; закомментированы, т.к. образ
-# amneziawg-go их пока не поддерживает (как и оригинальный configure_container.sh).
+# I1-I5 (special junk) — образ amneziawg-go их ПОДДЕРЖИВАЕТ (проверено 2026-07-31),
+# но на СЕРВЕРЕ держим закомментированными: I-пакеты — обфускация инициатора, активны
+# в клиентском конфиге (AWG2_CLIENT_TEMPLATE). Так же и в апстрим configure_container.sh.
 # I1 = <r 2><b 0x858000010001000000000669636c6f756403636f6d0000010001c00c000100010000105a00044d583737>
 # I2 =
 # I3 =
@@ -437,11 +438,10 @@ H1 = $INIT_PACKET_MAGIC_HEADER
 H2 = $RESPONSE_PACKET_MAGIC_HEADER
 H3 = $UNDERLOAD_PACKET_MAGIC_HEADER
 H4 = $TRANSPORT_PACKET_MAGIC_HEADER
-# I1 = $SPECIAL_JUNK_1
-# I2 = $SPECIAL_JUNK_2
-# I3 = $SPECIAL_JUNK_3
-# I4 = $SPECIAL_JUNK_4
-# I5 = $SPECIAL_JUNK_5
+I1 = $SPECIAL_JUNK_1
+# I2-I5 не задаём: по умолчанию пустые, а awg setconf падает на строке "I2 =" с
+# "Line unrecognized" (проверено 2026-07-31). SPECIAL_JUNK_1 всегда непустой
+# (DEFAULT_I1). Для кастомных I2-I5 нужно собирать I-блок динамически в awg2.ts.
 
 [Peer]
 PublicKey = $WIREGUARD_SERVER_PUBLIC_KEY

@@ -28,9 +28,10 @@ const INT32_MAX = 2147483647;
 
 // Дефолтный special junk пакет I1 из AmneziaVPN (protocolConstants.h:194) —
 // мимикрирует под DNS-ответ для icloud.com. I2-I5 в апстриме пустые.
-// На текущем образе amneziawg-go I-пакеты не поддерживаются, поэтому в конфигах
-// они закомментированы (как и в оригинальном configure_container.sh), но значения
-// храним один-в-один с апстримом для записи в client-config.
+// Образ amneziawg-go I-пакеты ПОДДЕРЖИВАЕТ (проверено 2026-07-31): I1 активен в
+// клиентском конфиге (AWG2_CLIENT_TEMPLATE). I2-I5 остаются пустыми/закомментированными,
+// т.к. awg setconf падает на пустой строке "I2 =". Серверный awg0.conf I не задаёт
+// (обфускация инициатора). Значения храним один-в-один с апстримом.
 const DEFAULT_I1 = '<r 2><b 0x858000010001000000000669636c6f756403636f6d0000010001c00c000100010000105a00044d583737>';
 
 // Дефолтные magic headers AmneziaVPN — используются как fallback для старых
@@ -224,6 +225,12 @@ export async function addAWG2Client(server: Server, protocol: Protocol, _clientN
   await execSudo(server, `echo '${awgPeerEntry}' | base64 -d | docker exec -i ${cn} tee -a /opt/amnezia/awg/awg0.conf > /dev/null`);
 
   const clientDns = await resolveClientDns(server);
+
+  // I1 активен в клиентском шаблоне и должен быть валидным DSL-пакетом (<r N>/<b 0x..>).
+  // Legacy-инсталляции (до парити) хранят i1 как случайный uint32 — это не I-пакет,
+  // а мусор; для них подставляем корректный DEFAULT_I1 (мимикрия под icloud DNS).
+  const i1 = (typeof c.i1 === 'string' && c.i1.trimStart().startsWith('<')) ? c.i1 : DEFAULT_I1;
+
   const templateVars: Record<string, string | number> = {
     WIREGUARD_CLIENT_IP: clientIp,
     CLIENT_DNS: clientDns,
@@ -240,7 +247,7 @@ export async function addAWG2Client(server: Server, protocol: Protocol, _clientN
     RESPONSE_PACKET_MAGIC_HEADER: c.h2 ?? DEFAULT_H.h2,
     UNDERLOAD_PACKET_MAGIC_HEADER: c.h3 ?? DEFAULT_H.h3,
     TRANSPORT_PACKET_MAGIC_HEADER: c.h4 ?? DEFAULT_H.h4,
-    SPECIAL_JUNK_1: c.i1 ?? DEFAULT_I1,
+    SPECIAL_JUNK_1: i1,
     SPECIAL_JUNK_2: c.i2 ?? '',
     SPECIAL_JUNK_3: c.i3 ?? '',
     SPECIAL_JUNK_4: c.i4 ?? '',
