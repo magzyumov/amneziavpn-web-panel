@@ -302,16 +302,6 @@ POST   /api/subscriptions/settings         — сохранить хост дл�
 
 ---
 
-## Планы
-
-- [ ] Shadowsocks
-- [ ] OpenVPN over Cloak
-- [ ] IKEv2/IPSec
-- [ ] Изменение параметров обфускации без переустановки протокола
-- [ ] TLS для самой панели «из коробки»
-
----
-
 ## Благодарности
 
 Проект опирается на работу команды [AmneziaVPN](https://github.com/amnezia-vpn):
