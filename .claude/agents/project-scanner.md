@@ -57,6 +57,21 @@ grep -n "axios\|api\.\(get\|post\|put\|delete\)\|baseURL" frontend/src/api.ts | 
 
 Read: `frontend/src/App.tsx` (routes), `frontend/src/api.ts` (backend calls).
 
+### 3.5 Pinned base images
+
+Версии баз и теги образов — единственный рычаг против молчаливого дрейфа
+(`amneziavpn/amneziawg-go:latest` однажды уехал с 0.2.19 на 3.0.3 и оставил
+AWG2 на устаревшем демоне).
+
+```bash
+grep -n "FROM " backend/src/services/protocols/dockerfiles.ts
+grep -rn "imageName = " backend/src/services/protocols/*.ts
+```
+
+Записывай ровно то, что прибито в шаблоне. Это «как задумано»; что реально
+крутится на сервере — отдельный вопрос, его решает агент `drift`-проверки в
+рантайме (`services/protocols/drift.ts`), а не сканер.
+
 ### 4. Infra / deploy
 
 ```bash
@@ -102,6 +117,11 @@ _Scan: .claude/agents/project-scanner_
 | Protocol | File | install / addClient notes |
 |---|---|---|
 | wireguard | wireguard.ts | … |
+### Pinned images (как ЗАДУМАНО, не как развёрнуто)
+| Протокол | FROM в dockerfiles.ts | Тег собираемого образа |
+|---|---|---|
+| awg2 | amneziavpn/amneziawg-go:3.0.3 | amnezia-awg2:3.0.3 |
+_Пометить `:latest`, если встретится: апстрим может молча сменить версию демона._
 ### Data
 - DB: {sqlite via better-sqlite3, path /data/panel.db}; tables: {…}
 - Secrets: {encrypted with PANEL_ENCRYPTION_KEY in services/crypto.ts}
