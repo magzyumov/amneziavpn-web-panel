@@ -79,12 +79,12 @@ export default function EditServerModal({ server, onClose, onSaved }: Props) {
           {form.auth_type === 'password' ? (
             <div className="input-group">
               <label className="input-label">Password <span className="text-muted">(оставьте пустым чтобы не менять)</span></label>
-              <input className="input" type="password" placeholder="••••••••" value={form.password} onChange={e => set('password', e.target.value)} />
+              <input className="input" type="password" placeholder="оставьте пустым, чтобы не менять" value={form.password} onChange={e => set('password', e.target.value)} />
             </div>
           ) : (
             <div className="input-group">
               <label className="input-label">Private Key (PEM) <span className="text-muted">(оставьте пустым чтобы не менять)</span></label>
-              <textarea className="input input-mono" rows={5} placeholder="-----BEGIN RSA PRIVATE KEY-----" value={form.private_key} onChange={e => set('private_key', e.target.value)} />
+              <textarea className="input input-mono" rows={5} placeholder="оставьте пустым, чтобы не менять" value={form.private_key} onChange={e => set('private_key', e.target.value)} />
             </div>
           )}
         </div>

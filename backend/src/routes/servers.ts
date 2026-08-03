@@ -59,10 +59,20 @@ router.put('/:id', validateBody(serverSchema), (req: Request, res: Response) => 
   if (!server) return res.status(404).json({ error: 'Server not found' });
 
   const { name, host, port, username, auth_type, password, private_key } = req.body;
+
+  // Пустое поле = «не менять». Форма редактирования НИКОГДА не подставляет
+  // текущий секрет в input (его незачем отдавать в браузер), поэтому раньше
+  // сохранение с нетронутым полем пароля затирало креды: панель мгновенно
+  // теряла доступ к серверу, а причина выглядела как «SSH перестал пускать».
+  const keep = (incoming: unknown, current: string | null | undefined): string | null =>
+    typeof incoming === 'string' && incoming.length > 0
+      ? (encrypt(incoming) ?? null)
+      : (current ?? null);
+
   run(
     'UPDATE servers SET name=?, host=?, port=?, username=?, auth_type=?, password=?, private_key=? WHERE id=?',
     [name, host, port ?? server.port, username, auth_type ?? server.auth_type,
-     encrypt(password) || null, encrypt(private_key) || null, req.params.id]
+     keep(password, server.password), keep(private_key, server.private_key), req.params.id]
   );
 
   // Сбрасываем SSH-соединение чтобы подключиться с новыми данными
