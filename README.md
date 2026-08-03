@@ -27,7 +27,7 @@ VPN-протоколы на ваших VPS по SSH, выпускает клие
 
 - **Несколько серверов** в одной панели. SSH по паролю или ключу, креды шифруются AES-256-GCM.
 - **Установка протоколов в один клик** — панель сама поставит Docker, подготовит хост и соберёт образы на VPS.
-- **Импорт того, что уже стоит**: сканирует сервер, находит развёрнутые контейнеры Amnezia и подхватывает их вместе с клиентами.
+- **Импорт того, что уже стоит**: сканирует сервер, находит развёрнутые контейнеры (AmneziaWG, WireGuard, Xray, Telemt) и подхватывает их вместе с клиентами.
 - **Клиентские конфиги** — файл, `vpn://`-ссылка, QR (включая нативный многокадровый QR Amnezia), `tg://proxy` для Telegram.
 - **Подписки Clash/FLClash** для Xray-клиентов: публичный URL с криптостойким slug и настраиваемым YAML-шаблоном.
 - **Статистика по клиентам** — принято/отправлено за период, онлайн-статус, графики скорости. Без логирования того, куда ходит пользователь.
@@ -71,8 +71,12 @@ docker compose up -d --build
 Образы собираются прямо на VPS из Dockerfile'ов, которые генерирует backend
 (`backend/src/services/protocols/dockerfiles.ts`). Версии базовых образов
 **прибиты**: обновление upstream не может молча подменить версию демона под
-работающими клиентами. Если шаблон изменился, панель это заметит по отпечатку
-Dockerfile и пересоберёт образ сама.
+работающими клиентами.
+
+Образ и контейнер помечаются отпечатками шаблона и аргументов запуска. Если код
+уехал вперёд, панель пересоберёт образ при следующей установке, а на карточке
+протокола покажет **⟳ устарел** — значит на сервере работает не то, что описано
+в репозитории, и протокол стоит переустановить.
 
 ### Про AmneziaWG 3.0
 
@@ -186,7 +190,7 @@ amneziavpn-web-panel/
 │       │   ├── clients.ts          — create / qr / config / stats
 │       │   └── subscriptions.ts    — Clash-подписки + публичный /sub/:slug
 │       └── services/
-│           ├── db.ts               — sql.js + дебаунс-снимки на диск
+│           ├── db.ts               — better-sqlite3 (WAL), схема и миграции
 │           ├── crypto.ts           — AES-256-GCM для SSH-кредов
 │           ├── ssh.ts              — пул соединений node-ssh + keepalive
 │           ├── shell.ts            — sh()/shInt()/assert* для безопасной интерполяции
@@ -203,7 +207,9 @@ amneziavpn-web-panel/
 │               ├── containers.ts   — docker lifecycle + scanExistingProtocols
 │               ├── dockerfiles.ts  — шаблоны Dockerfile'ов и скриптов
 │               ├── stats.ts        — снятие per-peer счётчиков
+│               ├── drift.ts        — расхождение работающих контейнеров с кодом
 │               ├── dns.ts          — AmneziaDNS
+│               ├── wgCommon.ts     — общая механика WireGuard и AmneziaWG
 │               ├── awg2.ts         — AmneziaWG (install + клиенты)
 │               ├── wireguard.ts    — WireGuard
 │               ├── xray.ts         — Xray VLESS Reality
@@ -255,7 +261,8 @@ DELETE /api/servers/:id/dns               — удалить
 ```
 GET    /api/protocols                          — каталог протоколов
 GET    /api/protocols/server/:serverId         — установленные на сервере
-GET    /api/protocols/server/:serverId/health  — реальные статусы (одним SSH-вызовом)
+GET    /api/protocols/server/:serverId/health  — { statuses, drift }: статусы контейнеров
+                                                 одним SSH-вызовом + расхождение с кодом
 POST   /api/protocols/server/:serverId         — установить { type, options }
 DELETE /api/protocols/:id                      — удалить протокол, контейнер и клиентов
 POST   /api/protocols/:id/start                — запустить
