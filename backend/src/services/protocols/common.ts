@@ -93,6 +93,23 @@ export async function buildImage(server: Server, imageName: string, buildDir: st
   }
 }
 
+// Метка с отпечатком аргументов docker run. Образ мы пересобираем по изменению
+// Dockerfile, но сам контейнер после этого остаётся запущенным со СТАРЫМИ флагами:
+// поменяли проброс порта, capability или том — работающий контейнер об этом не
+// узнает, и расхождение ничем себя не проявит. Метка позволяет это заметить.
+export const RUN_ARGS_LABEL = 'panel.run-sha';
+
+export function runArgsSha(args: readonly string[]): string {
+  return createHash('sha256').update(args.join('\n')).digest('hex').slice(0, 16);
+}
+
+// Запускает контейнер, проставляя метку с отпечатком аргументов.
+// args — без `docker run -d`: он добавляется здесь вместе с меткой.
+export async function runContainer(server: Server, args: readonly string[]) {
+  const cmd = ['docker run -d', `--label ${RUN_ARGS_LABEL}=${runArgsSha(args)}`, ...args];
+  return execSudo(server, cmd.join(' \\\n  '));
+}
+
 export function renderTemplate(template: string, vars: Record<string, string | number>): string {
   return Object.entries(vars).reduce((str, [k, v]) =>
     str.replaceAll(`$${k}`, String(v)), template);

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { renderTemplate, removePeerBlock } from './common.js';
+import { renderTemplate, removePeerBlock, runArgsSha } from './common.js';
 
 describe('renderTemplate', () => {
   it('подставляет значения по плейсхолдерам', () => {
@@ -69,5 +69,24 @@ describe('removePeerBlock', () => {
     const out = removePeerBlock(single, 'AAA');
     expect(out).toContain('[Interface]');
     expect(out).not.toContain('[Peer]');
+  });
+});
+
+describe('runArgsSha', () => {
+  const args = ['--restart always', '-p 51820:51820/udp', 'amnezia-awg2:3.0.3'];
+
+  it('стабилен для одних и тех же аргументов', () => {
+    expect(runArgsSha(args)).toBe(runArgsSha([...args]));
+  });
+
+  // Ради этого отпечаток и нужен: поменяли флаг в коде — работающий контейнер
+  // остаётся со старыми аргументами, и это должно стать заметно.
+  it('меняется при изменении любого аргумента', () => {
+    expect(runArgsSha(args)).not.toBe(runArgsSha([...args.slice(0, 1), '-p 443:443/udp', args[2]]));
+    expect(runArgsSha(args)).not.toBe(runArgsSha([...args, '--cap-add=NET_ADMIN']));
+  });
+
+  it('чувствителен к порядку аргументов', () => {
+    expect(runArgsSha(args)).not.toBe(runArgsSha([args[1], args[0], args[2]]));
   });
 });

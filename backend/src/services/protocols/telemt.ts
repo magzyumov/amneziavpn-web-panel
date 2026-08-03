@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { exec, execSudo } from '../ssh.js';
 import { assertContainerName, assertPort, assertDomain, sh } from '../shell.js';
-import { randPort, writeRemoteFile, buildImage, renderTemplate, assertPortFree } from './common.js';
+import { randPort, writeRemoteFile, buildImage, renderTemplate, assertPortFree, runContainer } from './common.js';
 import { DOCKERFILES, START_SCRIPTS, TELEMT_BASE_CONFIG_TEMPLATE } from './dockerfiles.js';
 import type { Server, Protocol, AddClientResult, InstallResult, TelemtConfig } from '../../types.js';
 import { UserError } from '../errors.js';
@@ -19,12 +19,26 @@ function buildMtprotoLink(host: string, port: number, secret: string, tlsDomain:
   return `https://t.me/proxy?server=${host}&port=${port}&secret=${linkSecret}`;
 }
 
+export const TELEMT_CONTAINER = 'amnezia-telemt';
+export const TELEMT_IMAGE = 'amnezia-telemt:latest';
+
+export function telemtRunArgs(port: number): string[] {
+  return [
+    `--name ${TELEMT_CONTAINER}`,
+    `--restart always`,
+    `--log-driver none`,
+    `-v /opt/amnezia:/opt/amnezia`,
+    `-p ${port}:${port}/tcp`,
+    TELEMT_IMAGE,
+  ];
+}
+
 export async function installTelemt(server: Server, options: TelemtInstallOptions = {}): Promise<InstallResult> {
   const port = assertPort(options.port || randPort());
   // Telemt всегда работает в FakeTLS-режиме — домен обязателен.
   const tlsDomain = assertDomain(options.tlsDomain || 'www.google.com');
-  const containerName = 'amnezia-telemt';
-  const imageName = 'amnezia-telemt:latest';
+  const containerName = TELEMT_CONTAINER;
+  const imageName = TELEMT_IMAGE;
   const buildDir = '/opt/amnezia/amnezia-telemt';
 
   // Освобождаем порт от своего старого контейнера (переустановка), затем проверяем,
@@ -46,15 +60,7 @@ export async function installTelemt(server: Server, options: TelemtInstallOption
   await execSudo(server, `chmod +x /opt/amnezia/telemt/start.sh`);
   await execSudo(server, `touch /opt/amnezia/telemt/users`);
 
-  await execSudo(server, [
-    `docker run -d`,
-    `--name ${containerName}`,
-    `--restart always`,
-    `--log-driver none`,
-    `-v /opt/amnezia:/opt/amnezia`,
-    `-p ${port}:${port}/tcp`,
-    imageName,
-  ].join(' \\\n  '));
+  await runContainer(server, telemtRunArgs(port));
 
   const config: TelemtConfig = { port, tlsDomain };
   return { containerName, port, config };

@@ -1,7 +1,8 @@
 import { exec, execSudo } from '../ssh.js';
 import { assertContainerName, assertDomain, assertPort, assertXrayPath, assertXhttpMode, sh } from '../shell.js';
 import {
-  writeRemoteFile, readRemoteFile, readContainerFile, buildImage, renderTemplate, assertPortFree,
+  writeRemoteFile, readRemoteFile, readContainerFile, buildImage, renderTemplate,
+  assertPortFree, runContainer,
 } from './common.js';
 import { DOCKERFILES, START_SCRIPTS, CONFIGURE_SCRIPTS, XRAY_CLIENT_TEMPLATE } from './dockerfiles.js';
 import type { Server, Protocol, AddClientResult, InstallResult, XrayConfig } from '../../types.js';
@@ -51,6 +52,24 @@ function transportFromConfig(c: any, sni: string): XrayTransport {
   return { transport: 'tcp', xhttpHost: '', xhttpPath: '', xhttpMode: '' };
 }
 
+export const XRAY_CONTAINER = 'amnezia-xray';
+export const XRAY_IMAGE = 'amnezia-xray:latest';
+
+// Аргументы docker run — отдельно, чтобы проверка дрейфа могла пересчитать
+// ожидаемый отпечаток для уже запущенного контейнера.
+export function xrayRunArgs(port: number): string[] {
+  return [
+    `--name ${XRAY_CONTAINER}`,
+    `--restart always`,
+    `--privileged`,
+    `--log-driver none`,
+    `--cap-add NET_ADMIN`,
+    `-v /opt/amnezia:/opt/amnezia`,
+    `-p ${port}:${port}/tcp`,
+    XRAY_IMAGE,
+  ];
+}
+
 export async function installXray(server: Server, options: XrayInstallOptions = {}): Promise<InstallResult> {
   const port = assertPort(options.port ?? 443);
   const sni  = assertDomain(options.sni ?? 'www.googletagmanager.com');
@@ -66,9 +85,8 @@ export async function installXray(server: Server, options: XrayInstallOptions = 
       }
     : { transport, xhttpHost: '', xhttpPath: '', xhttpMode: '' };
   const streamVars = xrayStreamVars(tvars);
-
-  const containerName = 'amnezia-xray';
-  const imageName = 'amnezia-xray:latest';
+  const containerName = XRAY_CONTAINER;
+  const imageName = XRAY_IMAGE;
   const buildDir = '/opt/amnezia/amnezia-xray';
 
   // Освобождаем порт от своего старого контейнера (переустановка), затем проверяем,
@@ -82,17 +100,7 @@ export async function installXray(server: Server, options: XrayInstallOptions = 
   await writeRemoteFile(server, `/opt/amnezia/xray/start.sh`, START_SCRIPTS.xray(port, server.host));
   await execSudo(server, `chmod +x /opt/amnezia/xray/start.sh`);
 
-  await execSudo(server, [
-    `docker run -d`,
-    `--name ${containerName}`,
-    `--restart always`,
-    `--privileged`,
-    `--log-driver none`,
-    `--cap-add NET_ADMIN`,
-    `-v /opt/amnezia:/opt/amnezia`,
-    `-p ${port}:${port}/tcp`,
-    imageName,
-  ].join(' \\\n  '));
+  await runContainer(server, xrayRunArgs(port));
   await execSudo(server, `docker network connect amnezia-dns-net ${containerName}`);
   await execSudo(server, `docker exec -i ${containerName} bash -c 'mkdir -p /dev/net; if [ ! -c /dev/net/tun ]; then mknod /dev/net/tun c 10 200; fi'`);
 

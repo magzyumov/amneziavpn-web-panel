@@ -3,6 +3,7 @@ import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import {
   clientsApi, protocolsApi, type ClientRecord, type ProtocolRecord, type ServerRecord,
+  type ProtocolDrift,
 } from '../../api';
 import AddClientModal from './AddClientModal';
 import ClientModal from './ClientModal';
@@ -14,11 +15,13 @@ interface ProtocolCardProps {
   protocol: ProtocolRecord;
   server: ServerRecord;
   onDelete: (id: string) => void;
+  /** Расхождение с тем, что панель поставила бы сейчас (приходит из health). */
+  drift?: ProtocolDrift;
   dragHandleProps?: Record<string, any>;
 }
 
 
-function ProtocolCard({ protocol, server: _server, onDelete, dragHandleProps }: ProtocolCardProps) {
+function ProtocolCard({ protocol, server: _server, onDelete, drift, dragHandleProps }: ProtocolCardProps) {
   const [clients, setClients] = useState<ClientRecord[]>([]);
   const [loadingClients, setLoadingClients] = useState(true);
   const [showAddClient, setShowAddClient] = useState(false);
@@ -30,6 +33,7 @@ function ProtocolCard({ protocol, server: _server, onDelete, dragHandleProps }: 
   useEffect(() => { setStatus(protocol.status); }, [protocol.status]);
 
   const title = protocolTitle(protocol);
+
   const [showLogs, setShowLogs] = useState(false);
   const [logs, setLogs] = useState('');
   const [showClients, setShowClients] = useState(false);
@@ -90,6 +94,13 @@ function ProtocolCard({ protocol, server: _server, onDelete, dragHandleProps }: 
     setClients(c => c.filter(x => x.id !== id));
   };
 
+  // Образ или контейнер разошлись с тем, что описано в коде сейчас. Это не сбой:
+  // всё работает, просто изменения из репозитория до сервера ещё не доехали.
+  const driftReason = !drift ? '' : [
+    drift.image   ? 'Образ собран из устаревшего Dockerfile.' : '',
+    drift.runArgs ? 'Контейнер запущен со старыми аргументами docker run.' : '',
+  ].filter(Boolean).join(' ');
+
   const cfg: Record<string, unknown> | null = typeof protocol.config === 'string'
     ? JSON.parse(protocol.config)
     : (protocol.config as Record<string, unknown> | null);
@@ -124,6 +135,13 @@ function ProtocolCard({ protocol, server: _server, onDelete, dragHandleProps }: 
           </div>
         </div>
         <div className="flex gap-8 items-center proto-card-actions">
+          {driftReason && (
+            <span
+              className="badge badge-stopped"
+              title={`${driftReason} Протокол работает, но собран не по текущему коду — переустановите, чтобы применить изменения.`}
+              style={{ cursor: 'help' }}
+            >⟳ устарел</span>
+          )}
           <span className={`badge badge-${status === 'running' ? 'running' : 'stopped'}`}>
             {status}
           </span>

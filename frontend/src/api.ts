@@ -43,6 +43,17 @@ export interface ServerRecord {
   created_at?: string;
 }
 
+// Расхождение установленного на сервере с тем, что панель поставила бы сейчас.
+export interface ProtocolDrift {
+  image: boolean;    // образ собран из другого Dockerfile
+  runArgs: boolean;  // контейнер запущен с другими аргументами docker run
+}
+
+export interface HealthResponse {
+  statuses: Record<string, string>;
+  drift: Record<string, ProtocolDrift>;
+}
+
 export interface ProtocolRecord {
   id: string;
   server_id: string;
@@ -92,7 +103,7 @@ export const protocolsApi = {
   start: (id: string) => api.post(`/protocols/${id}/start`),
   stop: (id: string) => api.post(`/protocols/${id}/stop`),
   status: (id: string) => api.get(`/protocols/${id}/status`),
-  health: (serverId: string) => api.get<Record<string, string>>(`/protocols/server/${serverId}/health`),
+  health: (serverId: string) => api.get<HealthResponse>(`/protocols/server/${serverId}/health`),
   logs: (id: string, lines: number) => api.get<{ logs: string }>(`/protocols/${id}/logs`, { params: { lines } }),
   statsStatus: (id: string) => api.get<{ statsEnabled: boolean }>(`/protocols/${id}/stats-status`),
   enableStats: (id: string) => api.post(`/protocols/${id}/enable-stats`),

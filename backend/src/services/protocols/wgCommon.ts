@@ -13,7 +13,7 @@
 import { exec, execSudo } from '../ssh.js';
 import { sh } from '../shell.js';
 import {
-  writeRemoteFile, readRemoteFile, buildImage, assertPortFree, removePeerBlock,
+  writeRemoteFile, readRemoteFile, buildImage, assertPortFree, removePeerBlock, runContainer,
 } from './common.js';
 import { UserError } from '../errors.js';
 import type { Server } from '../../types.js';
@@ -33,6 +33,24 @@ export interface WgFlavor {
 }
 
 export const confPath = (f: WgFlavor): string => `${f.confDir}/${f.iface}.conf`;
+
+// Аргументы docker run. Вынесены отдельно, чтобы проверка дрейфа могла
+// пересчитать ожидаемый отпечаток для уже запущенного контейнера.
+export function wgRunArgs(f: WgFlavor, port: number): string[] {
+  return [
+    `--log-driver none`,
+    `--restart always`,
+    `--privileged`,
+    `--cap-add=NET_ADMIN`,
+    `--cap-add=SYS_MODULE`,
+    `-p ${port}:${port}/udp`,
+    `-v /lib/modules:/lib/modules`,
+    `-v /opt/amnezia:/opt/amnezia`,
+    `--sysctl="net.ipv4.conf.all.src_valid_mark=1"`,
+    `--name ${f.containerName}`,
+    f.imageName,
+  ];
+}
 
 interface InstallArgs {
   port: number;
@@ -65,20 +83,7 @@ export async function installWgLike(server: Server, f: WgFlavor, args: InstallAr
   await writeRemoteFile(server, `${f.confDir}/start.sh`, args.startScript);
   await execSudo(server, `chmod +x ${f.confDir}/start.sh`);
 
-  await execSudo(server, [
-    `docker run -d`,
-    `--log-driver none`,
-    `--restart always`,
-    `--privileged`,
-    `--cap-add=NET_ADMIN`,
-    `--cap-add=SYS_MODULE`,
-    `-p ${args.port}:${args.port}/udp`,
-    `-v /lib/modules:/lib/modules`,
-    `-v /opt/amnezia:/opt/amnezia`,
-    `--sysctl="net.ipv4.conf.all.src_valid_mark=1"`,
-    `--name ${f.containerName}`,
-    f.imageName,
-  ].join(' \\\n  '));
+  await runContainer(server, wgRunArgs(f, args.port));
   await execSudo(server, `docker network connect amnezia-dns-net ${f.containerName}`);
 
   const configureScript = typeof args.configureScript === 'string'
