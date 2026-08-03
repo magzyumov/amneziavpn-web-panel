@@ -91,7 +91,7 @@ export interface ScannedProtocol {
   clients: ScannedClient[];
 }
 
-// Сканирует /opt/amnezia/<proto>/* контейнеров AWG/WG/Xray и восстанавливает их конфиг.
+// Сканирует /opt/amnezia/<proto>/* контейнеров AWG/WG/Xray/Telemt и восстанавливает их конфиг.
 export async function scanExistingProtocols(server: Server): Promise<ScannedProtocol[]> {
   const found: ScannedProtocol[] = [];
 
@@ -99,6 +99,7 @@ export async function scanExistingProtocols(server: Server): Promise<ScannedProt
     { type: 'awg2',      containerName: 'amnezia-awg2',      confDir: '/opt/amnezia/awg' },
     { type: 'wireguard', containerName: 'amnezia-wireguard',  confDir: '/opt/amnezia/wireguard' },
     { type: 'xray',      containerName: 'amnezia-xray',       confDir: '/opt/amnezia/xray' },
+    { type: 'telemt',    containerName: 'amnezia-telemt',     confDir: '/opt/amnezia/telemt' },
   ];
 
   for (const c of candidates) {
@@ -149,6 +150,15 @@ export async function scanExistingProtocols(server: Server): Promise<ScannedProt
       const portMatch = confRaw.match(/ListenPort\s*=\s*(\d+)/);
       port = portMatch ? parseInt(portMatch[1]) : null;
       config = { port, subnetIp: '10.8.1.0', subnetCidr: '24', serverPubKey: pubKey };
+    } else if (c.type === 'telemt') {
+      // Конфиг собирается из config.base.toml (порт и FakeTLS-домен) и файла
+      // users (по строке `c_<12hex> = "<secret>"` на клиента).
+      const baseRaw = await readContainerFile(server, c.containerName, `${c.confDir}/config.base.toml`);
+      if (!baseRaw) continue;
+      const portMatch = baseRaw.match(/^\s*port\s*=\s*(\d+)/m);
+      port = portMatch ? parseInt(portMatch[1]) : null;
+      const domainMatch = baseRaw.match(/^\s*tls_domain\s*=\s*"([^"]*)"/m);
+      config = { port, tlsDomain: domainMatch ? domainMatch[1] : '' };
     } else if (c.type === 'xray') {
       let serverJson: any = null;
       try {
@@ -166,14 +176,25 @@ export async function scanExistingProtocols(server: Server): Promise<ScannedProt
     }
 
     let clients: ScannedClient[] = [];
-    try {
-      const raw = await readContainerFile(server, c.containerName, `${c.confDir}/clientsTable`);
-      const table: Array<{ clientId: string; userData?: { clientName?: string } }> = JSON.parse(raw);
-      clients = table.map(e => ({
-        clientId: e.clientId,
-        name: e.userData?.clientName || `client-${String(e.clientId).slice(0, 8)}`,
-      }));
-    } catch { /* ignore */ }
+    if (c.type === 'telemt') {
+      // У Telemt нет clientsTable: пользователи лежат в файле users строками
+      // `c_<12hex> = "<secret>"`. Имя ключа совпадает с peer_id, по которому
+      // мапится статистика, поэтому берём его как clientId.
+      const usersRaw = await readContainerFile(server, c.containerName, `${c.confDir}/users`);
+      clients = usersRaw.split('\n')
+        .map(l => l.match(/^\s*([A-Za-z0-9_]+)\s*=\s*"/))
+        .filter((m): m is RegExpMatchArray => m !== null)
+        .map(m => ({ clientId: m[1], name: m[1] }));
+    } else {
+      try {
+        const raw = await readContainerFile(server, c.containerName, `${c.confDir}/clientsTable`);
+        const table: Array<{ clientId: string; userData?: { clientName?: string } }> = JSON.parse(raw);
+        clients = table.map(e => ({
+          clientId: e.clientId,
+          name: e.userData?.clientName || `client-${String(e.clientId).slice(0, 8)}`,
+        }));
+      } catch { /* ignore */ }
+    }
 
     found.push({ type: c.type, containerName: c.containerName, status, port, config, clients });
   }
