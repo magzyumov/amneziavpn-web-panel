@@ -28,6 +28,13 @@ function ProtocolCard({ protocol, server: _server, onDelete, dragHandleProps }: 
   const [toggling, setToggling] = useState(false);
 
   useEffect(() => { setStatus(protocol.status); }, [protocol.status]);
+
+  // Контейнер amnezia-awg2 обслуживает и AWG 2.0, и AWG 3.0 (header protection) —
+  // отличить можно только по protocolVersion в конфиге: protocol.name записывается
+  // при установке, и у поставленных раньше инсталляций там осталось старое имя.
+  const title = protocol.type === 'awg2'
+    ? `AmneziaWG ${protocol.config?.protocolVersion === '3' ? '3.0' : '2.0'}`
+    : protocol.name;
   const [showLogs, setShowLogs] = useState(false);
   const [logs, setLogs] = useState('');
   const [showClients, setShowClients] = useState(false);
@@ -103,7 +110,7 @@ function ProtocolCard({ protocol, server: _server, onDelete, dragHandleProps }: 
           >⠿</span>
           <span style={{ fontSize: 20 }}>{ICONS[protocol.type]}</span>
           <div>
-            <div style={{ fontWeight: 600, fontSize: 14 }}>{protocol.name}</div>
+            <div style={{ fontWeight: 600, fontSize: 14 }}>{title}</div>
             <div className="mono text-muted" style={{ fontSize: 11, display: 'flex', alignItems: 'center', gap: 6 }}>
               :{protocol.port} · {protocol.container_name}
               {cfg && (

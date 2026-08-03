@@ -18,7 +18,9 @@ interface FoundProto {
 }
 
 const TYPE_ICONS: Record<string, string> = { awg2: '🛡️', wireguard: '🔒', xray: '⚡' };
-const TYPE_NAMES: Record<string, string> = { awg2: 'AmneziaWG 2.0', wireguard: 'WireGuard', xray: 'Xray VLESS Reality' };
+// awg2 без версии: скан читает конфиг с сервера и заранее не знает, 2.0 там или
+// 3.0 (это видно по protocolVersion уже после импорта — см. ProtocolCard).
+const TYPE_NAMES: Record<string, string> = { awg2: 'AmneziaWG', wireguard: 'WireGuard', xray: 'Xray VLESS Reality' };
 
 export default function ScanProtocolsModal({ serverId, existingProtocols, onClose, onImported }: Props) {
   const [scanning, setScanning] = useState(false);

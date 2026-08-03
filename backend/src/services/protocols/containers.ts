@@ -170,7 +170,11 @@ export async function scanExistingProtocols(server: Server): Promise<ScannedProt
 }
 
 export const PROTOCOLS: Record<ProtocolType, { name: string; description: string; icon: string }> = {
-  awg2:      { name: 'AmneziaWG 2.0',     description: 'WireGuard + расширенная обфускация DPI',  icon: '🛡️' },
+  // Тип протокола остаётся 'awg2', а контейнер — 'amnezia-awg2': это идентификатор
+  // из перечисления DockerContainer самого AmneziaVPN (Awg2), и контейнера
+  // 'amnezia-awg3' у апстрима нет — AWG 3.0 это набор параметров того же контейнера.
+  // Здесь только отображаемое имя.
+  awg2:      { name: 'AmneziaWG 3.0',      description: 'WireGuard + обфускация DPI и защита заголовков', icon: '🛡️' },
   xray:      { name: 'Xray VLESS Reality', description: 'VLESS + Reality — имитирует TLS трафик',  icon: '⚡' },
   wireguard: { name: 'WireGuard',          description: 'Классический WireGuard без обфускации',   icon: '🔒' },
   mtproxy:   { name: 'MTProxy',            description: 'Telegram MTProto-прокси (только Telegram)', icon: '✈️' },
