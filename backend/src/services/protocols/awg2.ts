@@ -60,7 +60,7 @@ const HP_MIN_JUNK = 12;
 // Генерация S1-S4 — копия AwgInstaller::generateAwgParameters: значения уникальны
 // и не дают совпадающих итоговых размеров пакетов. min поднимается до HP_MIN_JUNK,
 // когда включена header protection (AWG 3.0).
-function genPacketSizes(min: number): { s1: number; s2: number; s3: number; s4: number } {
+export function genPacketSizes(min: number): { s1: number; s2: number; s3: number; s4: number } {
   const used = new Set<number>();
   const lo1 = Math.max(15, min), lo3 = Math.max(0, min), lo4 = Math.max(0, min);
   const s1 = randInt(lo1, 149); used.add(s1);
@@ -102,8 +102,10 @@ export async function installAWG2(server: Server, options: InstallOptions = {}):
   // Параметры обфускации AWG 2.0 — дефолты и алгоритм один-в-один с апстримом
   // (AwgInstaller::generateAwgParameters). Все значения валидируем перед
   // интерполяцией в configure-script.
+  // Пустая строка = «поле в форме очищено» = дефолт, а не 0: форма шлёт '' для
+  // не заполненных числовых полей.
   const intOpt = (v: number | undefined, fallback: number, label: string): number =>
-    v == null ? fallback : shInt(v, { min: 0, max: 4294967295, label });
+    v == null || (v as unknown) === '' ? fallback : shInt(v, { min: 0, max: 4294967295, label });
   const jc   = intOpt(options.jc,   randInt(4, 6), 'jc');   // upstream bounded(4,7)
   const jmin = intOpt(options.jmin, 10,            'jmin');
   const jmax = intOpt(options.jmax, 50,            'jmax');

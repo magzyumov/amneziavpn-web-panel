@@ -16,6 +16,13 @@ interface IntOpts { min?: number; max?: number; label?: string }
 // Валидирует целое число в диапазоне. Возвращает число (готовое для интерполяции без кавычек).
 export function shInt(value: unknown, opts: IntOpts = {}): number {
   const { min = -Infinity, max = Infinity, label = 'value' } = opts;
+  // Number('') и Number(null) дают 0 — из-за этого очищенное поле в форме
+  // установки молча превращалось в «0» вместо дефолта (Jc = 0 и т.п.).
+  // Пустые значения не число: пусть вызывающий сам решает, что считать дефолтом.
+  if (value === null || value === undefined || typeof value === 'boolean'
+      || (typeof value === 'string' && value.trim() === '')) {
+    throw new UserError(`Invalid ${label}: expected integer in [${min}, ${max}], got ${JSON.stringify(value)}`);
+  }
   const n = Number(value);
   if (!Number.isInteger(n) || n < min || n > max) {
     throw new UserError(`Invalid ${label}: expected integer in [${min}, ${max}], got ${value}`);
