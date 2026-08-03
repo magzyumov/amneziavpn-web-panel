@@ -1,3 +1,4 @@
+import { createHash } from 'crypto';
 import { exec, execSudo } from '../ssh.js';
 import type { Server } from '../../types.js';
 
@@ -66,11 +67,26 @@ export async function imageExists(server: Server, imageName: string): Promise<bo
   return res.stdout.trim() === 'exists';
 }
 
+// Метка с отпечатком Dockerfile, по которой buildImage понимает, что образ на
+// сервере собран из УСТАРЕВШЕГО шаблона.
+const DOCKERFILE_LABEL = 'panel.dockerfile-sha';
+
 export async function buildImage(server: Server, imageName: string, buildDir: string, dockerfile: string): Promise<void> {
-  if (await imageExists(server, imageName)) return;
+  // Раньше проверка была «образ с таким именем есть → ничего не делаем», и правки
+  // шаблонов не доезжали до серверов, где образ уже собран. Так у amnezia-wireguard
+  // на месяцы залип ENTRYPOINT на общий /opt/amnezia/start.sh (до перехода на
+  // per-protocol start.sh): контейнер стартовал чужой скрипт, wg0 не поднимался,
+  // и добавление клиента падало с "Unable to modify interface: No such device".
+  // Теперь образ переиспользуется, только если собран ровно из этого Dockerfile.
+  const sha = createHash('sha256').update(dockerfile).digest('hex').slice(0, 16);
+  const labelRes = await exec(server,
+    `docker image inspect ${imageName} --format='{{index .Config.Labels "${DOCKERFILE_LABEL}"}}' 2>/dev/null || echo ""`);
+  if (labelRes.stdout.trim() === sha) return;
+
   await execSudo(server, `mkdir -p ${buildDir}`);
   await writeRemoteFile(server, `${buildDir}/Dockerfile`, dockerfile);
-  const res = await execSudo(server, `docker build -t ${imageName} ${buildDir} 2>&1`);
+  const res = await execSudo(server,
+    `docker build --label ${DOCKERFILE_LABEL}=${sha} -t ${imageName} ${buildDir} 2>&1`);
   if (res.code !== 0) {
     throw new Error(`docker build failed:\n${res.stdout.slice(-2000)}`);
   }
