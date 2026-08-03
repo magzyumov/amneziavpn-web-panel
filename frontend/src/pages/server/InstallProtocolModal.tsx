@@ -1,7 +1,6 @@
 import { useState, useEffect } from 'react';
 import { protocolsApi } from '../../api';
-
-type ProtocolType = 'awg2' | 'wireguard' | 'xray' | 'mtproxy' | 'telemt';
+import { PROTOCOL_ICONS, PROTOCOL_NAMES, type ProtocolType } from '../../protocols';
 
 interface Props {
   serverId: string;
@@ -74,11 +73,9 @@ export default function InstallProtocolModal({ serverId, onClose, onInstalled }:
         <div className="input-group" style={{ marginBottom: 16 }}>
           <label className="input-label">Protocol</label>
           <select className="input" value={type} onChange={e => setType(e.target.value as ProtocolType)}>
-            <option value="awg2">🛡️ AmneziaWG 3.0</option>
-            <option value="xray">⚡ Xray VLESS Reality</option>
-            <option value="wireguard">🔒 WireGuard</option>
-            <option value="mtproxy">✈️ MTProxy (Telegram)</option>
-            <option value="telemt">📨 Telemt (Telegram)</option>
+            {(Object.keys(PROTOCOL_NAMES) as ProtocolType[]).map(t => (
+              <option key={t} value={t}>{PROTOCOL_ICONS[t]} {PROTOCOL_NAMES[t]}</option>
+            ))}
           </select>
         </div>
 

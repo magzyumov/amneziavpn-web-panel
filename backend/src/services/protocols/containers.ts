@@ -129,6 +129,17 @@ export async function scanExistingProtocols(server: Server): Promise<ScannedProt
         h1: getConf('H1'), h2: getConf('H2'), h3: getConf('H3'), h4: getConf('H4'),
         i1: getConf('I1') ?? '', i2: getConf('I2') ?? '', i3: getConf('I3') ?? '',
         i4: getConf('I4') ?? '', i5: getConf('I5') ?? '',
+        // AWG 3.0 — восстанавливаем те же поля, что пишет installAWG2. Без этого
+        // клиенты, выпущенные после импорта, теряли бы header protection (сервер
+        // её требует) и не подключались.
+        headerProtectionKey: getConf('HeaderProtectionKey') ?? '',
+        contentPaddingAddition: getConf('ContentPaddingAddition') ?? '',
+        rekeyAfterTime: getConf('RekeyAfterTime') ?? '',
+        rekeyTimeout: getConf('RekeyTimeout') ?? '',
+        rejectAfterTime: getConf('RejectAfterTime') ?? '',
+        keepaliveTimeout: getConf('KeepaliveTimeout') ?? '',
+        maxHandshakeAttempts: getConf('MaxHandshakeAttempts') ?? '',
+        protocolVersion: getConf('HeaderProtectionKey') ? '3' : '2',
       };
     } else if (c.type === 'wireguard') {
       const pubKey  = await readContainerFile(server, c.containerName, `${c.confDir}/wireguard_server_public_key.key`);

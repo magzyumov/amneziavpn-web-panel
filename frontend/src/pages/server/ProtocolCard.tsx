@@ -8,6 +8,7 @@ import AddClientModal from './AddClientModal';
 import ClientModal from './ClientModal';
 import StatsModal from './StatsModal';
 import CopySubButton from './CopySubButton';
+import { PROTOCOL_ICONS, protocolTitle } from '../../protocols';
 
 interface ProtocolCardProps {
   protocol: ProtocolRecord;
@@ -16,7 +17,6 @@ interface ProtocolCardProps {
   dragHandleProps?: Record<string, any>;
 }
 
-const ICONS: Record<ProtocolRecord['type'], string> = { awg2: '🛡️', xray: '⚡', wireguard: '🔒', mtproxy: '✈️', telemt: '📨' };
 
 function ProtocolCard({ protocol, server: _server, onDelete, dragHandleProps }: ProtocolCardProps) {
   const [clients, setClients] = useState<ClientRecord[]>([]);
@@ -29,12 +29,7 @@ function ProtocolCard({ protocol, server: _server, onDelete, dragHandleProps }: 
 
   useEffect(() => { setStatus(protocol.status); }, [protocol.status]);
 
-  // Контейнер amnezia-awg2 обслуживает и AWG 2.0, и AWG 3.0 (header protection) —
-  // отличить можно только по protocolVersion в конфиге: protocol.name записывается
-  // при установке, и у поставленных раньше инсталляций там осталось старое имя.
-  const title = protocol.type === 'awg2'
-    ? `AmneziaWG ${protocol.config?.protocolVersion === '3' ? '3.0' : '2.0'}`
-    : protocol.name;
+  const title = protocolTitle(protocol);
   const [showLogs, setShowLogs] = useState(false);
   const [logs, setLogs] = useState('');
   const [showClients, setShowClients] = useState(false);
@@ -108,7 +103,7 @@ function ProtocolCard({ protocol, server: _server, onDelete, dragHandleProps }: 
             title="Перетащить"
             style={{ cursor: 'grab', color: 'var(--text-muted)', fontSize: 14, lineHeight: 1, userSelect: 'none', touchAction: 'none' }}
           >⠿</span>
-          <span style={{ fontSize: 20 }}>{ICONS[protocol.type]}</span>
+          <span style={{ fontSize: 20 }}>{PROTOCOL_ICONS[protocol.type]}</span>
           <div>
             <div style={{ fontWeight: 600, fontSize: 14 }}>{title}</div>
             <div className="mono text-muted" style={{ fontSize: 11, display: 'flex', alignItems: 'center', gap: 6 }}>

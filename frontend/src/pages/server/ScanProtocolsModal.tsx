@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { serversApi } from '../../api';
+import { PROTOCOL_ICONS, protocolTitle } from '../../protocols';
 
 interface Props {
   serverId: string;
@@ -17,10 +18,6 @@ interface FoundProto {
   clients: Array<{ clientId: string; name: string }>;
 }
 
-const TYPE_ICONS: Record<string, string> = { awg2: '🛡️', wireguard: '🔒', xray: '⚡' };
-// awg2 без версии: скан читает конфиг с сервера и заранее не знает, 2.0 там или
-// 3.0 (это видно по protocolVersion уже после импорта — см. ProtocolCard).
-const TYPE_NAMES: Record<string, string> = { awg2: 'AmneziaWG', wireguard: 'WireGuard', xray: 'Xray VLESS Reality' };
 
 export default function ScanProtocolsModal({ serverId, existingProtocols, onClose, onImported }: Props) {
   const [scanning, setScanning] = useState(false);
@@ -107,7 +104,7 @@ export default function ScanProtocolsModal({ serverId, existingProtocols, onClos
                   }}>
                     <div style={{ flex: 1 }}>
                       <div style={{ fontWeight: 600, fontSize: 14 }}>
-                        {TYPE_ICONS[proto.type]} {TYPE_NAMES[proto.type] || proto.type}
+                        {PROTOCOL_ICONS[proto.type]} {protocolTitle(proto)}
                       </div>
                       <div className="mono text-muted" style={{ fontSize: 11, marginTop: 4 }}>
                         {proto.containerName} · port {proto.port || '?'} · <span style={{

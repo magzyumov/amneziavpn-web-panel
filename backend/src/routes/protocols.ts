@@ -66,9 +66,12 @@ router.post('/server/:serverId', validateBody(installSchema), async (req: Reques
   else                            result = await installWireGuard(server, options);
 
   const id = uuidv4();
+  // name не пишем: это был снимок имени на момент установки, он не обновлялся, и
+  // после переименования протокола карточки показывали устаревшее название.
+  // Заголовок выводится из type + config на фронте (frontend/src/protocols.ts).
   run(
     'INSERT INTO protocols (id, server_id, type, name, container_name, port, config, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-    [id, server.id, type, PROTOCOLS[type]?.name || type, result.containerName, result.port, JSON.stringify(result.config), 'running']
+    [id, server.id, type, null, result.containerName, result.port, JSON.stringify(result.config), 'running']
   );
 
   // Отдаём строку целиком и в том же виде, что и GET /server/:serverId — фронт

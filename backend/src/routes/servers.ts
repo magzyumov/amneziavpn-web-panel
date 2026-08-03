@@ -6,7 +6,7 @@ import { encrypt } from '../services/crypto.js';
 import { authMiddleware } from '../middleware/auth.js';
 import { validateBody } from '../middleware/validate.js';
 import { testConnection, disconnect } from '../services/ssh.js';
-import { listAmneziaContainers, ensureDocker, scanExistingProtocols, installDns, removeDns, isDnsRunning, PROTOCOLS } from '../services/protocols/index.js';
+import { listAmneziaContainers, ensureDocker, scanExistingProtocols, installDns, removeDns, isDnsRunning } from '../services/protocols/index.js';
 import { assertContainerName, assertPort } from '../services/shell.js';
 import { createSubscription, getVpsHost } from '../services/subscription.js';
 import { logger } from '../services/logger.js';
@@ -155,12 +155,12 @@ router.post('/:id/import-protocol', validateBody(importSchema), (req: Request, r
   const existing = queryOne<{ id: string }>('SELECT id FROM protocols WHERE server_id = ? AND container_name = ?', [server.id, containerName]);
   if (existing) return res.status(409).json({ error: 'Protocol already imported', id: existing.id });
 
-  // Имена берём из общего реестра, а не из локальной копии — иначе они разъезжаются
-  // с тем, что показывает установка протокола.
+  // name не пишем — см. комментарий в routes/protocols.ts: заголовок выводится
+  // из type + config, а снимок имени в БД только вносил путаницу.
   const protocolId = uuidv4();
   run(
     'INSERT INTO protocols (id, server_id, type, name, port, container_name, status, config) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-    [protocolId, server.id, type, PROTOCOLS[type]?.name || type, port ?? null, containerName, 'running', JSON.stringify(config || {})]
+    [protocolId, server.id, type, null, port ?? null, containerName, 'running', JSON.stringify(config || {})]
   );
 
   let importedClients = 0;
