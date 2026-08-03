@@ -18,7 +18,6 @@ const DEFAULTS: Record<ProtocolType, Record<string, any>> = {
   awg2:      { port: '', jc: 6, jmin: 10, jmax: 50, s1: 143, s2: 122, s3: 59, s4: 17 },
   xray:      { port: 443, sni: 'www.googletagmanager.com', transport: 'tcp' },
   wireguard: { port: '' },
-  mtproxy:   { port: '', tlsDomain: 'www.google.com' },
   telemt:    { port: '', tlsDomain: 'www.google.com' },
 };
 
@@ -174,12 +173,11 @@ export default function InstallProtocolModal({ serverId, onClose, onInstalled }:
           </div>
         )}
 
-        {(type === 'mtproxy' || type === 'telemt') && (
+        {type === 'telemt' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
             <div className="notice notice-info" style={{ fontSize: 11 }}>
-              {type === 'telemt'
-                ? 'Telegram-прокси с FakeTLS-маскировкой. Проксирует только трафик Telegram. Каждый клиент — отдельный секрет с tg:// ссылкой.'
-                : 'Официальный MTProto-прокси Telegram. Проксирует только трафик Telegram. Каждый клиент — отдельный секрет с tg:// ссылкой.'}
+              Telegram-прокси с FakeTLS-маскировкой. Проксирует только трафик Telegram.
+              Каждый клиент — отдельный секрет с tg:// ссылкой.
             </div>
             <div className="input-group">
               <label className="input-label">TCP Port (пусто = random)</label>
@@ -188,7 +186,7 @@ export default function InstallProtocolModal({ serverId, onClose, onInstalled }:
             </div>
             <div className="input-group">
               <label className="input-label">
-                FakeTLS домен {type === 'mtproxy' ? '(пусто = secure mode)' : '(обязателен)'}
+                FakeTLS домен (обязателен)
               </label>
               <input className="input input-mono" placeholder="www.google.com"
                 value={opts.tlsDomain ?? ''} onChange={e => set('tlsDomain', e.target.value)} />

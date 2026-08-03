@@ -9,7 +9,7 @@ import type { ProtocolRecord } from './api';
 export type ProtocolType = ProtocolRecord['type'];
 
 export const PROTOCOL_ICONS: Record<ProtocolType, string> = {
-  awg2: '🛡️', xray: '⚡', wireguard: '🔒', mtproxy: '✈️', telemt: '📨',
+  awg2: '🛡️', xray: '⚡', wireguard: '🔒', telemt: '📨',
 };
 
 // Имена того, что получаешь при установке СЕЙЧАС. Для awg2 это 3.0 — старые
@@ -18,7 +18,6 @@ export const PROTOCOL_NAMES: Record<ProtocolType, string> = {
   awg2: 'AmneziaWG 3.0',
   xray: 'Xray VLESS Reality',
   wireguard: 'WireGuard',
-  mtproxy: 'MTProxy',
   telemt: 'Telemt',
 };
 

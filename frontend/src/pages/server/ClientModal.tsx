@@ -24,7 +24,7 @@ export default function ClientModal({ client, protocolType, onClose }: Props) {
   const [loadingQr,      setLoadingQr]      = useState(true);
 
   const isXray = protocolType === 'xray';
-  const isProxy = protocolType === 'mtproxy' || protocolType === 'telemt';
+  const isProxy = protocolType === 'telemt';
   const hasAmnezia = protocolType === 'awg2' || protocolType === 'wireguard';
   const hasAmneziaQr = hasAmnezia || isXray;
 

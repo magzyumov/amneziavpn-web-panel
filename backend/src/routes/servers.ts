@@ -26,7 +26,7 @@ const serverSchema = z.object({
 });
 
 const importSchema = z.object({
-  type: z.enum(['awg2', 'wireguard', 'xray', 'mtproxy', 'telemt']),
+  type: z.enum(['awg2', 'wireguard', 'xray', 'telemt']),
   containerName: z.string().min(1).max(128),
   port: z.coerce.number().int().min(1).max(65535).nullable().optional(),
   config: z.record(z.unknown()).optional(),

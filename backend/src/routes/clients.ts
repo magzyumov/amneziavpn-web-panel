@@ -6,8 +6,8 @@ import { query, queryOne, run } from '../services/db.js';
 import { authMiddleware, verifyAuth } from '../middleware/auth.js';
 import { validateBody } from '../middleware/validate.js';
 import {
-  addAWG2Client, addXrayClient, addWireGuardClient, addMtproxyClient, addTelemtClient,
-  removeAWG2Client, removeXrayClient, removeWireGuardClient, removeMtproxyClient, removeTelemtClient,
+  addAWG2Client, addXrayClient, addWireGuardClient, addTelemtClient,
+  removeAWG2Client, removeXrayClient, removeWireGuardClient, removeTelemtClient,
 } from '../services/protocols/index.js';
 import { createSubscription, getVpsHost, deleteSubscription } from '../services/subscription.js';
 import { buildAmneziaExportJson, buildVpnUri, buildChunkedAmneziaQr } from '../services/amneziaExport.js';
@@ -39,7 +39,7 @@ router.get('/:id/config', (req: Request, res: Response) => {
   if (!client) return res.status(404).json({ error: 'Not found' });
   if (!client.config) return res.status(409).json({ error: 'Config unavailable: client was imported from an existing server and the original private key is not stored' });
   const protocol = queryOne<{ type: ProtocolType }>('SELECT type FROM protocols WHERE id = ?', [client.protocol_id]);
-  const ext = (protocol?.type === 'xray' || protocol?.type === 'mtproxy' || protocol?.type === 'telemt') ? 'txt' : 'conf';
+  const ext = (protocol?.type === 'xray' || protocol?.type === 'telemt') ? 'txt' : 'conf';
   const config = client.config.split('\n---AMNEZIA_JSON---\n')[0];
   res.setHeader('Content-Disposition', `attachment; filename="${client.name}.${ext}"`);
   res.setHeader('Content-Type', 'text/plain');
@@ -85,7 +85,6 @@ router.post('/', validateBody(createClientSchema), async (req: Request, res: Res
   if      (protocol.type === 'awg2')      result = await addAWG2Client(server, protocol, safeName);
   else if (protocol.type === 'xray')      result = await addXrayClient(server, protocol, safeName);
   else if (protocol.type === 'wireguard') result = await addWireGuardClient(server, protocol, safeName);
-  else if (protocol.type === 'mtproxy')   result = await addMtproxyClient(server, protocol, safeName);
   else if (protocol.type === 'telemt')    result = await addTelemtClient(server, protocol, safeName);
   else return res.status(400).json({ error: `Unsupported protocol: ${protocol.type}` });
 
@@ -171,7 +170,6 @@ router.delete('/:id', async (req, res) => {
       if      (protocol.type === 'awg2')      await removeAWG2Client(server, protocol, client.peer_id);
       else if (protocol.type === 'xray')      await removeXrayClient(server, protocol, client.peer_id);
       else if (protocol.type === 'wireguard') await removeWireGuardClient(server, protocol, client.peer_id);
-      else if (protocol.type === 'mtproxy')   await removeMtproxyClient(server, protocol, client.peer_id);
       else if (protocol.type === 'telemt')    await removeTelemtClient(server, protocol, client.peer_id);
     } catch (e) {
       logger.error({ err: e }, 'Failed to revoke client on server');

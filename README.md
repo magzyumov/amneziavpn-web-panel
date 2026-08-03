@@ -33,10 +33,9 @@ docker compose up -d --build
 
 | Протокол | Контейнер | Особенности |
 |---|---|---|
-| **AmneziaWG 2.0** (`awg2`) | `amnezia-awg2` (build локально) | WireGuard + расширенная DPI-обфускация (Jc/Jmin/Jmax/S1-S4/H1-H4/I1-I5) |
+| **AmneziaWG 3.0** (`awg2`) | `amnezia-awg2` (build локально) | WireGuard + расширенная DPI-обфускация (Jc/Jmin/Jmax/S1-S4/H1-H4/I1-I5) и защита заголовков (`HeaderProtectionKey`, требует S1-S4 ≥ 12) |
 | **WireGuard** | `amnezia-wireguard` (build локально) | Классический WG без обфускации |
 | **Xray VLESS Reality** | `amnezia-xray` (build локально) | VLESS + Reality, имитирует TLS трафик целевого SNI |
-| **MTProxy** (`mtproxy`) | `amnezia-mtproxy` (build локально) | Официальный MTProto-прокси Telegram. Проксирует только трафик Telegram. FakeTLS (домен) или secure mode (без домена). Каждый клиент — отдельный секрет + `tg://`-ссылка |
 | **Telemt** (`telemt`) | `amnezia-telemt` (build локально) | Telegram-прокси с обязательной FakeTLS-маскировкой. Только трафик Telegram. Per-client секреты + `tg://`-ссылки, есть суммарная статистика трафика |
 
 Docker-образы собираются на VPS из Dockerfile'ов, генерируемых backend'ом (см. `backend/src/services/protocols/dockerfiles.ts`) — это реверс-инжиниринг команд Amnezia Desktop.
@@ -52,11 +51,11 @@ Docker-образы собираются на VPS из Dockerfile'ов, гене
 - Управление контейнерами (start / stop / delete / logs)
 - Сканирование уже установленных Amnezia-протоколов на сервере и импорт их в БД панели
 - Создание клиентов с генерацией конфига, AmneziaVPN-совместимым `vpn://` URI и QR-кодом
-- Telegram-прокси (MTProxy / Telemt): per-client секреты с `tg://proxy`-ссылкой и QR для добавления прокси прямо в Telegram
+- Telegram-прокси (Telemt): per-client секреты с `tg://proxy`-ссылкой и QR для добавления прокси прямо в Telegram
 - Chunked QR-код в нативном формате Amnezia (sscanf через несколько кадров)
 - Clash/FLClash YAML-подписки для Xray-клиентов: публичный URL `/sub/<slug>` с криптостойким slug (192 бита энтропии) и rate-limit
 - Drag-and-drop порядка протокольных карточек, сохраняется в localStorage
-- **Per-client статистика трафика** (AWG/WG/Xray/Telemt): online-статус, last handshake, накопительный rx/tx, графики rate за 1h/24h/7d/30d — без логирования посещаемых сайтов (MTProxy статистику не отдаёт)
+- **Per-client статистика трафика** (AWG/WG/Xray/Telemt): online-статус, last handshake, накопительный rx/tx, графики rate за 1h/24h/7d/30d — без логирования посещаемых сайтов
 
 ---
 
@@ -97,7 +96,6 @@ amnezia-panel/
 │   │   │       ├── awg2.ts         — install + addClient
 │   │   │       ├── wireguard.ts    — install + addClient
 │   │   │       ├── xray.ts         — install + addClient
-│   │   │       ├── mtproxy.ts      — install + addClient (Telegram MTProto-прокси, tg:// link)
 │   │   │       └── telemt.ts       — install + addClient (Telegram FakeTLS-прокси)
 │   │   └── templates/
 │   │       └── clash.yaml          — дефолтный Clash YAML template
@@ -242,7 +240,6 @@ peer-id → client делается через колонку `clients.peer_id`,
 | AmneziaWG / WireGuard | `awg\|wg show <iface> dump` | public key |
 | Xray VLESS Reality | `xray api statsquery -pattern user>>>` через 127.0.0.1:10085 | email (== UUID) |
 | Telemt | локальный JSON-API прокси (`/users`) | username (== секрет клиента); только суммарный трафик (rx), tx=0 |
-| MTProxy | — | статистики нет (официальный mtproto-proxy её не отдаёт) |
 
 **Что в UI:** в строке клиента кнопка **📊 Stats** → модалка:
 - online/offline + last handshake (для Xray синтезируется из дельты трафика)

@@ -3,10 +3,20 @@ import { exec, execSudo } from '../ssh.js';
 import { assertContainerName, assertPort, assertDomain, sh } from '../shell.js';
 import { randPort, writeRemoteFile, buildImage, renderTemplate, assertPortFree } from './common.js';
 import { DOCKERFILES, START_SCRIPTS, TELEMT_BASE_CONFIG_TEMPLATE } from './dockerfiles.js';
-import { buildMtprotoLink } from './mtproxy.js';
 import type { Server, Protocol, AddClientResult, InstallResult, TelemtConfig } from '../../types.js';
 
 interface TelemtInstallOptions { port?: number; tlsDomain?: string }
+
+// Строит ссылку tg://proxy (через https://t.me/proxy — QR-дружелюбно).
+// FakeTLS: ee<secret><domain-hex>. Secure mode: dd<secret>.
+// Жила в mtproxy.ts, переехала сюда вместе с удалением MTProxy — формат ссылки
+// общий для MTProto-прокси, а Telemt теперь единственный его потребитель.
+function buildMtprotoLink(host: string, port: number, secret: string, tlsDomain: string): string {
+  const linkSecret = tlsDomain
+    ? `ee${secret}${Buffer.from(tlsDomain, 'utf8').toString('hex')}`
+    : `dd${secret}`;
+  return `https://t.me/proxy?server=${host}&port=${port}&secret=${linkSecret}`;
+}
 
 export async function installTelemt(server: Server, options: TelemtInstallOptions = {}): Promise<InstallResult> {
   const port = assertPort(options.port || randPort());
