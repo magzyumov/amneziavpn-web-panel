@@ -11,6 +11,7 @@ import { csrfMiddleware } from './middleware/auth.js';
 import { disconnectAll } from './services/ssh.js';
 import { startStatsWorker, stopStatsWorker } from './services/statsWorker.js';
 import { logger } from './services/logger.js';
+import { isUserError } from './services/errors.js';
 import authRoutes from './routes/auth.js';
 import serverRoutes from './routes/servers.js';
 import protocolRoutes from './routes/protocols.js';
@@ -88,8 +89,14 @@ app.use('/api/subscriptions', subscriptionRoutes);
 app.use('/', subscriptionRoutes);
 
 const errorHandler: ErrorRequestHandler = (err, req, res, next) => {
-  logger.error({ err, method: req.method, url: req.originalUrl }, 'Unhandled error');
   if (res.headersSent) return next(err);
+  // UserError несёт текст, написанный для пользователя, — отдаём как есть.
+  // Всё остальное может содержать детали реализации, поэтому обезличиваем.
+  if (isUserError(err)) {
+    logger.warn({ err: err.message, method: req.method, url: req.originalUrl }, 'User error');
+    return res.status(err.status).json({ error: err.message });
+  }
+  logger.error({ err, method: req.method, url: req.originalUrl }, 'Unhandled error');
   res.status(500).json({ error: 'Internal server error' });
 };
 app.use(errorHandler);

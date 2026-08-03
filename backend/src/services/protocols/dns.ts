@@ -2,6 +2,7 @@ import { exec, execSudo } from '../ssh.js';
 import { buildImage } from './common.js';
 import { DOCKERFILES } from './dockerfiles.js';
 import type { Server } from '../../types.js';
+import { UserError } from '../errors.js';
 
 // AmneziaDNS — серверный unbound-резолвер на фиксированном IP в amnezia-dns-net.
 // На него указывают DNS-настройки клиентов (защита от DNS-leak: наружу DoT к Cloudflare).
@@ -65,7 +66,7 @@ export async function installDns(server: Server): Promise<{ containerName: strin
     IMAGE,
   ].join(' \\\n  '));
   if (runRes.code !== 0) {
-    throw new Error(`Failed to start AmneziaDNS container: ${runRes.stderr || runRes.stdout}`);
+    throw new UserError(`Failed to start AmneziaDNS container: ${runRes.stderr || runRes.stdout}`);
   }
   return { containerName: CONTAINER, ip: AMNEZIA_DNS_IP };
 }

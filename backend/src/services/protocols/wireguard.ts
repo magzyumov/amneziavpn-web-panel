@@ -10,6 +10,7 @@ import {
 } from './dockerfiles.js';
 import { resolveClientDns } from './dns.js';
 import type { Server, Protocol, AddClientResult, InstallResult, WireGuardConfig } from '../../types.js';
+import { UserError } from '../errors.js';
 
 interface WgInstallOptions { port?: number }
 
@@ -60,7 +61,7 @@ export async function installWireGuard(server: Server, options: WgInstallOptions
   await writeRemoteFile(server, wgConfigurePath, wgConfigureScript);
   const wgConfigureRes = await execSudo(server, `docker exec ${containerName} bash ${wgConfigurePath}`);
   if (wgConfigureRes.code !== 0) {
-    throw new Error(`WireGuard configure script failed (exit ${wgConfigureRes.code}): ${wgConfigureRes.stderr || wgConfigureRes.stdout}`);
+    throw new UserError(`WireGuard configure script failed (exit ${wgConfigureRes.code}): ${wgConfigureRes.stderr || wgConfigureRes.stdout}`);
   }
 
   // start.sh поднимает wg0 только если wg0.conf существует на момент старта
@@ -69,11 +70,11 @@ export async function installWireGuard(server: Server, options: WgInstallOptions
   // Перезапускаем — теперь start.sh найдёт wg0.conf и поднимет интерфейс.
   const wgRestartRes = await execSudo(server, `docker restart ${containerName}`);
   if (wgRestartRes.code !== 0) {
-    throw new Error(`Failed to restart WireGuard container after configure: ${wgRestartRes.stderr || wgRestartRes.stdout}`);
+    throw new UserError(`Failed to restart WireGuard container after configure: ${wgRestartRes.stderr || wgRestartRes.stdout}`);
   }
 
   const serverPubKey = await readRemoteFile(server, '/opt/amnezia/wireguard/wireguard_server_public_key.key');
-  if (!serverPubKey) throw new Error('WireGuard configure script did not generate server public key');
+  if (!serverPubKey) throw new UserError('WireGuard configure script did not generate server public key');
 
   const config: WireGuardConfig = { port, subnetIp, subnetCidr, serverPubKey };
   return { containerName, port, config };
@@ -85,29 +86,29 @@ export async function addWireGuardClient(server: Server, protocol: Protocol, _cl
   const cn = protocol.container_name;
 
   if (!c.serverPubKey || !c.port) {
-    throw new Error('WireGuard protocol config is incomplete (missing serverPubKey or port). Reinstall the protocol.');
+    throw new UserError('WireGuard protocol config is incomplete (missing serverPubKey or port). Reinstall the protocol.');
   }
 
   const statusRes = await exec(server, `docker inspect --format='{{.State.Status}}' ${cn} 2>/dev/null || echo ''`);
   if (statusRes.stdout.trim() !== 'running') {
-    throw new Error(`WireGuard container '${cn}' is not running. Start the protocol first.`);
+    throw new UserError(`WireGuard container '${cn}' is not running. Start the protocol first.`);
   }
 
   const privRes = await execSudo(server, `docker exec ${cn} wg genkey`);
   if (privRes.code !== 0 || !privRes.stdout.trim()) {
-    throw new Error(`Failed to generate WireGuard client private key: ${privRes.stderr || 'empty output'}`);
+    throw new UserError(`Failed to generate WireGuard client private key: ${privRes.stderr || 'empty output'}`);
   }
   const clientPrivKey = privRes.stdout.trim();
 
   const pubRes = await execSudo(server, `echo '${clientPrivKey}' | docker exec -i ${cn} wg pubkey`);
   if (pubRes.code !== 0 || !pubRes.stdout.trim()) {
-    throw new Error(`Failed to generate WireGuard client public key: ${pubRes.stderr || 'empty output'}`);
+    throw new UserError(`Failed to generate WireGuard client public key: ${pubRes.stderr || 'empty output'}`);
   }
   const clientPubKey = pubRes.stdout.trim();
 
   const presharedKey = await readContainerFile(server, cn, '/opt/amnezia/wireguard/wireguard_psk.key');
   if (!presharedKey) {
-    throw new Error('WireGuard PSK not found on server. Reinstall the protocol.');
+    throw new UserError('WireGuard PSK not found on server. Reinstall the protocol.');
   }
 
   const peersRes = await execSudo(server, `docker exec ${cn} wg show wg0 peers 2>/dev/null | wc -l`);
@@ -119,7 +120,7 @@ export async function addWireGuardClient(server: Server, protocol: Protocol, _cl
   await execSudo(server, `docker exec ${cn} sh -c "echo '${pskB64}' | base64 -d > ${pskTmp}"`);
   const addPeerRes = await execSudo(server, `docker exec ${cn} sh -c "wg set wg0 peer ${clientPubKey} preshared-key ${pskTmp} allowed-ips ${clientIp}/32 && rm -f ${pskTmp}"`);
   if (addPeerRes.code !== 0) {
-    throw new Error(`Failed to add WireGuard peer: ${addPeerRes.stderr || addPeerRes.stdout}`);
+    throw new UserError(`Failed to add WireGuard peer: ${addPeerRes.stderr || addPeerRes.stdout}`);
   }
 
   const wgPeerEntry = Buffer.from(`\n[Peer]\nPublicKey = ${clientPubKey}\nPresharedKey = ${presharedKey}\nAllowedIPs = ${clientIp}/32\n`).toString('base64');

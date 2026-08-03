@@ -14,6 +14,7 @@ import { resolveClientDns } from './dns.js';
 import type {
   Server, Protocol, AddClientResult, InstallResult, Awg2Config,
 } from '../../types.js';
+import { UserError } from '../errors.js';
 
 interface InstallOptions {
   port?: number;
@@ -122,7 +123,7 @@ export async function installAWG2(server: Server, options: InstallOptions = {}):
   if (headerProtection) {
     for (const [label, v] of [['s1', s1], ['s2', s2], ['s3', s3], ['s4', s4]] as const) {
       if (v < HP_MIN_JUNK) {
-        throw new Error(`Invalid ${label}: header protection requires S1-S4 >= ${HP_MIN_JUNK}, got ${v}`);
+        throw new UserError(`Invalid ${label}: header protection requires S1-S4 >= ${HP_MIN_JUNK}, got ${v}`);
       }
     }
   }
@@ -180,7 +181,7 @@ export async function installAWG2(server: Server, options: InstallOptions = {}):
   if (headerProtection) {
     const hpkRes = await execSudo(server, `docker exec ${containerName} awg genkey`);
     if (hpkRes.code !== 0 || !hpkRes.stdout.trim()) {
-      throw new Error(`Failed to generate AWG3 header protection key: ${hpkRes.stderr || 'empty output'}`);
+      throw new UserError(`Failed to generate AWG3 header protection key: ${hpkRes.stderr || 'empty output'}`);
     }
     headerProtectionKey = assertWgKey(hpkRes.stdout.trim(), 'headerProtectionKey');
   }
@@ -214,7 +215,7 @@ export async function installAWG2(server: Server, options: InstallOptions = {}):
   await writeRemoteFile(server, awg2ConfigurePath, awg2ConfigureScript);
   const awg2ConfigureRes = await execSudo(server, `docker exec ${containerName} bash ${awg2ConfigurePath}`);
   if (awg2ConfigureRes.code !== 0) {
-    throw new Error(`AWG2 configure script failed (exit ${awg2ConfigureRes.code}): ${awg2ConfigureRes.stderr || awg2ConfigureRes.stdout}`);
+    throw new UserError(`AWG2 configure script failed (exit ${awg2ConfigureRes.code}): ${awg2ConfigureRes.stderr || awg2ConfigureRes.stdout}`);
   }
 
   // start.sh поднимает awg0 только если awg0.conf существует на момент старта
@@ -223,11 +224,11 @@ export async function installAWG2(server: Server, options: InstallOptions = {}):
   // Перезапускаем — теперь start.sh найдёт awg0.conf и поднимет интерфейс.
   const awg2RestartRes = await execSudo(server, `docker restart ${containerName}`);
   if (awg2RestartRes.code !== 0) {
-    throw new Error(`Failed to restart AWG2 container after configure: ${awg2RestartRes.stderr || awg2RestartRes.stdout}`);
+    throw new UserError(`Failed to restart AWG2 container after configure: ${awg2RestartRes.stderr || awg2RestartRes.stdout}`);
   }
 
   const serverPubKey = await readRemoteFile(server, '/opt/amnezia/awg/wireguard_server_public_key.key');
-  if (!serverPubKey) throw new Error('AWG2 configure script did not generate server public key');
+  if (!serverPubKey) throw new UserError('AWG2 configure script did not generate server public key');
 
   const config: Awg2Config = {
     port, subnetIp, subnetCidr, serverPubKey,
@@ -251,30 +252,30 @@ export async function addAWG2Client(server: Server, protocol: Protocol, _clientN
   const cn = protocol.container_name;
 
   if (!c.serverPubKey || !c.port) {
-    throw new Error('AWG2 protocol config is incomplete (missing serverPubKey or port). Reinstall the protocol.');
+    throw new UserError('AWG2 protocol config is incomplete (missing serverPubKey or port). Reinstall the protocol.');
   }
 
   const statusRes = await exec(server, `docker inspect --format='{{.State.Status}}' ${cn} 2>/dev/null || echo ''`);
   if (statusRes.stdout.trim() !== 'running') {
-    throw new Error(`AWG2 container '${cn}' is not running. Start the protocol first.`);
+    throw new UserError(`AWG2 container '${cn}' is not running. Start the protocol first.`);
   }
 
   const privRes = await execSudo(server, `docker exec ${cn} awg genkey`);
   if (privRes.code !== 0 || !privRes.stdout.trim()) {
-    throw new Error(`Failed to generate AWG2 client private key: ${privRes.stderr || 'empty output'}`);
+    throw new UserError(`Failed to generate AWG2 client private key: ${privRes.stderr || 'empty output'}`);
   }
   const clientPrivKey = privRes.stdout.trim();
 
   const pubRes = await execSudo(server, `echo '${clientPrivKey}' | docker exec -i ${cn} awg pubkey`);
   if (pubRes.code !== 0 || !pubRes.stdout.trim()) {
-    throw new Error(`Failed to generate AWG2 client public key: ${pubRes.stderr || 'empty output'}`);
+    throw new UserError(`Failed to generate AWG2 client public key: ${pubRes.stderr || 'empty output'}`);
   }
   const clientPubKey = pubRes.stdout.trim();
 
   const pskRes = await execSudo(server, `docker exec ${cn} awg genpsk`);
   const presharedKey = pskRes.stdout.trim();
   if (!presharedKey) {
-    throw new Error('Failed to generate AWG2 PSK: empty output');
+    throw new UserError('Failed to generate AWG2 PSK: empty output');
   }
 
   const peersRes = await execSudo(server, `docker exec ${cn} awg show awg0 peers 2>/dev/null | wc -l`);
@@ -286,7 +287,7 @@ export async function addAWG2Client(server: Server, protocol: Protocol, _clientN
   await execSudo(server, `docker exec ${cn} sh -c "echo '${pskB64}' | base64 -d > ${pskTmp}"`);
   const addPeerRes = await execSudo(server, `docker exec ${cn} sh -c "awg set awg0 peer ${clientPubKey} preshared-key ${pskTmp} allowed-ips ${clientIp}/32 && rm -f ${pskTmp}"`);
   if (addPeerRes.code !== 0) {
-    throw new Error(`Failed to add AWG2 peer: ${addPeerRes.stderr || addPeerRes.stdout}`);
+    throw new UserError(`Failed to add AWG2 peer: ${addPeerRes.stderr || addPeerRes.stdout}`);
   }
 
   const awgPeerEntry = Buffer.from(`\n[Peer]\nPublicKey = ${clientPubKey}\nPresharedKey = ${presharedKey}\nAllowedIPs = ${clientIp}/32\n`).toString('base64');

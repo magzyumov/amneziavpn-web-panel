@@ -1,4 +1,8 @@
 // Утилиты для безопасной интерполяции в shell-команды (ssh.exec / ssh.execSudo).
+//
+// Все assert* бросают UserError: это проверки пользовательского ввода, и их текст
+// («ожидался uint32 или диапазон min-max, получено …») пользователю нужен.
+import { UserError } from './errors.js';
 
 // Оборачивает значение в одинарные кавычки, экранируя любые ' внутри.
 // Использовать ВСЕГДА, когда подставляешь произвольную строку в shell-команду.
@@ -14,7 +18,7 @@ export function shInt(value: unknown, opts: IntOpts = {}): number {
   const { min = -Infinity, max = Infinity, label = 'value' } = opts;
   const n = Number(value);
   if (!Number.isInteger(n) || n < min || n > max) {
-    throw new Error(`Invalid ${label}: expected integer in [${min}, ${max}], got ${value}`);
+    throw new UserError(`Invalid ${label}: expected integer in [${min}, ${max}], got ${value}`);
   }
   return n;
 }
@@ -23,7 +27,7 @@ export function shInt(value: unknown, opts: IntOpts = {}): number {
 // Docker container names: [a-zA-Z0-9][a-zA-Z0-9_.-]*
 export function assertContainerName(name: unknown): string {
   if (typeof name !== 'string' || !/^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$/.test(name)) {
-    throw new Error(`Invalid container name: ${name}`);
+    throw new UserError(`Invalid container name: ${name}`);
   }
   return name;
 }
@@ -32,7 +36,7 @@ export function assertContainerName(name: unknown): string {
 // но достаточный, чтобы блокировать shell-метасимволы.
 export function assertDomain(value: unknown): string {
   if (typeof value !== 'string' || !/^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$/.test(value)) {
-    throw new Error(`Invalid domain: ${value}`);
+    throw new UserError(`Invalid domain: ${value}`);
   }
   return value;
 }
@@ -47,7 +51,7 @@ export function assertPort(value: unknown, label = 'port'): number {
 export function assertXrayPath(value: unknown, label = 'xray path'): string {
   const s = String(value);
   if (!/^\/[A-Za-z0-9/_.~-]*$/.test(s)) {
-    throw new Error(`Invalid ${label}: expected URL path starting with "/", got ${value}`);
+    throw new UserError(`Invalid ${label}: expected URL path starting with "/", got ${value}`);
   }
   return s;
 }
@@ -57,7 +61,7 @@ export function assertXhttpMode(value: unknown, label = 'xhttp mode'): string {
   const s = String(value).toLowerCase();
   const allowed = ['auto', 'packet-up', 'stream-up', 'stream-one'];
   if (!allowed.includes(s)) {
-    throw new Error(`Invalid ${label}: expected one of ${allowed.join('/')}, got ${value}`);
+    throw new UserError(`Invalid ${label}: expected one of ${allowed.join('/')}, got ${value}`);
   }
   return s;
 }
@@ -67,7 +71,7 @@ export function assertXhttpMode(value: unknown, label = 'xhttp mode'): string {
 export function assertWgKey(value: unknown, label = 'key'): string {
   const s = String(value);
   if (!/^[A-Za-z0-9+/]{43}=$/.test(s)) {
-    throw new Error(`Invalid ${label}: expected base64-encoded 32-byte key, got ${value}`);
+    throw new UserError(`Invalid ${label}: expected base64-encoded 32-byte key, got ${value}`);
   }
   return s;
 }
@@ -85,10 +89,10 @@ export function assertUint32Range(value: unknown, label = 'range'): string {
   if (m) {
     const a = shInt(m[1], uint32);
     const b = shInt(m[2], uint32);
-    if (a > b) throw new Error(`Invalid ${label}: range start > end (${s})`);
+    if (a > b) throw new UserError(`Invalid ${label}: range start > end (${s})`);
     return `${a}-${b}`;
   }
-  throw new Error(`Invalid ${label}: expected uint32 or "min-max" range, got ${value}`);
+  throw new UserError(`Invalid ${label}: expected uint32 or "min-max" range, got ${value}`);
 }
 
 // Magic header AmneziaWG. В AWG 2.0 это либо uint32, либо диапазон "min-max"
@@ -104,8 +108,8 @@ export function assertMagicHeader(value: unknown, label = 'magic header'): strin
   if (m) {
     const a = shInt(m[1], uint32);
     const b = shInt(m[2], uint32);
-    if (a > b) throw new Error(`Invalid ${label}: range start > end (${s})`);
+    if (a > b) throw new UserError(`Invalid ${label}: range start > end (${s})`);
     return `${a}-${b}`;
   }
-  throw new Error(`Invalid ${label}: expected uint32 or "min-max" range, got ${value}`);
+  throw new UserError(`Invalid ${label}: expected uint32 or "min-max" range, got ${value}`);
 }

@@ -1,6 +1,7 @@
 import { createHash } from 'crypto';
 import { exec, execSudo } from '../ssh.js';
 import type { Server } from '../../types.js';
+import { UserError } from '../errors.js';
 
 export function randInt(min: number, max: number): number {
   return Math.floor(Math.random() * (max - min + 1)) + min;
@@ -30,12 +31,12 @@ export async function assertPortFree(server: Server, port: number, selfName: str
   const dockerRes = await execSudo(server, `docker ps --format '{{.Names}}' --filter publish=${port}`);
   const others = dockerRes.stdout.split('\n').map(s => s.trim()).filter(n => n && n !== selfName);
   if (others.length) {
-    throw new Error(`Порт ${port} уже занят контейнером: ${others.join(', ')}. Выберите другой порт или удалите конфликтующий контейнер.`);
+    throw new UserError(`Порт ${port} уже занят контейнером: ${others.join(', ')}. Выберите другой порт или удалите конфликтующий контейнер.`, 409);
   }
   // Не-docker сервисы на хосте. ss может отсутствовать — тогда проверку пропускаем.
   const ssRes = await exec(server, `ss -Hltnu 'sport = :${port}' 2>/dev/null || true`);
   if (ssRes.stdout.trim()) {
-    throw new Error(`Порт ${port} уже слушается процессом на хосте. Выберите другой порт.`);
+    throw new UserError(`Порт ${port} уже слушается процессом на хосте. Выберите другой порт.`, 409);
   }
 }
 
@@ -88,7 +89,7 @@ export async function buildImage(server: Server, imageName: string, buildDir: st
   const res = await execSudo(server,
     `docker build --label ${DOCKERFILE_LABEL}=${sha} -t ${imageName} ${buildDir} 2>&1`);
   if (res.code !== 0) {
-    throw new Error(`docker build failed:\n${res.stdout.slice(-2000)}`);
+    throw new UserError(`docker build failed:\n${res.stdout.slice(-2000)}`);
   }
 }
 

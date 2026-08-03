@@ -5,6 +5,7 @@ import {
 } from './common.js';
 import { DOCKERFILES, START_SCRIPTS, CONFIGURE_SCRIPTS, XRAY_CLIENT_TEMPLATE } from './dockerfiles.js';
 import type { Server, Protocol, AddClientResult, InstallResult, XrayConfig } from '../../types.js';
+import { UserError } from '../errors.js';
 
 interface XrayInstallOptions {
   port?: number;
@@ -109,15 +110,15 @@ export async function installXray(server: Server, options: XrayInstallOptions = 
   await writeRemoteFile(server, xrayConfigurePath, xrayConfigureScript);
   const xrayConfigureRes = await execSudo(server, `docker exec ${containerName} bash ${xrayConfigurePath}`);
   if (xrayConfigureRes.code !== 0) {
-    throw new Error(`Xray configure script failed (exit ${xrayConfigureRes.code}): ${xrayConfigureRes.stderr || xrayConfigureRes.stdout}`);
+    throw new UserError(`Xray configure script failed (exit ${xrayConfigureRes.code}): ${xrayConfigureRes.stderr || xrayConfigureRes.stdout}`);
   }
 
   const publicKey = await readRemoteFile(server, '/opt/amnezia/xray/xray_public.key');
   const shortId   = await readRemoteFile(server, '/opt/amnezia/xray/xray_short_id.key');
   const firstUuid = await readRemoteFile(server, '/opt/amnezia/xray/xray_uuid.key');
-  if (!publicKey) throw new Error('Xray configure script did not generate public key');
-  if (!shortId)   throw new Error('Xray configure script did not generate short ID');
-  if (!firstUuid) throw new Error('Xray configure script did not generate UUID');
+  if (!publicKey) throw new UserError('Xray configure script did not generate public key');
+  if (!shortId)   throw new UserError('Xray configure script did not generate short ID');
+  if (!firstUuid) throw new UserError('Xray configure script did not generate UUID');
 
   const config: XrayConfig = { port, sni, publicKey, shortId, firstUuid, transport };
   if (transport === 'xhttp') {
@@ -135,32 +136,32 @@ export async function addXrayClient(server: Server, protocol: Protocol, clientNa
 
   const statusRes = await exec(server, `docker inspect --format='{{.State.Status}}' ${cn} 2>/dev/null || echo ''`);
   if (statusRes.stdout.trim() !== 'running') {
-    throw new Error(`Xray container '${cn}' is not running. Start the protocol first.`);
+    throw new UserError(`Xray container '${cn}' is not running. Start the protocol first.`);
   }
 
   const uuidRes = await execSudo(server, `docker exec ${cn} xray uuid`);
   if (uuidRes.code !== 0 || !uuidRes.stdout.trim()) {
-    throw new Error(`Failed to generate Xray UUID: ${uuidRes.stderr || 'empty output. Check that xray binary is installed in the container.'}`);
+    throw new UserError(`Failed to generate Xray UUID: ${uuidRes.stderr || 'empty output. Check that xray binary is installed in the container.'}`);
   }
   const clientId = uuidRes.stdout.trim();
 
   const confRaw = await readContainerFile(server, cn, '/opt/amnezia/xray/server.json');
   if (!confRaw) {
-    throw new Error('Xray server.json not found on VPS. The protocol may not have been configured correctly. Reinstall the protocol.');
+    throw new UserError('Xray server.json not found on VPS. The protocol may not have been configured correctly. Reinstall the protocol.');
   }
 
   let serverJson: any;
   try {
     serverJson = JSON.parse(confRaw);
   } catch (e) {
-    throw new Error(`Failed to parse Xray server.json: ${(e as Error).message}. File content may be corrupted. Reinstall the protocol.`);
+    throw new UserError(`Failed to parse Xray server.json: ${(e as Error).message}. File content may be corrupted. Reinstall the protocol.`);
   }
 
   // Со включёнными stats в server.json два inbound'а (api на 127.0.0.1:10085 +
   // vless), без stats — один (vless). Ищем нужный по protocol.
   const vlessInbound = serverJson.inbounds?.find((i: any) => i.protocol === 'vless');
   if (!vlessInbound?.settings?.clients) {
-    throw new Error('Unexpected structure in Xray server.json (no vless inbound). Reinstall the protocol.');
+    throw new UserError('Unexpected structure in Xray server.json (no vless inbound). Reinstall the protocol.');
   }
 
   // Транспорт из сохранённого конфига определяет наличие flow:
@@ -177,7 +178,7 @@ export async function addXrayClient(server: Server, protocol: Protocol, clientNa
 
   const restartRes = await execSudo(server, `docker restart ${cn}`);
   if (restartRes.code !== 0) {
-    throw new Error(`Failed to restart Xray container: ${restartRes.stderr}`);
+    throw new UserError(`Failed to restart Xray container: ${restartRes.stderr}`);
   }
 
   const safeName = clientName.replace(/[^a-zA-Z0-9_\-]/g, '_');
@@ -187,7 +188,7 @@ export async function addXrayClient(server: Server, protocol: Protocol, clientNa
   const shortId = c.shortId;
 
   if (!port || !sni || !pubKey || !shortId) {
-    throw new Error('Xray protocol config is incomplete (missing port/sni/publicKey/shortId). Reinstall the protocol.');
+    throw new UserError('Xray protocol config is incomplete (missing port/sni/publicKey/shortId). Reinstall the protocol.');
   }
 
   const streamVars = xrayStreamVars(tvars);
@@ -228,6 +229,6 @@ export async function removeXrayClient(server: Server, protocol: Protocol, peerI
   await execSudo(server, `echo '${jsonB64}' | base64 -d | docker exec -i ${cn} sh -c 'cat > /opt/amnezia/xray/server.json'`);
   const restartRes = await execSudo(server, `docker restart ${cn}`);
   if (restartRes.code !== 0) {
-    throw new Error(`Failed to restart Xray container after client removal: ${restartRes.stderr}`);
+    throw new UserError(`Failed to restart Xray container after client removal: ${restartRes.stderr}`);
   }
 }

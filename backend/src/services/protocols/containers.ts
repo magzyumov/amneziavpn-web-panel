@@ -2,6 +2,7 @@ import { exec, execSudo } from '../ssh.js';
 import { assertContainerName, shInt } from '../shell.js';
 import { readContainerFile } from './common.js';
 import type { Server, ProtocolType, ExecResult } from '../../types.js';
+import { UserError } from '../errors.js';
 
 export async function getContainerStatus(server: Server, containerName: string): Promise<string> {
   assertContainerName(containerName);
@@ -67,14 +68,14 @@ export async function ensureDocker(server: Server): Promise<boolean> {
   // иначе install падал бы позже непонятной ошибкой.
   const verify = await exec(server, 'docker --version 2>/dev/null');
   if (verify.code !== 0) {
-    throw new Error('Не удалось установить Docker на сервере (docker --version недоступен после установки).');
+    throw new UserError('Не удалось установить Docker на сервере (docker --version недоступен после установки).');
   }
   const active = await execSudo(server, 'systemctl is-active docker 2>/dev/null || echo inactive');
   if (active.stdout.trim() !== 'active') {
     await execSudo(server, 'systemctl start docker 2>/dev/null || true');
     const recheck = await execSudo(server, 'systemctl is-active docker 2>/dev/null || echo inactive');
     if (recheck.stdout.trim() !== 'active') {
-      throw new Error('Docker установлен, но служба не запускается (systemctl is-active docker != active).');
+      throw new UserError('Docker установлен, но служба не запускается (systemctl is-active docker != active).');
     }
   }
   return true;

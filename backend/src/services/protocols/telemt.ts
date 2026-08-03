@@ -4,6 +4,7 @@ import { assertContainerName, assertPort, assertDomain, sh } from '../shell.js';
 import { randPort, writeRemoteFile, buildImage, renderTemplate, assertPortFree } from './common.js';
 import { DOCKERFILES, START_SCRIPTS, TELEMT_BASE_CONFIG_TEMPLATE } from './dockerfiles.js';
 import type { Server, Protocol, AddClientResult, InstallResult, TelemtConfig } from '../../types.js';
+import { UserError } from '../errors.js';
 
 interface TelemtInstallOptions { port?: number; tlsDomain?: string }
 
@@ -65,12 +66,12 @@ export async function addTelemtClient(server: Server, protocol: Protocol, _clien
   const cn = protocol.container_name;
 
   if (!c.port) {
-    throw new Error('Telemt protocol config is incomplete (missing port). Reinstall the protocol.');
+    throw new UserError('Telemt protocol config is incomplete (missing port). Reinstall the protocol.');
   }
 
   const statusRes = await exec(server, `docker inspect --format='{{.State.Status}}' ${cn} 2>/dev/null || echo ''`);
   if (statusRes.stdout.trim() !== 'running') {
-    throw new Error(`Telemt container '${cn}' is not running. Start the protocol first.`);
+    throw new UserError(`Telemt container '${cn}' is not running. Start the protocol first.`);
   }
 
   const secret = randomBytes(16).toString('hex');
@@ -83,7 +84,7 @@ export async function addTelemtClient(server: Server, protocol: Protocol, _clien
   await execSudo(server, `printf '%s = "%s"\\n' '${userKey}' '${secret}' >> /opt/amnezia/telemt/users`);
   const restartRes = await execSudo(server, `docker restart ${cn}`);
   if (restartRes.code !== 0) {
-    throw new Error(`Failed to restart Telemt container: ${restartRes.stderr}`);
+    throw new UserError(`Failed to restart Telemt container: ${restartRes.stderr}`);
   }
 
   // Telemt всегда FakeTLS — ee-secret с доменом.
