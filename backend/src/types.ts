@@ -87,6 +87,16 @@ export interface Awg2Config {
   s1: number | string; s2: number | string; s3: number | string; s4: number | string;
   h1: string; h2: string; h3: string; h4: string;
   i1: string; i2: string; i3: string; i4: string; i5: string;
+  // AWG 3.0 (amneziawg-go 3.x). Пустая строка / undefined = параметр не задан,
+  // строка в конфиг не пишется. headerProtectionKey — server-side: обязан совпадать
+  // на сервере и клиенте. Остальные — client-side, тип "uint32,range".
+  headerProtectionKey?: string;
+  contentPaddingAddition?: string;
+  rekeyAfterTime?: string;
+  rekeyTimeout?: string;
+  rejectAfterTime?: string;
+  keepaliveTimeout?: string;
+  maxHandshakeAttempts?: string;
 }
 
 export interface WireGuardConfig {

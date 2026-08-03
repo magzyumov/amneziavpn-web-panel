@@ -6,7 +6,12 @@ export const DOCKERFILES = {
   // start.sh лежит в /opt/amnezia/awg/start.sh (свой путь, чтобы не конфликтовать
   // с общим /opt/amnezia/start.sh — иначе configure другого протокола на том же
   // хосте затирал бы запуск awg0).
-  awg2: `FROM amneziavpn/amneziawg-go:latest
+  // Версия базового образа ПРИБИТА: amneziavpn/amneziawg-go:latest переехал с 0.2.x
+  // на 3.0.x (AmneziaWG 3.0) — при :latest пересборка молча меняла бы мажорную
+  // версию демона под живыми клиентами. Апстрим ставит :latest, мы — нет.
+  // При бампе версии обязательно менять и тег imageName в awg2.ts (buildImage
+  // делает ранний выход, если образ с таким тегом уже есть).
+  awg2: `FROM amneziavpn/amneziawg-go:3.0.3
 
 LABEL maintainer="AmneziaVPN"
 
@@ -328,8 +333,10 @@ H1 = $INIT_PACKET_MAGIC_HEADER
 H2 = $RESPONSE_PACKET_MAGIC_HEADER
 H3 = $UNDERLOAD_PACKET_MAGIC_HEADER
 H4 = $TRANSPORT_PACKET_MAGIC_HEADER
-# I1-I5 (special junk) — значения как в AmneziaVPN; закомментированы, т.к. образ
-# amneziawg-go их пока не поддерживает (как и оригинальный configure_container.sh).
+$AWG3_SERVER_PARAMS
+# I1-I5 (special junk) — образ amneziawg-go их ПОДДЕРЖИВАЕТ (проверено 2026-07-31),
+# но на СЕРВЕРЕ держим закомментированными: I-пакеты — обфускация инициатора, активны
+# в клиентском конфиге (AWG2_CLIENT_TEMPLATE). Так же и в апстрим configure_container.sh.
 # I1 = <r 2><b 0x858000010001000000000669636c6f756403636f6d0000010001c00c000100010000105a00044d583737>
 # I2 =
 # I3 =
@@ -421,6 +428,13 @@ cat > /opt/amnezia/xray/server.json <<EOF
 EOF`,
 };
 
+// I1 активен (AWG 3 special junk, DSL). I2-I5 НЕ включаем в шаблон: по умолчанию
+// пустые, а awg setconf падает на строке "I2 =" ("Line unrecognized") — проверено
+// на amneziawg-tools v3.0.20260730, апстрим лечит это только на стороне клиента
+// (не писать пустые ключи, PR #2846). SPECIAL_JUNK_1 всегда непустой (DEFAULT_I1).
+// Для кастомных I2-I5 собирать I-блок динамически в awg2.ts.
+// $AWG3_CLIENT_PARAMS — блок параметров AWG 3.0, собирается в awg2.ts и пуст для
+// инсталляций protocolVersion < 3 (по той же причине: пустое значение = ошибка парсинга).
 export const AWG2_CLIENT_TEMPLATE = `[Interface]
 Address = $WIREGUARD_CLIENT_IP/32
 DNS = $CLIENT_DNS
@@ -437,12 +451,8 @@ H1 = $INIT_PACKET_MAGIC_HEADER
 H2 = $RESPONSE_PACKET_MAGIC_HEADER
 H3 = $UNDERLOAD_PACKET_MAGIC_HEADER
 H4 = $TRANSPORT_PACKET_MAGIC_HEADER
-# I1 = $SPECIAL_JUNK_1
-# I2 = $SPECIAL_JUNK_2
-# I3 = $SPECIAL_JUNK_3
-# I4 = $SPECIAL_JUNK_4
-# I5 = $SPECIAL_JUNK_5
-
+I1 = $SPECIAL_JUNK_1
+$AWG3_CLIENT_PARAMS
 [Peer]
 PublicKey = $WIREGUARD_SERVER_PUBLIC_KEY
 PresharedKey = $WIREGUARD_PSK
@@ -502,7 +512,7 @@ export const AWG2_CLIENT_JSON_TEMPLATE = `{
     "host": "$SERVER_IP_ADDRESS",
     "port": "$AWG_SERVER_PORT",
     "type": "awg2",
-    "protocol_version": "2",
+    "protocol_version": "$PROTOCOL_VERSION",
     "client_pub_key": "$WIREGUARD_CLIENT_PUBLIC_KEY",
     "config": {
         "address": "$WIREGUARD_CLIENT_IP/32",
@@ -525,7 +535,7 @@ export const AWG2_CLIENT_JSON_TEMPLATE = `{
         "i2": "$SPECIAL_JUNK_2",
         "i3": "$SPECIAL_JUNK_3",
         "i4": "$SPECIAL_JUNK_4",
-        "i5": "$SPECIAL_JUNK_5"
+        "i5": "$SPECIAL_JUNK_5"$AWG3_JSON_FIELDS
     }
 }`;
 
