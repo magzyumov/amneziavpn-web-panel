@@ -12,6 +12,7 @@ import {
 import { createSubscription, getVpsHost, deleteSubscription } from '../services/subscription.js';
 import { buildAmneziaExportJson, buildVpnUri, buildChunkedAmneziaQr } from '../services/amneziaExport.js';
 import { extractPeerId } from '../services/peerId.js';
+import { sumTraffic, downsample, rateSeries } from '../services/statsAggregate.js';
 import { logger } from '../services/logger.js';
 import type { Server, Protocol, Client, ProtocolType } from '../types.js';
 
@@ -225,6 +226,13 @@ router.get('/:id/stats', (req, res) => {
     [req.params.id, since],
   );
 
+  // Снимок непосредственно ПЕРЕД окном — база отсчёта, иначе терялся бы трафик
+  // между ним и первым снимком внутри окна.
+  const baseline = queryOne<StatsRow>(
+    'SELECT ts, rx_bytes, tx_bytes, last_handshake FROM client_stats WHERE client_id = ? AND ts < ? ORDER BY ts DESC LIMIT 1',
+    [req.params.id, since],
+  );
+
   const latest = rows.length ? rows[rows.length - 1] : null;
   const online = latest && latest.last_handshake
     ? (now - latest.last_handshake) < ONLINE_WINDOW_SEC
@@ -233,30 +241,18 @@ router.get('/:id/stats', (req, res) => {
   // Downsample: ~60 точек по бакетам, в каждом берём последний снимок.
   const BUCKETS = 60;
   const bucketSec = Math.max(60, Math.floor(rangeSec / BUCKETS));
-  const lastByBucket = new Map<number, StatsRow>();
-  for (const r of rows) {
-    const b = Math.floor(r.ts / bucketSec);
-    lastByBucket.set(b, r);
-  }
-  const bucketed = [...lastByBucket.values()].sort((a, b) => a.ts - b.ts);
+  const series = rateSeries(downsample(rows, bucketSec));
 
-  // Считаем rate между соседними снимками (B/s). Reset = current_bytes < prev_bytes.
-  const series: Array<{ ts: number; rxRate: number; txRate: number }> = [];
-  for (let i = 1; i < bucketed.length; i++) {
-    const a = bucketed[i - 1];
-    const b = bucketed[i];
-    const dt = b.ts - a.ts;
-    if (dt <= 0) continue;
-    const dRx = Math.max(0, b.rx_bytes - a.rx_bytes);
-    const dTx = Math.max(0, b.tx_bytes - a.tx_bytes);
-    series.push({ ts: b.ts, rxRate: dRx / dt, txRate: dTx / dt });
-  }
+  // Трафик ЗА ПЕРИОД — сумма приращений накопительных счётчиков. Раньше сюда
+  // уходило значение последнего снимка, а оно одно и то же при любом окне,
+  // поэтому переключение периода не меняло цифры.
+  const total = sumTraffic(baseline ? [baseline, ...rows] : rows);
 
   res.json({
     online,
     lastHandshake: latest?.last_handshake ?? null,
-    totalRx: latest?.rx_bytes ?? 0,
-    totalTx: latest?.tx_bytes ?? 0,
+    totalRx: total.rx,
+    totalTx: total.tx,
     series,
   });
 });

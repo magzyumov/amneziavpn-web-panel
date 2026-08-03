@@ -60,7 +60,7 @@ export default function StatsTab({ clientId, protocolType }: Props) {
         <div style={{ marginBottom: 16 }}>
           <div className="card" style={{ padding: 12 }}>
             <div className="text-muted mono" style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-              ⇅ Трафик (всего)
+              ⇅ Трафик за период
             </div>
             <div style={{ fontSize: 20, fontWeight: 600, marginTop: 2, color: '#3fb950' }}>
               {formatBytes(data?.totalRx ?? 0)}
@@ -71,7 +71,7 @@ export default function StatsTab({ clientId, protocolType }: Props) {
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 16 }}>
           <div className="card" style={{ padding: 12 }}>
             <div className="text-muted mono" style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-              ↓ Принято (rx)
+              ↓ Принято (rx) за период
             </div>
             <div style={{ fontSize: 20, fontWeight: 600, marginTop: 2, color: '#3fb950' }}>
               {formatBytes(data?.totalRx ?? 0)}
@@ -79,7 +79,7 @@ export default function StatsTab({ clientId, protocolType }: Props) {
           </div>
           <div className="card" style={{ padding: 12 }}>
             <div className="text-muted mono" style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-              ↑ Отправлено (tx)
+              ↑ Отправлено (tx) за период
             </div>
             <div style={{ fontSize: 20, fontWeight: 600, marginTop: 2, color: '#f0883e' }}>
               {formatBytes(data?.totalTx ?? 0)}
@@ -120,7 +120,7 @@ export default function StatsTab({ clientId, protocolType }: Props) {
       )}
 
       <div className="text-muted mono" style={{ fontSize: 10, marginTop: 12, lineHeight: 1.5 }}>
-        Снимки собираются раз в минуту фоновым воркером. Total rx/tx сбрасываются при рестарте VPN-контейнера.
+        Снимки собираются раз в минуту фоновым воркером. Трафик считается по приращениям счётчиков внутри выбранного периода, поэтому рестарт VPN-контейнера его не обнуляет.
       </div>
     </div>
   );
