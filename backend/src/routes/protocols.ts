@@ -71,7 +71,11 @@ router.post('/server/:serverId', validateBody(installSchema), async (req: Reques
     [id, server.id, type, PROTOCOLS[type]?.name || type, result.containerName, result.port, JSON.stringify(result.config), 'running']
   );
 
-  res.json({ id, type, containerName: result.containerName, port: result.port, config: result.config });
+  // Отдаём строку целиком и в том же виде, что и GET /server/:serverId — фронт
+  // кладёт ответ прямо в список протоколов, и на усечённой форме (без name,
+  // container_name, status) карточка оставалась пустой до перезагрузки страницы.
+  const row = queryOne<Protocol>('SELECT * FROM protocols WHERE id = ?', [id]);
+  res.json({ ...row, config: row?.config ? JSON.parse(row.config) : {} });
 });
 
 router.delete('/:id', async (req, res) => {

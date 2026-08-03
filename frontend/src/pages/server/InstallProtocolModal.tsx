@@ -55,7 +55,7 @@ export default function InstallProtocolModal({ serverId, onClose, onInstalled }:
         delete options.xhttpHost; delete options.xhttpPath; delete options.xhttpMode;
       }
       const r = await protocolsApi.install(serverId, { type, options });
-      setLog(l => l + `\n✓ Done!\n  Container: ${r.data.containerName}\n  Port: ${r.data.port}\n`);
+      setLog(l => l + `\n✓ Done!\n  Container: ${r.data.container_name}\n  Port: ${r.data.port}\n`);
       setTimeout(() => { onInstalled(r.data); }, 1200);
     } catch (e: any) {
       const msg = e.response?.data?.error || e.message;

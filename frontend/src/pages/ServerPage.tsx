@@ -210,7 +210,7 @@ export default function ServerPage() {
           onClose={() => setShowScan(false)}
           onImported={p => {
             setProtocols(prev => {
-              if (prev.some(x => x.id === p.id || x.container_name === p.containerName)) return prev;
+              if (prev.some(x => x.id === p.id || x.container_name === p.container_name)) return prev;
               return [...prev, p];
             });
           }}

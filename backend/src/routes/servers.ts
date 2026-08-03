@@ -6,11 +6,11 @@ import { encrypt } from '../services/crypto.js';
 import { authMiddleware } from '../middleware/auth.js';
 import { validateBody } from '../middleware/validate.js';
 import { testConnection, disconnect } from '../services/ssh.js';
-import { listAmneziaContainers, ensureDocker, scanExistingProtocols, installDns, removeDns, isDnsRunning } from '../services/protocols/index.js';
+import { listAmneziaContainers, ensureDocker, scanExistingProtocols, installDns, removeDns, isDnsRunning, PROTOCOLS } from '../services/protocols/index.js';
 import { assertContainerName, assertPort } from '../services/shell.js';
 import { createSubscription, getVpsHost } from '../services/subscription.js';
 import { logger } from '../services/logger.js';
-import type { Server, ProtocolType } from '../types.js';
+import type { Server, Protocol, ProtocolType } from '../types.js';
 
 const router = Router();
 router.use(authMiddleware);
@@ -155,11 +155,12 @@ router.post('/:id/import-protocol', validateBody(importSchema), (req: Request, r
   const existing = queryOne<{ id: string }>('SELECT id FROM protocols WHERE server_id = ? AND container_name = ?', [server.id, containerName]);
   if (existing) return res.status(409).json({ error: 'Protocol already imported', id: existing.id });
 
-  const names: Record<ProtocolType, string> = { awg2: 'AmneziaWG 2.0', wireguard: 'WireGuard', xray: 'Xray VLESS Reality', mtproxy: 'MTProxy', telemt: 'Telemt' };
+  // Имена берём из общего реестра, а не из локальной копии — иначе они разъезжаются
+  // с тем, что показывает установка протокола.
   const protocolId = uuidv4();
   run(
     'INSERT INTO protocols (id, server_id, type, name, port, container_name, status, config) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-    [protocolId, server.id, type, names[type] || type, port ?? null, containerName, 'running', JSON.stringify(config || {})]
+    [protocolId, server.id, type, PROTOCOLS[type]?.name || type, port ?? null, containerName, 'running', JSON.stringify(config || {})]
   );
 
   let importedClients = 0;
@@ -190,16 +191,10 @@ router.post('/:id/import-protocol', validateBody(importSchema), (req: Request, r
     importedClients++;
   }
 
-  res.json({
-    id: protocolId,
-    type,
-    name: names[type] || type,
-    port,
-    containerName,
-    status: 'running',
-    config: JSON.stringify(config || {}),
-    importedClients,
-  });
+  // Как и при установке — строка целиком в форме GET /protocols/server/:serverId
+  // (config объектом, а не строкой), плюс счётчик для окна сканирования.
+  const row = queryOne<Protocol>('SELECT * FROM protocols WHERE id = ?', [protocolId]);
+  res.json({ ...row, config: row?.config ? JSON.parse(row.config) : {}, importedClients });
 });
 
 export default router;
