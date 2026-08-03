@@ -76,7 +76,6 @@ grep -rn "imageName = " backend/src/services/protocols/*.ts
 
 ```bash
 cat docker-compose.yml
-ls server_scripts 2>/dev/null
 ```
 
 Note: services, ports, volumes, build context, healthchecks; whether source is

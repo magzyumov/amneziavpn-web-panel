@@ -14,7 +14,7 @@ import type { Server, Protocol, AddClientResult, InstallResult, WireGuardConfig 
 
 interface WgInstallOptions { port?: number }
 
-const FLAVOR: WgFlavor = {
+export const WG_FLAVOR: WgFlavor = {
   tool: 'wg',
   iface: 'wg0',
   confDir: '/opt/amnezia/wireguard',
@@ -31,7 +31,7 @@ export async function installWireGuard(server: Server, options: WgInstallOptions
   const subnetIp = `${SUBNET_PREFIX}.0`;
   const subnetCidr = '24';
 
-  const serverPubKey = await installWgLike(server, FLAVOR, {
+  const serverPubKey = await installWgLike(server, WG_FLAVOR, {
     port, subnetIp, subnetCidr,
     dockerfile: DOCKERFILES.wireguard,
     startScript: START_SCRIPTS.wireguard(subnetIp, subnetCidr, server.host),
@@ -43,11 +43,11 @@ export async function installWireGuard(server: Server, options: WgInstallOptions
       CONFIGURE_SCRIPTS.wireguard,
     ].join('\n'),
     configurePath: '/opt/amnezia/configure_wg.sh',
-    serverPubKeyPath: `${FLAVOR.confDir}/wireguard_server_public_key.key`,
+    serverPubKeyPath: `${WG_FLAVOR.confDir}/wireguard_server_public_key.key`,
   });
 
   const config: WireGuardConfig = { port, subnetIp, subnetCidr, serverPubKey };
-  return { containerName: FLAVOR.containerName, port, config };
+  return { containerName: WG_FLAVOR.containerName, port, config };
 }
 
 export async function addWireGuardClient(server: Server, protocol: Protocol, _clientName: string): Promise<AddClientResult> {
@@ -58,18 +58,18 @@ export async function addWireGuardClient(server: Server, protocol: Protocol, _cl
     throw new UserError('WireGuard protocol config is incomplete (missing serverPubKey or port). Reinstall the protocol.');
   }
 
-  await assertContainerRunning(server, FLAVOR);
-  const { clientPrivKey, clientPubKey } = await genPeerKeys(server, FLAVOR);
+  await assertContainerRunning(server, WG_FLAVOR);
+  const { clientPrivKey, clientPubKey } = await genPeerKeys(server, WG_FLAVOR);
 
   // В отличие от AmneziaWG здесь PSK общий для сервера — его создаёт
   // configure-скрипт при установке, а не выпуск каждого клиента.
-  const presharedKey = await readContainerFile(server, FLAVOR.containerName, `${FLAVOR.confDir}/wireguard_psk.key`);
+  const presharedKey = await readContainerFile(server, WG_FLAVOR.containerName, `${WG_FLAVOR.confDir}/wireguard_psk.key`);
   if (!presharedKey) {
     throw new UserError('WireGuard PSK not found on server. Reinstall the protocol.');
   }
 
-  const clientIp = await nextClientIp(server, FLAVOR, SUBNET_PREFIX);
-  await addPeer(server, FLAVOR, { clientPubKey, presharedKey, clientIp });
+  const clientIp = await nextClientIp(server, WG_FLAVOR, SUBNET_PREFIX);
+  await addPeer(server, WG_FLAVOR, { clientPubKey, presharedKey, clientIp });
 
   const clientDns = await resolveClientDns(server);
   const templateVars: Record<string, string | number> = {
@@ -92,5 +92,5 @@ export async function addWireGuardClient(server: Server, protocol: Protocol, _cl
 
 export async function removeWireGuardClient(server: Server, protocol: Protocol, peerId: string): Promise<void> {
   assertContainerName(protocol.container_name);
-  await removePeer(server, FLAVOR, peerId);
+  await removePeer(server, WG_FLAVOR, peerId);
 }

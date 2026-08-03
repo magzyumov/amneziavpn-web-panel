@@ -1,1 +1,1 @@
-_(none yet — project-scanner memories about amneziavpn-web-panel will be indexed here)_
+- [Diet page not in repo](diet-page-not-in-repo.md) — /diet отсутствует в git (проверено на 1bf57c3); старая заметка о ней описывала только живой контейнер

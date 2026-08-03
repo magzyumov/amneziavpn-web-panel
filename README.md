@@ -142,7 +142,8 @@ header protection) новые параметры не пишутся — их к
 | `JWT_SECRET` | **обязательна** | Секрет для JWT, минимум 32 символа: `openssl rand -hex 32`. Известные дефолты отвергаются на старте. |
 | `PANEL_ENCRYPTION_KEY` | автогенерация | 64 hex-символа для шифрования SSH-кредов. Если не задана — создаётся `data/encryption.key`. |
 | `PANEL_PORT` | `80` | Внешний порт панели. |
-| `DB_PATH` | `/data/panel.db` | Путь к базе. |
+| `PORT` | `3001` | Порт backend внутри контейнера; compose задаёт его явно. |
+| `DB_PATH` | `/data/panel.db` в Docker | Путь к базе. Дефолт в коде — `backend/data/panel.db`, он и действует при локальном `npm start`. |
 | `NODE_ENV` | `development` | В `production` включает HSTS и JSON-логи. |
 | `LOG_LEVEL` | `info` / `debug` | Уровень логирования (pino). |
 | `STATS_POLL_INTERVAL_MS` | `60000` | Как часто снимать статистику. |
@@ -202,7 +203,9 @@ amneziavpn-web-panel/
 │           ├── peerId.ts           — peer-id из сохранённого конфига
 │           ├── statsWorker.ts      — фоновый сбор статистики
 │           ├── statsAggregate.ts   — трафик за период, прореживание, скорости
+│           ├── *.test.ts           — vitest рядом с проверяемыми модулями
 │           └── protocols/
+│               ├── index.ts        — barrel: через него импортируются протоколы
 │               ├── common.ts       — общие хелперы, buildImage с отпечатком Dockerfile
 │               ├── containers.ts   — docker lifecycle + scanExistingProtocols
 │               ├── dockerfiles.ts  — шаблоны Dockerfile'ов и скриптов
@@ -219,6 +222,7 @@ amneziavpn-web-panel/
 │       ├── api.ts                  — axios + CSRF + типы API
 │       ├── protocols.ts            — названия и иконки протоколов
 │       └── pages/                  — Dashboard, Server, Subscriptions + компоненты
+│   └── templates/clash.yaml        — дефолтный шаблон Clash-подписки
 ├── data/                           — база и ключ шифрования (создаются сами)
 └── docker-compose.yml
 ```

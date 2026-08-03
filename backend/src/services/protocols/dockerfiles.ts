@@ -76,6 +76,11 @@ CMD [ "" ]`,
 
   // Telemt — сторонняя реализация MTProto-прокси с продвинутой FakeTLS-маскировкой.
   // Бинарник тянется из releases telemt/telemt с проверкой sha256.
+  //
+  // Версия ПРИБИТА. Раньше тут был releases/latest/download — и sha256 это не
+  // спасало: контрольная сумма скачивается оттуда же, то есть подтверждает
+  // целостность новой версии, а не то, что версия прежняя. При пересборке образа
+  // демон молча уехал бы вперёд — ровно как amneziawg-go:latest с 0.2.19 на 3.0.3.
   telemt: `FROM debian:12-slim
 
 RUN apt-get update \\
@@ -84,6 +89,7 @@ RUN apt-get update \\
     && rm -rf /var/lib/apt/lists/*
 
 RUN set -eux; \\
+    TELEMT_VERSION="3.4.25"; \\
     ARCH="$(uname -m)"; \\
     case "$ARCH" in \\
         x86_64) ASSET="telemt-x86_64-linux-musl.tar.gz" ;; \\
@@ -91,9 +97,9 @@ RUN set -eux; \\
         *) echo "Unsupported architecture: $ARCH" >&2; exit 1 ;; \\
     esac; \\
     curl -fL --retry 5 --retry-delay 3 --connect-timeout 10 --max-time 120 \\
-        -o "/tmp/\${ASSET}" "https://github.com/telemt/telemt/releases/latest/download/\${ASSET}"; \\
+        -o "/tmp/\${ASSET}" "https://github.com/telemt/telemt/releases/download/\${TELEMT_VERSION}/\${ASSET}"; \\
     curl -fL --retry 5 --retry-delay 3 --connect-timeout 10 --max-time 120 \\
-        -o "/tmp/\${ASSET}.sha256" "https://github.com/telemt/telemt/releases/latest/download/\${ASSET}.sha256"; \\
+        -o "/tmp/\${ASSET}.sha256" "https://github.com/telemt/telemt/releases/download/\${TELEMT_VERSION}/\${ASSET}.sha256"; \\
     cd /tmp && sha256sum -c "\${ASSET}.sha256"; \\
     tar -xzf "\${ASSET}" -C /tmp; \\
     test -f /tmp/telemt; \\

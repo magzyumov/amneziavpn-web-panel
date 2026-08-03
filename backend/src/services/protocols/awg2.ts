@@ -92,7 +92,7 @@ function genMagicHeaderRanges(): [string, string, string, string] {
 
 // Тег образа включает версию amneziawg-go: buildImage делает ранний выход по
 // существующему образу, поэтому переезд на новую базу возможен только через новый тег.
-const FLAVOR: WgFlavor = {
+export const AWG2_FLAVOR: WgFlavor = {
   tool: 'awg',
   iface: 'awg0',
   confDir: '/opt/amnezia/awg',
@@ -164,7 +164,7 @@ export async function installAWG2(server: Server, options: InstallOptions = {}):
   let headerProtectionKey = '';
   const buildConfigureScript = async (): Promise<string> => {
     if (headerProtection) {
-      const hpkRes = await execSudo(server, `docker exec ${FLAVOR.containerName} awg genkey`);
+      const hpkRes = await execSudo(server, `docker exec ${AWG2_FLAVOR.containerName} awg genkey`);
       if (hpkRes.code !== 0 || !hpkRes.stdout.trim()) {
         throw new UserError(`Failed to generate AWG3 header protection key: ${hpkRes.stderr || 'empty output'}`);
       }
@@ -197,13 +197,13 @@ export async function installAWG2(server: Server, options: InstallOptions = {}):
     ].join('\n');
   };
 
-  const serverPubKey = await installWgLike(server, FLAVOR, {
+  const serverPubKey = await installWgLike(server, AWG2_FLAVOR, {
     port, subnetIp, subnetCidr,
     dockerfile: DOCKERFILES.awg2,
     startScript: START_SCRIPTS.awg2(subnetIp, subnetCidr, server.host),
     configureScript: buildConfigureScript,
     configurePath: '/opt/amnezia/configure_awg.sh',
-    serverPubKeyPath: `${FLAVOR.confDir}/wireguard_server_public_key.key`,
+    serverPubKeyPath: `${AWG2_FLAVOR.confDir}/wireguard_server_public_key.key`,
   });
 
   const config: Awg2Config = {
@@ -219,7 +219,7 @@ export async function installAWG2(server: Server, options: InstallOptions = {}):
     contentPaddingAddition, rekeyAfterTime, rekeyTimeout,
     rejectAfterTime, keepaliveTimeout, maxHandshakeAttempts,
   };
-  return { containerName: FLAVOR.containerName, port, config };
+  return { containerName: AWG2_FLAVOR.containerName, port, config };
 }
 
 export async function addAWG2Client(server: Server, protocol: Protocol, _clientName: string): Promise<AddClientResult> {
@@ -231,18 +231,18 @@ export async function addAWG2Client(server: Server, protocol: Protocol, _clientN
     throw new UserError('AWG2 protocol config is incomplete (missing serverPubKey or port). Reinstall the protocol.');
   }
 
-  await assertContainerRunning(server, FLAVOR);
-  const { clientPrivKey, clientPubKey } = await genPeerKeys(server, FLAVOR);
+  await assertContainerRunning(server, AWG2_FLAVOR);
+  const { clientPrivKey, clientPubKey } = await genPeerKeys(server, AWG2_FLAVOR);
 
   // В отличие от WireGuard здесь PSK свой у каждого клиента, а не общий серверный.
-  const pskRes = await execSudo(server, `docker exec ${FLAVOR.containerName} awg genpsk`);
+  const pskRes = await execSudo(server, `docker exec ${AWG2_FLAVOR.containerName} awg genpsk`);
   const presharedKey = pskRes.stdout.trim();
   if (!presharedKey) {
     throw new UserError('Failed to generate AWG2 PSK: empty output');
   }
 
-  const clientIp = await nextClientIp(server, FLAVOR, SUBNET_PREFIX);
-  await addPeer(server, FLAVOR, { clientPubKey, presharedKey, clientIp });
+  const clientIp = await nextClientIp(server, AWG2_FLAVOR, SUBNET_PREFIX);
+  await addPeer(server, AWG2_FLAVOR, { clientPubKey, presharedKey, clientIp });
 
   const clientDns = await resolveClientDns(server);
 
@@ -314,5 +314,5 @@ export async function addAWG2Client(server: Server, protocol: Protocol, _clientN
 
 export async function removeAWG2Client(server: Server, protocol: Protocol, peerId: string): Promise<void> {
   assertContainerName(protocol.container_name);
-  await removePeer(server, FLAVOR, peerId);
+  await removePeer(server, AWG2_FLAVOR, peerId);
 }

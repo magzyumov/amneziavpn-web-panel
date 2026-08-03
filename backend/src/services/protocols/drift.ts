@@ -16,23 +16,16 @@ import { createHash } from 'crypto';
 import { exec } from '../ssh.js';
 import { RUN_ARGS_LABEL, runArgsSha } from './common.js';
 import { DOCKERFILES } from './dockerfiles.js';
-import { wgRunArgs, type WgFlavor } from './wgCommon.js';
+import { wgRunArgs } from './wgCommon.js';
+// Флейворы берём из самих протоколов, а не держим копию: тег образа менялся бы
+// в двух местах, и детектор дрейфа начал бы сравнивать с несуществующим образом.
+import { AWG2_FLAVOR } from './awg2.js';
+import { WG_FLAVOR } from './wireguard.js';
 import { xrayRunArgs, XRAY_IMAGE } from './xray.js';
 import { telemtRunArgs, TELEMT_IMAGE } from './telemt.js';
 import type { Server, ProtocolType } from '../../types.js';
 
 const DOCKERFILE_LABEL = 'panel.dockerfile-sha';
-
-const AWG2_FLAVOR: WgFlavor = {
-  tool: 'awg', iface: 'awg0', confDir: '/opt/amnezia/awg',
-  containerName: 'amnezia-awg2', imageName: 'amnezia-awg2:3.0.3',
-  buildDir: '/opt/amnezia/amnezia-awg2', label: 'AWG2',
-};
-const WG_FLAVOR: WgFlavor = {
-  tool: 'wg', iface: 'wg0', confDir: '/opt/amnezia/wireguard',
-  containerName: 'amnezia-wireguard', imageName: 'amnezia-wireguard:latest',
-  buildDir: '/opt/amnezia/amnezia-wireguard', label: 'WireGuard',
-};
 
 // Что панель поставила бы сейчас для протокола данного типа.
 function expected(type: ProtocolType, port: number): { image: string; dockerfile: string; runArgs: string[] } | null {
