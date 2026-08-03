@@ -181,6 +181,9 @@ router.delete('/:id', async (req, res) => {
   }
 
   deleteSubscription(req.params.id);
+  // Снимки статистики удаляем явно: внешние ключи в базе не включены, поэтому
+  // ON DELETE CASCADE не срабатывает, и раньше они копились навсегда.
+  run('DELETE FROM client_stats WHERE client_id = ?', [req.params.id]);
   run('DELETE FROM clients WHERE id = ?', [req.params.id]);
   res.json({ ok: true });
 });
