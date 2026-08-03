@@ -60,6 +60,29 @@ git diff -- docker-compose.yml
 Compare findings against the matching section of the context file: new items =
 additions, missing = deletions, changed versions/props = updates.
 
+## Step 3.5 — Всегда, независимо от подсказки: прибитые версии
+
+Эти факты ломаются молча — код и контекст остаются правдоподобными, а на сервере
+работает не то. Поэтому проверяются при ЛЮБОМ обновлении, даже если подсказка
+про них не говорит.
+
+```bash
+# Версии базовых образов, прибитые в шаблонах
+grep -n "^FROM \|FROM [a-z]" backend/src/services/protocols/dockerfiles.ts
+# Теги собираемых образов и имена контейнеров
+grep -rn "imageName\|containerName: '" backend/src/services/protocols/*.ts
+```
+
+Сверь с разделом контекста про протоколы. Флажки:
+- **`:latest` в `FROM`** — сообщи отдельной строкой: апстрим может молча сменить
+  мажорную версию демона под работающими клиентами (так `amneziawg-go:latest`
+  уехал с 0.2.19 на 3.0.3).
+- версия в шаблоне изменилась, а тег собираемого образа — нет: `buildImage`
+  переиспользует существующий тег, и новая база до сервера не доедет;
+- имя контейнера или порт разошлись с тем, что записано в контексте.
+
+Это `[INFRA]`-изменения: попадают в диф, даже если подсказка была про роут.
+
 ## Step 4 — Read new/changed files
 - backend: extract route paths + purpose, service responsibility, protocol
   install/addClient behaviour, new DB tables/columns.
@@ -90,5 +113,9 @@ Print a short summary of what changed.
 
 ## Rules
 - Never rewrite the whole file — patch only changed sections.
+- Шаг 3.5 выполняется всегда — пропускать его нельзя даже при узкой подсказке.
+- Контекст описывает, что ДОЛЖНО быть развёрнуто, а не что развёрнуто сейчас.
+  Расхождение с живым сервером — это не повод править контекст, это повод
+  сказать о нём вызывающему.
 - Backend = TS/Express patterns; frontend = React/TSX patterns. Don't mix.
 - When unsure, show the diff and let the user decide.

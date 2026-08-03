@@ -1,7 +1,6 @@
 import { useState, useEffect } from 'react';
 import { protocolsApi } from '../../api';
-
-type ProtocolType = 'awg2' | 'wireguard' | 'xray' | 'mtproxy' | 'telemt';
+import { PROTOCOL_ICONS, PROTOCOL_NAMES, type ProtocolType } from '../../protocols';
 
 interface Props {
   serverId: string;
@@ -9,11 +8,16 @@ interface Props {
   onInstalled: (data: any) => void;
 }
 
+// Header protection (AWG 3.0) использует S1-S4 как nonce и требует каждый >= 12.
+// Бэкенд это тоже проверяет (HP_MIN_JUNK в awg2.ts), но там ошибка доходит до
+// пользователя обезличенным "Internal server error" — ловим до отправки.
+const S_MIN = 12;
+const S_KEYS = ['s1', 's2', 's3', 's4'];
+
 const DEFAULTS: Record<ProtocolType, Record<string, any>> = {
   awg2:      { port: '', jc: 6, jmin: 10, jmax: 50, s1: 143, s2: 122, s3: 59, s4: 17 },
   xray:      { port: 443, sni: 'www.googletagmanager.com', transport: 'tcp' },
   wireguard: { port: '' },
-  mtproxy:   { port: '', tlsDomain: 'www.google.com' },
   telemt:    { port: '', tlsDomain: 'www.google.com' },
 };
 
@@ -25,6 +29,10 @@ export default function InstallProtocolModal({ serverId, onClose, onInstalled }:
   const [error, setError] = useState('');
 
   const set = (k: string, v: any) => setOpts(o => ({ ...o, [k]: v }));
+
+  const sTooSmall = type === 'awg2'
+    ? S_KEYS.filter(k => opts[k] !== '' && opts[k] != null && +opts[k] < S_MIN)
+    : [];
 
   useEffect(() => { setOpts(DEFAULTS[type] || {}); }, [type]);
 
@@ -45,7 +53,7 @@ export default function InstallProtocolModal({ serverId, onClose, onInstalled }:
         delete options.xhttpHost; delete options.xhttpPath; delete options.xhttpMode;
       }
       const r = await protocolsApi.install(serverId, { type, options });
-      setLog(l => l + `\n✓ Done!\n  Container: ${r.data.containerName}\n  Port: ${r.data.port}\n`);
+      setLog(l => l + `\n✓ Done!\n  Container: ${r.data.container_name}\n  Port: ${r.data.port}\n`);
       setTimeout(() => { onInstalled(r.data); }, 1200);
     } catch (e: any) {
       const msg = e.response?.data?.error || e.message;
@@ -64,18 +72,18 @@ export default function InstallProtocolModal({ serverId, onClose, onInstalled }:
         <div className="input-group" style={{ marginBottom: 16 }}>
           <label className="input-label">Protocol</label>
           <select className="input" value={type} onChange={e => setType(e.target.value as ProtocolType)}>
-            <option value="awg2">🛡️ AmneziaWG 2.0</option>
-            <option value="xray">⚡ Xray VLESS Reality</option>
-            <option value="wireguard">🔒 WireGuard</option>
-            <option value="mtproxy">✈️ MTProxy (Telegram)</option>
-            <option value="telemt">📨 Telemt (Telegram)</option>
+            {(Object.keys(PROTOCOL_NAMES) as ProtocolType[]).map(t => (
+              <option key={t} value={t}>{PROTOCOL_ICONS[t]} {PROTOCOL_NAMES[t]}</option>
+            ))}
           </select>
         </div>
 
         {type === 'awg2' && (
           <div>
             <div className="notice notice-info" style={{ marginBottom: 12, fontSize: 11 }}>
-              Порт и параметры H1-H4 генерируются автоматически если не заданы
+              Порт и параметры H1-H4 генерируются автоматически если не заданы.
+              S1-S4 служат nonce для защиты заголовков (AWG 3.0), поэтому каждый
+              должен быть не меньше {S_MIN} — иначе AmneziaWG отвергнет конфиг.
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
               {[
@@ -83,19 +91,25 @@ export default function InstallProtocolModal({ serverId, onClose, onInstalled }:
                 { k: 'jc',   label: 'Jc (junk count, 3-10)' },
                 { k: 'jmin', label: 'Jmin' },
                 { k: 'jmax', label: 'Jmax' },
-                { k: 's1',   label: 'S1' },
-                { k: 's2',   label: 'S2' },
-                { k: 's3',   label: 'S3' },
-                { k: 's4',   label: 'S4' },
+                { k: 's1',   label: `S1 (мин. ${S_MIN})` },
+                { k: 's2',   label: `S2 (мин. ${S_MIN})` },
+                { k: 's3',   label: `S3 (мин. ${S_MIN})` },
+                { k: 's4',   label: `S4 (мин. ${S_MIN})` },
               ].map(f => (
                 <div key={f.k} className="input-group">
                   <label className="input-label">{f.label}</label>
                   <input className="input input-mono" type="number"
+                    min={S_KEYS.includes(f.k) ? S_MIN : undefined}
                     value={opts[f.k] ?? ''} placeholder="auto"
                     onChange={e => set(f.k, e.target.value === '' ? '' : +e.target.value)} />
                 </div>
               ))}
             </div>
+            {sTooSmall.length > 0 && (
+              <div className="notice notice-error" style={{ marginTop: 10, fontSize: 11 }}>
+                {sTooSmall.join(', ').toUpperCase()} меньше {S_MIN} — установка не пройдёт.
+              </div>
+            )}
           </div>
         )}
 
@@ -159,12 +173,11 @@ export default function InstallProtocolModal({ serverId, onClose, onInstalled }:
           </div>
         )}
 
-        {(type === 'mtproxy' || type === 'telemt') && (
+        {type === 'telemt' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
             <div className="notice notice-info" style={{ fontSize: 11 }}>
-              {type === 'telemt'
-                ? 'Telegram-прокси с FakeTLS-маскировкой. Проксирует только трафик Telegram. Каждый клиент — отдельный секрет с tg:// ссылкой.'
-                : 'Официальный MTProto-прокси Telegram. Проксирует только трафик Telegram. Каждый клиент — отдельный секрет с tg:// ссылкой.'}
+              Telegram-прокси с FakeTLS-маскировкой. Проксирует только трафик Telegram.
+              Каждый клиент — отдельный секрет с tg:// ссылкой.
             </div>
             <div className="input-group">
               <label className="input-label">TCP Port (пусто = random)</label>
@@ -173,7 +186,7 @@ export default function InstallProtocolModal({ serverId, onClose, onInstalled }:
             </div>
             <div className="input-group">
               <label className="input-label">
-                FakeTLS домен {type === 'mtproxy' ? '(пусто = secure mode)' : '(обязателен)'}
+                FakeTLS домен (обязателен)
               </label>
               <input className="input input-mono" placeholder="www.google.com"
                 value={opts.tlsDomain ?? ''} onChange={e => set('tlsDomain', e.target.value)} />
@@ -186,7 +199,7 @@ export default function InstallProtocolModal({ serverId, onClose, onInstalled }:
 
         <div className="modal-actions">
           <button className="btn btn-outline" onClick={onClose} disabled={loading}>Cancel</button>
-          <button className="btn btn-primary" onClick={install} disabled={loading}>
+          <button className="btn btn-primary" onClick={install} disabled={loading || sTooSmall.length > 0}>
             {loading ? <><span className="spinner" /> Installing…</> : '▶ Install'}
           </button>
         </div>

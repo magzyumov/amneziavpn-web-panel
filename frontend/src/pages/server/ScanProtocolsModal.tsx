@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { serversApi } from '../../api';
+import { PROTOCOL_ICONS, protocolTitle, type ProtocolType } from '../../protocols';
 
 interface Props {
   serverId: string;
@@ -9,7 +10,7 @@ interface Props {
 }
 
 interface FoundProto {
-  type: 'awg2' | 'wireguard' | 'xray';
+  type: ProtocolType;
   containerName: string;
   port: number | null;
   status: string;
@@ -17,8 +18,6 @@ interface FoundProto {
   clients: Array<{ clientId: string; name: string }>;
 }
 
-const TYPE_ICONS: Record<string, string> = { awg2: '🛡️', wireguard: '🔒', xray: '⚡' };
-const TYPE_NAMES: Record<string, string> = { awg2: 'AmneziaWG 2.0', wireguard: 'WireGuard', xray: 'Xray VLESS Reality' };
 
 export default function ScanProtocolsModal({ serverId, existingProtocols, onClose, onImported }: Props) {
   const [scanning, setScanning] = useState(false);
@@ -105,7 +104,7 @@ export default function ScanProtocolsModal({ serverId, existingProtocols, onClos
                   }}>
                     <div style={{ flex: 1 }}>
                       <div style={{ fontWeight: 600, fontSize: 14 }}>
-                        {TYPE_ICONS[proto.type]} {TYPE_NAMES[proto.type] || proto.type}
+                        {PROTOCOL_ICONS[proto.type]} {protocolTitle(proto)}
                       </div>
                       <div className="mono text-muted" style={{ fontSize: 11, marginTop: 4 }}>
                         {proto.containerName} · port {proto.port || '?'} · <span style={{
@@ -115,7 +114,11 @@ export default function ScanProtocolsModal({ serverId, existingProtocols, onClos
                       {proto.clients?.length > 0 && (
                         <div style={{ fontSize: 11, marginTop: 4, color: 'var(--text-dim)' }}>
                           {proto.clients.length} client{proto.clients.length !== 1 ? 's' : ''} найдено
-                          {proto.type !== 'xray' && <span className="text-muted"> (без конфига — приватный ключ на устройстве)</span>}
+                          {proto.type === 'awg2' || proto.type === 'wireguard'
+                            ? <span className="text-muted"> (без конфига — приватный ключ остался на устройстве)</span>
+                            : proto.type === 'telemt'
+                              ? <span className="text-muted"> (без конфига — ссылку выдаст перевыпуск клиента)</span>
+                              : null}
                           {isImported && (
                             <span style={{ color: 'var(--green)', marginLeft: 6 }}>
                               ✓ {isImported.importedClients} импортировано

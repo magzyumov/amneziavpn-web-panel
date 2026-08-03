@@ -1,5 +1,7 @@
+import { createHash } from 'crypto';
 import { exec, execSudo } from '../ssh.js';
 import type { Server } from '../../types.js';
+import { UserError } from '../errors.js';
 
 export function randInt(min: number, max: number): number {
   return Math.floor(Math.random() * (max - min + 1)) + min;
@@ -29,12 +31,12 @@ export async function assertPortFree(server: Server, port: number, selfName: str
   const dockerRes = await execSudo(server, `docker ps --format '{{.Names}}' --filter publish=${port}`);
   const others = dockerRes.stdout.split('\n').map(s => s.trim()).filter(n => n && n !== selfName);
   if (others.length) {
-    throw new Error(`Порт ${port} уже занят контейнером: ${others.join(', ')}. Выберите другой порт или удалите конфликтующий контейнер.`);
+    throw new UserError(`Порт ${port} уже занят контейнером: ${others.join(', ')}. Выберите другой порт или удалите конфликтующий контейнер.`, 409);
   }
   // Не-docker сервисы на хосте. ss может отсутствовать — тогда проверку пропускаем.
   const ssRes = await exec(server, `ss -Hltnu 'sport = :${port}' 2>/dev/null || true`);
   if (ssRes.stdout.trim()) {
-    throw new Error(`Порт ${port} уже слушается процессом на хосте. Выберите другой порт.`);
+    throw new UserError(`Порт ${port} уже слушается процессом на хосте. Выберите другой порт.`, 409);
   }
 }
 
@@ -66,14 +68,46 @@ export async function imageExists(server: Server, imageName: string): Promise<bo
   return res.stdout.trim() === 'exists';
 }
 
+// Метка с отпечатком Dockerfile, по которой buildImage понимает, что образ на
+// сервере собран из УСТАРЕВШЕГО шаблона.
+const DOCKERFILE_LABEL = 'panel.dockerfile-sha';
+
 export async function buildImage(server: Server, imageName: string, buildDir: string, dockerfile: string): Promise<void> {
-  if (await imageExists(server, imageName)) return;
+  // Раньше проверка была «образ с таким именем есть → ничего не делаем», и правки
+  // шаблонов не доезжали до серверов, где образ уже собран. Так у amnezia-wireguard
+  // на месяцы залип ENTRYPOINT на общий /opt/amnezia/start.sh (до перехода на
+  // per-protocol start.sh): контейнер стартовал чужой скрипт, wg0 не поднимался,
+  // и добавление клиента падало с "Unable to modify interface: No such device".
+  // Теперь образ переиспользуется, только если собран ровно из этого Dockerfile.
+  const sha = createHash('sha256').update(dockerfile).digest('hex').slice(0, 16);
+  const labelRes = await exec(server,
+    `docker image inspect ${imageName} --format='{{index .Config.Labels "${DOCKERFILE_LABEL}"}}' 2>/dev/null || echo ""`);
+  if (labelRes.stdout.trim() === sha) return;
+
   await execSudo(server, `mkdir -p ${buildDir}`);
   await writeRemoteFile(server, `${buildDir}/Dockerfile`, dockerfile);
-  const res = await execSudo(server, `docker build -t ${imageName} ${buildDir} 2>&1`);
+  const res = await execSudo(server,
+    `docker build --label ${DOCKERFILE_LABEL}=${sha} -t ${imageName} ${buildDir} 2>&1`);
   if (res.code !== 0) {
-    throw new Error(`docker build failed:\n${res.stdout.slice(-2000)}`);
+    throw new UserError(`docker build failed:\n${res.stdout.slice(-2000)}`);
   }
+}
+
+// Метка с отпечатком аргументов docker run. Образ мы пересобираем по изменению
+// Dockerfile, но сам контейнер после этого остаётся запущенным со СТАРЫМИ флагами:
+// поменяли проброс порта, capability или том — работающий контейнер об этом не
+// узнает, и расхождение ничем себя не проявит. Метка позволяет это заметить.
+export const RUN_ARGS_LABEL = 'panel.run-sha';
+
+export function runArgsSha(args: readonly string[]): string {
+  return createHash('sha256').update(args.join('\n')).digest('hex').slice(0, 16);
+}
+
+// Запускает контейнер, проставляя метку с отпечатком аргументов.
+// args — без `docker run -d`: он добавляется здесь вместе с меткой.
+export async function runContainer(server: Server, args: readonly string[]) {
+  const cmd = ['docker run -d', `--label ${RUN_ARGS_LABEL}=${runArgsSha(args)}`, ...args];
+  return execSudo(server, cmd.join(' \\\n  '));
 }
 
 export function renderTemplate(template: string, vars: Record<string, string | number>): string {

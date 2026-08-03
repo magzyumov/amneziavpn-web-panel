@@ -5,7 +5,7 @@ import {
   type DragEndEvent,
 } from '@dnd-kit/core';
 import { SortableContext, verticalListSortingStrategy, arrayMove } from '@dnd-kit/sortable';
-import { serversApi, protocolsApi, type ProtocolRecord, type ServerRecord } from '../api';
+import { serversApi, protocolsApi, type ProtocolRecord, type ServerRecord, type ProtocolDrift } from '../api';
 import ScanProtocolsModal from './server/ScanProtocolsModal';
 import EditServerModal from './server/EditServerModal';
 import InstallProtocolModal from './server/InstallProtocolModal';
@@ -34,6 +34,8 @@ export default function ServerPage() {
   const navigate = useNavigate();
   const [server, setServer] = useState<ServerRecord | null>(null);
   const [protocols, setProtocols] = useState<ProtocolRecord[]>([]);
+  // Заполняется периодическим health-запросом: какие протоколы разошлись с кодом.
+  const [drift, setDrift] = useState<Record<string, ProtocolDrift>>({});
   const [showInstall, setShowInstall] = useState(false);
   const [showScan, setShowScan] = useState(false);
   const [showEdit, setShowEdit] = useState(false);
@@ -78,7 +80,9 @@ export default function ServerPage() {
       if (!protocolsLoadedRef.current) return;
       try {
         const r = await protocolsApi.health(id);
-        setProtocols(prev => prev.map(p => r.data[p.id] !== undefined ? { ...p, status: r.data[p.id] } : p));
+        setProtocols(prev => prev.map(p =>
+          r.data.statuses[p.id] !== undefined ? { ...p, status: r.data.statuses[p.id] } : p));
+        setDrift(r.data.drift ?? {});
       } catch { /* не мешаем работе при недоступности сервера */ }
     };
     const interval = setInterval(poll, 30000);
@@ -188,7 +192,7 @@ export default function ServerPage() {
             <SortableContext items={protocols.map(p => p.id)} strategy={verticalListSortingStrategy}>
               <div className="grid" style={{ gap: 16, minWidth: 0, overflow: 'hidden' }}>
                 {protocols.map(p => (
-                  <SortableProtocolCard key={p.id} protocol={p} server={server} onDelete={delProtocol} />
+                  <SortableProtocolCard key={p.id} protocol={p} server={server} onDelete={delProtocol} drift={drift[p.id]} />
                 ))}
               </div>
             </SortableContext>
@@ -210,7 +214,7 @@ export default function ServerPage() {
           onClose={() => setShowScan(false)}
           onImported={p => {
             setProtocols(prev => {
-              if (prev.some(x => x.id === p.id || x.container_name === p.containerName)) return prev;
+              if (prev.some(x => x.id === p.id || x.container_name === p.container_name)) return prev;
               return [...prev, p];
             });
           }}

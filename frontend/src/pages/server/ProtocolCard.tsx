@@ -3,22 +3,25 @@ import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import {
   clientsApi, protocolsApi, type ClientRecord, type ProtocolRecord, type ServerRecord,
+  type ProtocolDrift,
 } from '../../api';
 import AddClientModal from './AddClientModal';
 import ClientModal from './ClientModal';
 import StatsModal from './StatsModal';
 import CopySubButton from './CopySubButton';
+import { PROTOCOL_ICONS, protocolTitle } from '../../protocols';
 
 interface ProtocolCardProps {
   protocol: ProtocolRecord;
   server: ServerRecord;
   onDelete: (id: string) => void;
+  /** Расхождение с тем, что панель поставила бы сейчас (приходит из health). */
+  drift?: ProtocolDrift;
   dragHandleProps?: Record<string, any>;
 }
 
-const ICONS: Record<ProtocolRecord['type'], string> = { awg2: '🛡️', xray: '⚡', wireguard: '🔒', mtproxy: '✈️', telemt: '📨' };
 
-function ProtocolCard({ protocol, server: _server, onDelete, dragHandleProps }: ProtocolCardProps) {
+function ProtocolCard({ protocol, server: _server, onDelete, drift, dragHandleProps }: ProtocolCardProps) {
   const [clients, setClients] = useState<ClientRecord[]>([]);
   const [loadingClients, setLoadingClients] = useState(true);
   const [showAddClient, setShowAddClient] = useState(false);
@@ -28,6 +31,9 @@ function ProtocolCard({ protocol, server: _server, onDelete, dragHandleProps }: 
   const [toggling, setToggling] = useState(false);
 
   useEffect(() => { setStatus(protocol.status); }, [protocol.status]);
+
+  const title = protocolTitle(protocol);
+
   const [showLogs, setShowLogs] = useState(false);
   const [logs, setLogs] = useState('');
   const [showClients, setShowClients] = useState(false);
@@ -88,6 +94,13 @@ function ProtocolCard({ protocol, server: _server, onDelete, dragHandleProps }: 
     setClients(c => c.filter(x => x.id !== id));
   };
 
+  // Образ или контейнер разошлись с тем, что описано в коде сейчас. Это не сбой:
+  // всё работает, просто изменения из репозитория до сервера ещё не доехали.
+  const driftReason = !drift ? '' : [
+    drift.image   ? 'Образ собран из устаревшего Dockerfile.' : '',
+    drift.runArgs ? 'Контейнер запущен со старыми аргументами docker run.' : '',
+  ].filter(Boolean).join(' ');
+
   const cfg: Record<string, unknown> | null = typeof protocol.config === 'string'
     ? JSON.parse(protocol.config)
     : (protocol.config as Record<string, unknown> | null);
@@ -101,9 +114,9 @@ function ProtocolCard({ protocol, server: _server, onDelete, dragHandleProps }: 
             title="Перетащить"
             style={{ cursor: 'grab', color: 'var(--text-muted)', fontSize: 14, lineHeight: 1, userSelect: 'none', touchAction: 'none' }}
           >⠿</span>
-          <span style={{ fontSize: 20 }}>{ICONS[protocol.type]}</span>
+          <span style={{ fontSize: 20 }}>{PROTOCOL_ICONS[protocol.type]}</span>
           <div>
-            <div style={{ fontWeight: 600, fontSize: 14 }}>{protocol.name}</div>
+            <div style={{ fontWeight: 600, fontSize: 14 }}>{title}</div>
             <div className="mono text-muted" style={{ fontSize: 11, display: 'flex', alignItems: 'center', gap: 6 }}>
               :{protocol.port} · {protocol.container_name}
               {cfg && (
@@ -122,6 +135,13 @@ function ProtocolCard({ protocol, server: _server, onDelete, dragHandleProps }: 
           </div>
         </div>
         <div className="flex gap-8 items-center proto-card-actions">
+          {driftReason && (
+            <span
+              className="badge badge-stopped"
+              title={`${driftReason} Протокол работает, но собран не по текущему коду — переустановите, чтобы применить изменения.`}
+              style={{ cursor: 'help' }}
+            >⟳ устарел</span>
+          )}
           <span className={`badge badge-${status === 'running' ? 'running' : 'stopped'}`}>
             {status}
           </span>
@@ -225,19 +245,16 @@ function ProtocolCard({ protocol, server: _server, onDelete, dragHandleProps }: 
 
                 {filtered.length > 0 && (() => {
                   const isXray = protocol.type === 'xray';
-                  // MTProxy не даёт per-client статистику (официальный mtproto-proxy
-                  // отдаёт только глобальные счётчики) — прячем колонку Statistic.
-                  const hasStats = protocol.type !== 'mtproxy';
-                  // grid: SHARE | (STATISTIC) | (SUBSCRIPTION для xray) | ✕
+                  // grid: SHARE | STATISTIC | (SUBSCRIPTION для xray) | ✕
                   const gridTemplate = [
                     '1fr',
-                    hasStats ? '1fr' : null,
+                    '1fr',
                     isXray ? '1fr' : null,
                     '32px',
                   ].filter(Boolean).join(' ');
                   // По умолчанию col-actions = 186px (App.css). Для xray этого мало —
                   // 4 кнопки сжимаются и текст наезжает. Расширяем под фактический контент.
-                  const actionsWidth = isXray ? 320 : hasStats ? 220 : 140;
+                  const actionsWidth = isXray ? 320 : 220;
                   const hdrCell: React.CSSProperties = {
                     fontSize: 11, color: 'var(--text-dim)', fontFamily: 'var(--font-mono)',
                     textTransform: 'uppercase', letterSpacing: '0.05em', textAlign: 'center',
@@ -250,7 +267,7 @@ function ProtocolCard({ protocol, server: _server, onDelete, dragHandleProps }: 
                         <span className="col-date-hdr">Created</span>
                         <div className="col-actions-hdr" style={{ display: 'grid', gridTemplateColumns: gridTemplate, gap: 8, width: actionsWidth }}>
                           <span style={hdrCell}>Share</span>
-                          {hasStats && <span style={hdrCell}>Statistic</span>}
+                          <span style={hdrCell}>Statistic</span>
                           {isXray && <span style={hdrCell}>Subscription</span>}
                           <span />
                         </div>
@@ -277,9 +294,7 @@ function ProtocolCard({ protocol, server: _server, onDelete, dragHandleProps }: 
                               disabled={!c.has_config}
                               title={c.has_config ? undefined : 'Импортированный клиент — конфиг недоступен'}
                             >⬡ View</button>
-                            {hasStats && (
-                              <button className="btn btn-outline btn-sm" onClick={() => setStatsClient(c)} title="Статистика клиента">📊 Stats</button>
-                            )}
+                            <button className="btn btn-outline btn-sm" onClick={() => setStatsClient(c)} title="Статистика клиента">📊 Stats</button>
                             {isXray && (
                               c.has_config
                                 ? <CopySubButton clientId={c.id} />

@@ -1,4 +1,4 @@
-import initSqlJs, { type Database } from 'sql.js';
+import Database from 'better-sqlite3';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -9,28 +9,42 @@ import { extractPeerId } from './peerId.js';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DB_PATH = process.env.DB_PATH || path.join(__dirname, '../../data/panel.db');
 
-let db: Database | null = null;
+type Db = Database.Database;
 
-function assertDb(): Database {
+let db: Db | null = null;
+
+function assertDb(): Db {
   if (!db) throw new Error('Database not initialized — call getDb() first.');
   return db;
 }
 
-export async function getDb(): Promise<Database> {
+// Раньше здесь был sql.js: база целиком жила в памяти, а на диск писался её полный
+// дамп (db.export() + writeFileSync) с дебаунсом после каждого run(). Это давало
+// два постоянных источника боли:
+//   - запись ВСЕЙ базы при любом изменении. Воркер статистики пишет раз в минуту,
+//     так что 22-мегабайтный файл переписывался целиком примерно 1440 раз в сутки;
+//   - процесс держал свою копию в памяти и затирал файл при следующем сохранении,
+//     поэтому любую правку БД снаружи приходилось делать с остановленным backend'ом.
+// better-sqlite3 пишет инкрементально и работает с файлом напрямую — оба пункта
+// снимаются, а публичный API модуля (query/queryOne/run) остался прежним.
+export async function getDb(): Promise<Db> {
   if (db) return db;
 
-  const SQL = await initSqlJs();
+  const dir = path.dirname(DB_PATH);
+  if (DB_PATH !== ':memory:' && !fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 
-  if (fs.existsSync(DB_PATH)) {
-    const fileBuffer = fs.readFileSync(DB_PATH);
-    db = new SQL.Database(fileBuffer);
-  } else {
-    db = new SQL.Database();
-  }
+  db = new Database(DB_PATH);
+  // WAL: читатели не блокируют писателя. NORMAL — обычный компромисс для WAL,
+  // потеря возможна только при отказе питания, не при падении процесса.
+  db.pragma('journal_mode = WAL');
+  db.pragma('synchronous = NORMAL');
+  // foreign_keys НЕ включаем: sql.js их не применял, и включение изменило бы
+  // поведение уже написанного кода (он удаляет связанные строки вручную).
 
   initSchema();
   migrateEncryption();
   migrateClientPeerIds();
+  purgeOrphanStats();
   return db;
 }
 
@@ -42,31 +56,32 @@ const ENC_MIGRATION_KEY = 'enc_migration_v1';
 function migrateEncryption(): void {
   const d = assertDb();
 
-  const flag = d.prepare("SELECT value FROM settings WHERE key = ?");
-  flag.bind([ENC_MIGRATION_KEY]);
-  const done = flag.step();
-  flag.free();
+  const done = d.prepare('SELECT value FROM settings WHERE key = ?').get(ENC_MIGRATION_KEY);
   if (done) return;
 
-  const stmt = d.prepare('SELECT id, password, private_key FROM servers');
+  const rows = d.prepare('SELECT id, password, private_key FROM servers').all() as Array<{
+    id: string; password: string | null; private_key: string | null;
+  }>;
+
   const updates: Array<{ id: string; password: string | null; private_key: string | null }> = [];
-  while (stmt.step()) {
-    const row = stmt.getAsObject() as { id: string; password: string | null; private_key: string | null };
+  for (const row of rows) {
     const newPass = row.password && !isEncrypted(row.password) ? (encrypt(row.password) ?? null) : null;
     const newKey  = row.private_key && !isEncrypted(row.private_key) ? (encrypt(row.private_key) ?? null) : null;
     if (newPass || newKey) {
       updates.push({ id: row.id, password: newPass ?? row.password, private_key: newKey ?? row.private_key });
     }
   }
-  stmt.free();
-  for (const u of updates) {
-    d.run('UPDATE servers SET password = ?, private_key = ? WHERE id = ?', [u.password, u.private_key, u.id]);
-  }
-  d.run('INSERT INTO settings (key, value) VALUES (?, ?)', [ENC_MIGRATION_KEY, 'done']);
+
+  const upd = d.prepare('UPDATE servers SET password = ?, private_key = ? WHERE id = ?');
+  const apply = d.transaction(() => {
+    for (const u of updates) upd.run(u.password, u.private_key, u.id);
+    d.prepare('INSERT INTO settings (key, value) VALUES (?, ?)').run(ENC_MIGRATION_KEY, 'done');
+  });
+  apply();
+
   if (updates.length) {
     logger.info({ count: updates.length }, 'Encrypted plaintext credentials in DB');
   }
-  save();
 }
 
 // Для существующих БД (где CREATE TABLE clients был без peer_id) — добавляем колонку.
@@ -78,42 +93,55 @@ const PEER_ID_MIGRATION_KEY = 'peer_id_migration_v1';
 function migrateClientPeerIds(): void {
   const d = assertDb();
 
-  // ALTER TABLE если колонки нет (для уже существующих БД)
-  const info = d.exec("PRAGMA table_info('clients')")[0];
-  const hasColumn = info?.values.some((row) => row[1] === 'peer_id');
-  if (!hasColumn) d.run("ALTER TABLE clients ADD COLUMN peer_id TEXT");
+  const columns = d.prepare("PRAGMA table_info('clients')").all() as Array<{ name: string }>;
+  if (!columns.some(c => c.name === 'peer_id')) {
+    d.exec('ALTER TABLE clients ADD COLUMN peer_id TEXT');
+  }
 
-  const flag = d.prepare("SELECT value FROM settings WHERE key = ?");
-  flag.bind([PEER_ID_MIGRATION_KEY]);
-  const done = flag.step();
-  flag.free();
+  const done = d.prepare('SELECT value FROM settings WHERE key = ?').get(PEER_ID_MIGRATION_KEY);
   if (done) return;
 
-  const stmt = d.prepare(`
+  const rows = d.prepare(`
     SELECT c.id, c.config, p.type FROM clients c
     JOIN protocols p ON p.id = c.protocol_id
     WHERE c.peer_id IS NULL
-  `);
+  `).all() as Array<{ id: string; config: string | null; type: string }>;
+
   const updates: Array<{ id: string; peer_id: string }> = [];
-  while (stmt.step()) {
-    const row = stmt.getAsObject() as { id: string; config: string | null; type: string };
+  for (const row of rows) {
     const peerId = extractPeerId(row.config, row.type);
     if (peerId) updates.push({ id: row.id, peer_id: peerId });
   }
-  stmt.free();
-  for (const u of updates) {
-    d.run('UPDATE clients SET peer_id = ? WHERE id = ?', [u.peer_id, u.id]);
-  }
-  d.run('INSERT INTO settings (key, value) VALUES (?, ?)', [PEER_ID_MIGRATION_KEY, 'done']);
+
+  const upd = d.prepare('UPDATE clients SET peer_id = ? WHERE id = ?');
+  const apply = d.transaction(() => {
+    for (const u of updates) upd.run(u.peer_id, u.id);
+    d.prepare('INSERT INTO settings (key, value) VALUES (?, ?)').run(PEER_ID_MIGRATION_KEY, 'done');
+  });
+  apply();
+
   if (updates.length) {
     logger.info({ count: updates.length }, 'Backfilled peer_id for existing clients');
   }
-  save();
+}
+
+// Снимки статистики удалённых клиентов раньше оставались в базе навсегда: удаление
+// клиента их не трогало, а периодическая чистка работает только по возрасту.
+// Это и было основной массой файла БД. Чистим один раз при старте — строки
+// недостижимы, эндпоинт статистики требует существующего клиента.
+function purgeOrphanStats(): void {
+  const d = assertDb();
+  const res = d.prepare(
+    'DELETE FROM client_stats WHERE client_id NOT IN (SELECT id FROM clients)',
+  ).run();
+  if (res.changes > 0) {
+    logger.info({ removed: res.changes }, 'Purged stats of deleted clients');
+    d.exec('VACUUM');
+  }
 }
 
 function initSchema(): void {
-  const d = assertDb();
-  d.run(`
+  assertDb().exec(`
     CREATE TABLE IF NOT EXISTS servers (
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
@@ -188,61 +216,42 @@ function initSchema(): void {
       value TEXT NOT NULL
     );
   `);
-  save();
 }
 
-// sql.js — in-memory БД, нужно периодически писать снимок на диск.
-// save() — синхронная запись прямо сейчас (для миграций, shutdown).
-// requestSave() — дебаунс: при шторме run() пишем диск 1 раз в SAVE_DEBOUNCE_MS.
-const SAVE_DEBOUNCE_MS = 250;
-let saveTimer: NodeJS.Timeout | null = null;
-let saveDirty = false;
+// Данные попадают на диск сразу, отдельный снимок больше не нужен. Функции
+// оставлены, потому что их зовёт код за пределами модуля (graceful shutdown,
+// разовые скрипты обслуживания).
+export function save(): void { /* no-op: better-sqlite3 пишет синхронно */ }
 
-export function save(): void {
-  saveDirty = false;
-  if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; }
-  const data = assertDb().export();
-  const dir = path.dirname(DB_PATH);
-  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-  fs.writeFileSync(DB_PATH, Buffer.from(data));
-}
-
-function requestSave(): void {
-  saveDirty = true;
-  if (saveTimer) return;
-  saveTimer = setTimeout(() => {
-    saveTimer = null;
-    if (saveDirty) {
-      try { save(); }
-      catch (e) { logger.error({ err: e }, 'DB save failed'); }
-    }
-  }, SAVE_DEBOUNCE_MS);
-}
-
-// Вызывается при graceful shutdown — гарантирует, что незаписанные данные на диске.
 export function flushSave(): void {
-  if (saveDirty) save();
+  if (!db) return;
+  // Переносит WAL в основной файл и закрывает дескриптор — чтобы после остановки
+  // контейнера рядом с panel.db не оставалось -wal/-shm.
+  try { db.pragma('wal_checkpoint(TRUNCATE)'); } catch { /* база уже закрыта */ }
+  db.close();
+  db = null;
 }
 
-type SqlParams = ReadonlyArray<string | number | null | Uint8Array>;
+type SqlParams = ReadonlyArray<string | number | boolean | null | undefined | Uint8Array>;
+
+// sql.js молча принимал undefined и boolean, better-sqlite3 на них бросает.
+// Приводим сами, чтобы поведение вызывающего кода не изменилось.
+function normalize(params: SqlParams): Array<string | number | null | Uint8Array> {
+  return params.map(p => {
+    if (p === undefined) return null;
+    if (typeof p === 'boolean') return p ? 1 : 0;
+    return p;
+  });
+}
 
 export function query<T = Record<string, unknown>>(sql: string, params: SqlParams = []): T[] {
-  const stmt = assertDb().prepare(sql);
-  stmt.bind(params as any);
-  const rows: T[] = [];
-  while (stmt.step()) {
-    rows.push(stmt.getAsObject() as T);
-  }
-  stmt.free();
-  return rows;
+  return assertDb().prepare(sql).all(...normalize(params)) as T[];
 }
 
 export function run(sql: string, params: SqlParams = []): void {
-  assertDb().run(sql, params as any);
-  requestSave();
+  assertDb().prepare(sql).run(...normalize(params));
 }
 
 export function queryOne<T = Record<string, unknown>>(sql: string, params: SqlParams = []): T | null {
-  const rows = query<T>(sql, params);
-  return rows[0] || null;
+  return (assertDb().prepare(sql).get(...normalize(params)) as T | undefined) ?? null;
 }

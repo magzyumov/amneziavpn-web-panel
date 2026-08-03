@@ -1,7 +1,7 @@
 // Доменные модели проекта.
 
 export type AuthType = 'password' | 'key';
-export type ProtocolType = 'awg2' | 'wireguard' | 'xray' | 'mtproxy' | 'telemt';
+export type ProtocolType = 'awg2' | 'wireguard' | 'xray' | 'telemt';
 export type ContainerStatus = 'running' | 'exited' | 'restarting' | 'paused' | 'dead' | 'created' | 'not_found';
 
 export interface Server {
@@ -120,14 +120,9 @@ export interface XrayConfig {
   xhttpMode?: string;
 }
 
-// Telegram MTProto-прокси (mtproxy / telemt). Это не VPN: проксируют только
-// трафик Telegram. На уровне протокола храним порт и FakeTLS-домен; каждый
-// клиент = отдельный secret, из которого строится tg://proxy ссылка.
-export interface MtproxyConfig {
-  port: number;
-  tlsDomain: string; // непусто = FakeTLS (ee-secret), пусто = secure mode (dd-secret)
-}
-
+// Telegram MTProto-прокси (telemt). Это не VPN: проксирует только трафик
+// Telegram. На уровне протокола храним порт и FakeTLS-домен; каждый клиент =
+// отдельный secret, из которого строится tg://proxy ссылка.
 export interface TelemtConfig {
   port: number;
   tlsDomain: string; // Telemt всегда работает в FakeTLS-режиме
@@ -136,7 +131,7 @@ export interface TelemtConfig {
 export interface InstallResult {
   containerName: string;
   port: number;
-  config: Awg2Config | WireGuardConfig | XrayConfig | MtproxyConfig | TelemtConfig;
+  config: Awg2Config | WireGuardConfig | XrayConfig | TelemtConfig;
 }
 
 export interface AddClientResult {

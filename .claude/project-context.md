@@ -55,7 +55,6 @@ Web-панель управления AmneziaVPN. Backend по SSH подклю�
 | AWG2 | awg2.ts | AmneziaWG (userspace amneziawg-go, без kernel-модуля) |
 | WireGuard | wireguard.ts | kernel-модуль `wireguard` (alpine+wireguard-tools); install перезапускает контейнер после configure, чтобы `start.sh` поднял wg0 |
 | Xray | xray.ts | VLESS+Reality; addClient правит server.json внутри контейнера и `docker restart` |
-| MTProxy | mtproxy.ts | Telegram MTProto-прокси |
 | Telemt | telemt.ts | сторонний MTProto с FakeTLS; per-client stats |
 | common.ts | — | `buildImage` (skip если образ есть), `writeRemoteFile`/`readRemoteFile`/`readContainerFile` (base64), `renderTemplate`, rand* |
 | containers.ts | — | скан существующих контейнеров/клиентов на сервере |

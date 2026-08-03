@@ -1,7 +1,8 @@
 import { exec, execSudo } from '../ssh.js';
-import { buildImage } from './common.js';
+import { buildImage, runContainer } from './common.js';
 import { DOCKERFILES } from './dockerfiles.js';
 import type { Server } from '../../types.js';
+import { UserError } from '../errors.js';
 
 // AmneziaDNS — серверный unbound-резолвер на фиксированном IP в amnezia-dns-net.
 // На него указывают DNS-настройки клиентов (защита от DNS-leak: наружу DoT к Cloudflare).
@@ -51,21 +52,24 @@ export async function resolveClientDns(server: Server): Promise<string> {
   return (await isDnsRunning(server)) ? AMNEZIA_DNS_IP : '1.1.1.1, 8.8.8.8';
 }
 
-export async function installDns(server: Server): Promise<{ containerName: string; ip: string }> {
-  await ensureDnsNetwork(server);
-  await buildImage(server, IMAGE, BUILD_DIR, DOCKERFILES.dns);
-  await execSudo(server, `docker rm -f ${CONTAINER} 2>/dev/null || true`);
-  const runRes = await execSudo(server, [
-    `docker run -d`,
+export function dnsRunArgs(): string[] {
+  return [
     `--log-driver none`,
     `--restart always`,
     `--network ${NET}`,
     `--ip=${AMNEZIA_DNS_IP}`,
     `--name ${CONTAINER}`,
     IMAGE,
-  ].join(' \\\n  '));
+  ];
+}
+
+export async function installDns(server: Server): Promise<{ containerName: string; ip: string }> {
+  await ensureDnsNetwork(server);
+  await buildImage(server, IMAGE, BUILD_DIR, DOCKERFILES.dns);
+  await execSudo(server, `docker rm -f ${CONTAINER} 2>/dev/null || true`);
+  const runRes = await runContainer(server, dnsRunArgs());
   if (runRes.code !== 0) {
-    throw new Error(`Failed to start AmneziaDNS container: ${runRes.stderr || runRes.stdout}`);
+    throw new UserError(`Failed to start AmneziaDNS container: ${runRes.stderr || runRes.stdout}`);
   }
   return { containerName: CONTAINER, ip: AMNEZIA_DNS_IP };
 }

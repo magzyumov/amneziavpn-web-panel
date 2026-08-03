@@ -10,7 +10,7 @@ import { listAmneziaContainers, ensureDocker, scanExistingProtocols, installDns,
 import { assertContainerName, assertPort } from '../services/shell.js';
 import { createSubscription, getVpsHost } from '../services/subscription.js';
 import { logger } from '../services/logger.js';
-import type { Server, ProtocolType } from '../types.js';
+import type { Server, Protocol, ProtocolType } from '../types.js';
 
 const router = Router();
 router.use(authMiddleware);
@@ -26,7 +26,7 @@ const serverSchema = z.object({
 });
 
 const importSchema = z.object({
-  type: z.enum(['awg2', 'wireguard', 'xray', 'mtproxy', 'telemt']),
+  type: z.enum(['awg2', 'wireguard', 'xray', 'telemt']),
   containerName: z.string().min(1).max(128),
   port: z.coerce.number().int().min(1).max(65535).nullable().optional(),
   config: z.record(z.unknown()).optional(),
@@ -59,10 +59,20 @@ router.put('/:id', validateBody(serverSchema), (req: Request, res: Response) => 
   if (!server) return res.status(404).json({ error: 'Server not found' });
 
   const { name, host, port, username, auth_type, password, private_key } = req.body;
+
+  // Пустое поле = «не менять». Форма редактирования НИКОГДА не подставляет
+  // текущий секрет в input (его незачем отдавать в браузер), поэтому раньше
+  // сохранение с нетронутым полем пароля затирало креды: панель мгновенно
+  // теряла доступ к серверу, а причина выглядела как «SSH перестал пускать».
+  const keep = (incoming: unknown, current: string | null | undefined): string | null =>
+    typeof incoming === 'string' && incoming.length > 0
+      ? (encrypt(incoming) ?? null)
+      : (current ?? null);
+
   run(
     'UPDATE servers SET name=?, host=?, port=?, username=?, auth_type=?, password=?, private_key=? WHERE id=?',
     [name, host, port ?? server.port, username, auth_type ?? server.auth_type,
-     encrypt(password) || null, encrypt(private_key) || null, req.params.id]
+     keep(password, server.password), keep(private_key, server.private_key), req.params.id]
   );
 
   // Сбрасываем SSH-соединение чтобы подключиться с новыми данными
@@ -155,11 +165,12 @@ router.post('/:id/import-protocol', validateBody(importSchema), (req: Request, r
   const existing = queryOne<{ id: string }>('SELECT id FROM protocols WHERE server_id = ? AND container_name = ?', [server.id, containerName]);
   if (existing) return res.status(409).json({ error: 'Protocol already imported', id: existing.id });
 
-  const names: Record<ProtocolType, string> = { awg2: 'AmneziaWG 2.0', wireguard: 'WireGuard', xray: 'Xray VLESS Reality', mtproxy: 'MTProxy', telemt: 'Telemt' };
+  // name не пишем — см. комментарий в routes/protocols.ts: заголовок выводится
+  // из type + config, а снимок имени в БД только вносил путаницу.
   const protocolId = uuidv4();
   run(
     'INSERT INTO protocols (id, server_id, type, name, port, container_name, status, config) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-    [protocolId, server.id, type, names[type] || type, port ?? null, containerName, 'running', JSON.stringify(config || {})]
+    [protocolId, server.id, type, null, port ?? null, containerName, 'running', JSON.stringify(config || {})]
   );
 
   let importedClients = 0;
@@ -190,16 +201,10 @@ router.post('/:id/import-protocol', validateBody(importSchema), (req: Request, r
     importedClients++;
   }
 
-  res.json({
-    id: protocolId,
-    type,
-    name: names[type] || type,
-    port,
-    containerName,
-    status: 'running',
-    config: JSON.stringify(config || {}),
-    importedClients,
-  });
+  // Как и при установке — строка целиком в форме GET /protocols/server/:serverId
+  // (config объектом, а не строкой), плюс счётчик для окна сканирования.
+  const row = queryOne<Protocol>('SELECT * FROM protocols WHERE id = ?', [protocolId]);
+  res.json({ ...row, config: row?.config ? JSON.parse(row.config) : {}, importedClients });
 });
 
 export default router;

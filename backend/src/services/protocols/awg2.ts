@@ -1,16 +1,18 @@
-import { exec, execSudo } from '../ssh.js';
+import { execSudo } from '../ssh.js';
 import {
-  assertContainerName, assertPort, shInt, assertMagicHeader, assertUint32Range, assertWgKey, sh,
+  assertContainerName, assertPort, shInt, assertMagicHeader, assertUint32Range, assertWgKey,
 } from '../shell.js';
-import {
-  randInt, randPort,
-  writeRemoteFile, readRemoteFile, buildImage, renderTemplate, assertPortFree, removePeerBlock,
-} from './common.js';
+import { randInt, randPort, renderTemplate } from './common.js';
 import {
   DOCKERFILES, START_SCRIPTS, CONFIGURE_SCRIPTS,
   AWG2_CLIENT_TEMPLATE, AWG2_CLIENT_JSON_TEMPLATE,
 } from './dockerfiles.js';
 import { resolveClientDns } from './dns.js';
+import {
+  installWgLike, assertContainerRunning, genPeerKeys, nextClientIp, addPeer, removePeer,
+  type WgFlavor,
+} from './wgCommon.js';
+import { UserError } from '../errors.js';
 import type {
   Server, Protocol, AddClientResult, InstallResult, Awg2Config,
 } from '../../types.js';
@@ -59,7 +61,7 @@ const HP_MIN_JUNK = 12;
 // Генерация S1-S4 — копия AwgInstaller::generateAwgParameters: значения уникальны
 // и не дают совпадающих итоговых размеров пакетов. min поднимается до HP_MIN_JUNK,
 // когда включена header protection (AWG 3.0).
-function genPacketSizes(min: number): { s1: number; s2: number; s3: number; s4: number } {
+export function genPacketSizes(min: number): { s1: number; s2: number; s3: number; s4: number } {
   const used = new Set<number>();
   const lo1 = Math.max(15, min), lo3 = Math.max(0, min), lo4 = Math.max(0, min);
   const s1 = randInt(lo1, 149); used.add(s1);
@@ -88,21 +90,31 @@ function genMagicHeaderRanges(): [string, string, string, string] {
   return out as [string, string, string, string];
 }
 
+// Тег образа включает версию amneziawg-go: buildImage делает ранний выход по
+// существующему образу, поэтому переезд на новую базу возможен только через новый тег.
+const FLAVOR: WgFlavor = {
+  tool: 'awg',
+  iface: 'awg0',
+  confDir: '/opt/amnezia/awg',
+  containerName: 'amnezia-awg2',
+  imageName: 'amnezia-awg2:3.0.3',
+  buildDir: '/opt/amnezia/amnezia-awg2',
+  label: 'AWG2',
+};
+
+const SUBNET_PREFIX = '10.8.1';
+
 export async function installAWG2(server: Server, options: InstallOptions = {}): Promise<InstallResult> {
   const port      = assertPort(options.port || randPort());
-  const subnetIp  = '10.8.1.0';
+  const subnetIp  = `${SUBNET_PREFIX}.0`;
   const subnetCidr = '24';
-  const containerName = 'amnezia-awg2';
-  // Тег включает версию amneziawg-go: buildImage делает ранний выход по существующему
-  // образу, поэтому переезд на новую базу возможен только через новый тег.
-  const imageName = 'amnezia-awg2:3.0.3';
-  const buildDir  = '/opt/amnezia/amnezia-awg2';
-
   // Параметры обфускации AWG 2.0 — дефолты и алгоритм один-в-один с апстримом
   // (AwgInstaller::generateAwgParameters). Все значения валидируем перед
   // интерполяцией в configure-script.
+  // Пустая строка = «поле в форме очищено» = дефолт, а не 0: форма шлёт '' для
+  // не заполненных числовых полей.
   const intOpt = (v: number | undefined, fallback: number, label: string): number =>
-    v == null ? fallback : shInt(v, { min: 0, max: 4294967295, label });
+    v == null || (v as unknown) === '' ? fallback : shInt(v, { min: 0, max: 4294967295, label });
   const jc   = intOpt(options.jc,   randInt(4, 6), 'jc');   // upstream bounded(4,7)
   const jmin = intOpt(options.jmin, 10,            'jmin');
   const jmax = intOpt(options.jmax, 50,            'jmax');
@@ -122,7 +134,7 @@ export async function installAWG2(server: Server, options: InstallOptions = {}):
   if (headerProtection) {
     for (const [label, v] of [['s1', s1], ['s2', s2], ['s3', s3], ['s4', s4]] as const) {
       if (v < HP_MIN_JUNK) {
-        throw new Error(`Invalid ${label}: header protection requires S1-S4 >= ${HP_MIN_JUNK}, got ${v}`);
+        throw new UserError(`Invalid ${label}: header protection requires S1-S4 >= ${HP_MIN_JUNK}, got ${v}`);
       }
     }
   }
@@ -146,88 +158,53 @@ export async function installAWG2(server: Server, options: InstallOptions = {}):
   const h3 = options.h3 != null ? assertMagicHeader(options.h3, 'h3') : gh[2];
   const h4 = options.h4 != null ? assertMagicHeader(options.h4, 'h4') : gh[3];
 
-  // Освобождаем порт от своего старого контейнера (переустановка), затем проверяем,
-  // что порт не занят кем-то ещё на хосте.
-  await execSudo(server, `docker rm -f ${containerName} 2>/dev/null || true`);
-  await assertPortFree(server, port, containerName);
-
-  await buildImage(server, imageName, buildDir, DOCKERFILES.awg2);
-
-  await execSudo(server, `mkdir -p /opt/amnezia/awg`);
-  await writeRemoteFile(server, `/opt/amnezia/awg/start.sh`, START_SCRIPTS.awg2(subnetIp, subnetCidr, server.host));
-  await execSudo(server, `chmod +x /opt/amnezia/awg/start.sh`);
-
-  await execSudo(server, [
-    `docker run -d`,
-    `--log-driver none`,
-    `--restart always`,
-    `--privileged`,
-    `--cap-add=NET_ADMIN`,
-    `--cap-add=SYS_MODULE`,
-    `-p ${port}:${port}/udp`,
-    `-v /lib/modules:/lib/modules`,
-    `-v /opt/amnezia:/opt/amnezia`,
-    `--sysctl="net.ipv4.conf.all.src_valid_mark=1"`,
-    `--name ${containerName}`,
-    imageName,
-  ].join(' \\\n  '));
-  await execSudo(server, `docker network connect amnezia-dns-net ${containerName}`);
-
   // HeaderProtectionKey (AWG 3.0) генерируем тем же `awg genkey`, что и остальные
-  // ключи — внутри уже запущенного контейнера. Это server-side параметр: одно и то
-  // же значение уходит и в awg0.conf, и в клиентские конфиги.
+  // ключи — внутри уже запущенного контейнера, поэтому configure-скрипт собирается
+  // отложенно (installWgLike вызовет это после docker run).
   let headerProtectionKey = '';
-  if (headerProtection) {
-    const hpkRes = await execSudo(server, `docker exec ${containerName} awg genkey`);
-    if (hpkRes.code !== 0 || !hpkRes.stdout.trim()) {
-      throw new Error(`Failed to generate AWG3 header protection key: ${hpkRes.stderr || 'empty output'}`);
+  const buildConfigureScript = async (): Promise<string> => {
+    if (headerProtection) {
+      const hpkRes = await execSudo(server, `docker exec ${FLAVOR.containerName} awg genkey`);
+      if (hpkRes.code !== 0 || !hpkRes.stdout.trim()) {
+        throw new UserError(`Failed to generate AWG3 header protection key: ${hpkRes.stderr || 'empty output'}`);
+      }
+      headerProtectionKey = assertWgKey(hpkRes.stdout.trim(), 'headerProtectionKey');
     }
-    headerProtectionKey = assertWgKey(hpkRes.stdout.trim(), 'headerProtectionKey');
-  }
-  // Пустое значение параметра = ошибка парсинга у awg setconf, поэтому строку
-  // либо пишем целиком, либо не пишем вовсе (вместо неё — комментарий).
-  const awg3ServerParams = headerProtectionKey
-    ? `HeaderProtectionKey = ${headerProtectionKey}`
-    : '# AWG 3.0 header protection disabled';
+    // Пустое значение параметра = ошибка парсинга у awg setconf, поэтому строку
+    // либо пишем целиком, либо не пишем вовсе (вместо неё — комментарий).
+    const awg3ServerParams = headerProtectionKey
+      ? `HeaderProtectionKey = ${headerProtectionKey}`
+      : '# AWG 3.0 header protection disabled';
 
-  const awg2ConfigureScript = [
-    `export AWG3_SERVER_PARAMS='${awg3ServerParams}'`,
-    `export AWG_SUBNET_IP=${subnetIp}`,
-    `export WIREGUARD_SUBNET_CIDR=${subnetCidr}`,
-    `export AWG_SERVER_PORT=${port}`,
-    `export JUNK_PACKET_COUNT=${jc}`,
-    `export JUNK_PACKET_MIN_SIZE=${jmin}`,
-    `export JUNK_PACKET_MAX_SIZE=${jmax}`,
-    `export INIT_PACKET_JUNK_SIZE=${s1}`,
-    `export RESPONSE_PACKET_JUNK_SIZE=${s2}`,
-    `export COOKIE_REPLY_PACKET_JUNK_SIZE=${s3}`,
-    `export TRANSPORT_PACKET_JUNK_SIZE=${s4}`,
-    `export INIT_PACKET_MAGIC_HEADER=${h1}`,
-    `export RESPONSE_PACKET_MAGIC_HEADER=${h2}`,
-    `export UNDERLOAD_PACKET_MAGIC_HEADER=${h3}`,
-    `export TRANSPORT_PACKET_MAGIC_HEADER=${h4}`,
-    '',
-    CONFIGURE_SCRIPTS.awg2,
-  ].join('\n');
+    return [
+      `export AWG3_SERVER_PARAMS='${awg3ServerParams}'`,
+      `export AWG_SUBNET_IP=${subnetIp}`,
+      `export WIREGUARD_SUBNET_CIDR=${subnetCidr}`,
+      `export AWG_SERVER_PORT=${port}`,
+      `export JUNK_PACKET_COUNT=${jc}`,
+      `export JUNK_PACKET_MIN_SIZE=${jmin}`,
+      `export JUNK_PACKET_MAX_SIZE=${jmax}`,
+      `export INIT_PACKET_JUNK_SIZE=${s1}`,
+      `export RESPONSE_PACKET_JUNK_SIZE=${s2}`,
+      `export COOKIE_REPLY_PACKET_JUNK_SIZE=${s3}`,
+      `export TRANSPORT_PACKET_JUNK_SIZE=${s4}`,
+      `export INIT_PACKET_MAGIC_HEADER=${h1}`,
+      `export RESPONSE_PACKET_MAGIC_HEADER=${h2}`,
+      `export UNDERLOAD_PACKET_MAGIC_HEADER=${h3}`,
+      `export TRANSPORT_PACKET_MAGIC_HEADER=${h4}`,
+      '',
+      CONFIGURE_SCRIPTS.awg2,
+    ].join('\n');
+  };
 
-  const awg2ConfigurePath = '/opt/amnezia/configure_awg.sh';
-  await writeRemoteFile(server, awg2ConfigurePath, awg2ConfigureScript);
-  const awg2ConfigureRes = await execSudo(server, `docker exec ${containerName} bash ${awg2ConfigurePath}`);
-  if (awg2ConfigureRes.code !== 0) {
-    throw new Error(`AWG2 configure script failed (exit ${awg2ConfigureRes.code}): ${awg2ConfigureRes.stderr || awg2ConfigureRes.stdout}`);
-  }
-
-  // start.sh поднимает awg0 только если awg0.conf существует на момент старта
-  // контейнера. При установке конфиг создаётся configure-скриптом ПОСЛЕ старта,
-  // поэтому интерфейс остаётся не поднятым (awg set падает с "No such device").
-  // Перезапускаем — теперь start.sh найдёт awg0.conf и поднимет интерфейс.
-  const awg2RestartRes = await execSudo(server, `docker restart ${containerName}`);
-  if (awg2RestartRes.code !== 0) {
-    throw new Error(`Failed to restart AWG2 container after configure: ${awg2RestartRes.stderr || awg2RestartRes.stdout}`);
-  }
-
-  const serverPubKey = await readRemoteFile(server, '/opt/amnezia/awg/wireguard_server_public_key.key');
-  if (!serverPubKey) throw new Error('AWG2 configure script did not generate server public key');
+  const serverPubKey = await installWgLike(server, FLAVOR, {
+    port, subnetIp, subnetCidr,
+    dockerfile: DOCKERFILES.awg2,
+    startScript: START_SCRIPTS.awg2(subnetIp, subnetCidr, server.host),
+    configureScript: buildConfigureScript,
+    configurePath: '/opt/amnezia/configure_awg.sh',
+    serverPubKeyPath: `${FLAVOR.confDir}/wireguard_server_public_key.key`,
+  });
 
   const config: Awg2Config = {
     port, subnetIp, subnetCidr, serverPubKey,
@@ -242,7 +219,7 @@ export async function installAWG2(server: Server, options: InstallOptions = {}):
     contentPaddingAddition, rekeyAfterTime, rekeyTimeout,
     rejectAfterTime, keepaliveTimeout, maxHandshakeAttempts,
   };
-  return { containerName, port, config };
+  return { containerName: FLAVOR.containerName, port, config };
 }
 
 export async function addAWG2Client(server: Server, protocol: Protocol, _clientName: string): Promise<AddClientResult> {
@@ -251,46 +228,21 @@ export async function addAWG2Client(server: Server, protocol: Protocol, _clientN
   const cn = protocol.container_name;
 
   if (!c.serverPubKey || !c.port) {
-    throw new Error('AWG2 protocol config is incomplete (missing serverPubKey or port). Reinstall the protocol.');
+    throw new UserError('AWG2 protocol config is incomplete (missing serverPubKey or port). Reinstall the protocol.');
   }
 
-  const statusRes = await exec(server, `docker inspect --format='{{.State.Status}}' ${cn} 2>/dev/null || echo ''`);
-  if (statusRes.stdout.trim() !== 'running') {
-    throw new Error(`AWG2 container '${cn}' is not running. Start the protocol first.`);
-  }
+  await assertContainerRunning(server, FLAVOR);
+  const { clientPrivKey, clientPubKey } = await genPeerKeys(server, FLAVOR);
 
-  const privRes = await execSudo(server, `docker exec ${cn} awg genkey`);
-  if (privRes.code !== 0 || !privRes.stdout.trim()) {
-    throw new Error(`Failed to generate AWG2 client private key: ${privRes.stderr || 'empty output'}`);
-  }
-  const clientPrivKey = privRes.stdout.trim();
-
-  const pubRes = await execSudo(server, `echo '${clientPrivKey}' | docker exec -i ${cn} awg pubkey`);
-  if (pubRes.code !== 0 || !pubRes.stdout.trim()) {
-    throw new Error(`Failed to generate AWG2 client public key: ${pubRes.stderr || 'empty output'}`);
-  }
-  const clientPubKey = pubRes.stdout.trim();
-
-  const pskRes = await execSudo(server, `docker exec ${cn} awg genpsk`);
+  // В отличие от WireGuard здесь PSK свой у каждого клиента, а не общий серверный.
+  const pskRes = await execSudo(server, `docker exec ${FLAVOR.containerName} awg genpsk`);
   const presharedKey = pskRes.stdout.trim();
   if (!presharedKey) {
-    throw new Error('Failed to generate AWG2 PSK: empty output');
+    throw new UserError('Failed to generate AWG2 PSK: empty output');
   }
 
-  const peersRes = await execSudo(server, `docker exec ${cn} awg show awg0 peers 2>/dev/null | wc -l`);
-  const peerCount = parseInt(peersRes.stdout.trim()) || 0;
-  const clientIp = `10.8.1.${peerCount + 2}`;
-
-  const pskTmp = `/tmp/.psk_${Date.now()}`;
-  const pskB64 = Buffer.from(presharedKey, 'utf8').toString('base64');
-  await execSudo(server, `docker exec ${cn} sh -c "echo '${pskB64}' | base64 -d > ${pskTmp}"`);
-  const addPeerRes = await execSudo(server, `docker exec ${cn} sh -c "awg set awg0 peer ${clientPubKey} preshared-key ${pskTmp} allowed-ips ${clientIp}/32 && rm -f ${pskTmp}"`);
-  if (addPeerRes.code !== 0) {
-    throw new Error(`Failed to add AWG2 peer: ${addPeerRes.stderr || addPeerRes.stdout}`);
-  }
-
-  const awgPeerEntry = Buffer.from(`\n[Peer]\nPublicKey = ${clientPubKey}\nPresharedKey = ${presharedKey}\nAllowedIPs = ${clientIp}/32\n`).toString('base64');
-  await execSudo(server, `echo '${awgPeerEntry}' | base64 -d | docker exec -i ${cn} tee -a /opt/amnezia/awg/awg0.conf > /dev/null`);
+  const clientIp = await nextClientIp(server, FLAVOR, SUBNET_PREFIX);
+  await addPeer(server, FLAVOR, { clientPubKey, presharedKey, clientIp });
 
   const clientDns = await resolveClientDns(server);
 
@@ -360,13 +312,7 @@ export async function addAWG2Client(server: Server, protocol: Protocol, _clientN
   return { config: clientConf, configJson, type: 'awg2' };
 }
 
-// Отзыв клиента: убираем peer из живого awg0 и из awg0.conf (peerId = pubkey).
 export async function removeAWG2Client(server: Server, protocol: Protocol, peerId: string): Promise<void> {
   assertContainerName(protocol.container_name);
-  const cn = protocol.container_name;
-  await execSudo(server, `docker exec ${cn} awg set awg0 peer ${sh(peerId)} remove 2>/dev/null || true`);
-  const conf = await readRemoteFile(server, '/opt/amnezia/awg/awg0.conf');
-  if (conf) {
-    await writeRemoteFile(server, '/opt/amnezia/awg/awg0.conf', removePeerBlock(conf, peerId));
-  }
+  await removePeer(server, FLAVOR, peerId);
 }

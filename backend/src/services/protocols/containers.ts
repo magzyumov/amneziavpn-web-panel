@@ -2,6 +2,7 @@ import { exec, execSudo } from '../ssh.js';
 import { assertContainerName, shInt } from '../shell.js';
 import { readContainerFile } from './common.js';
 import type { Server, ProtocolType, ExecResult } from '../../types.js';
+import { UserError } from '../errors.js';
 
 export async function getContainerStatus(server: Server, containerName: string): Promise<string> {
   assertContainerName(containerName);
@@ -67,14 +68,14 @@ export async function ensureDocker(server: Server): Promise<boolean> {
   // иначе install падал бы позже непонятной ошибкой.
   const verify = await exec(server, 'docker --version 2>/dev/null');
   if (verify.code !== 0) {
-    throw new Error('Не удалось установить Docker на сервере (docker --version недоступен после установки).');
+    throw new UserError('Не удалось установить Docker на сервере (docker --version недоступен после установки).');
   }
   const active = await execSudo(server, 'systemctl is-active docker 2>/dev/null || echo inactive');
   if (active.stdout.trim() !== 'active') {
     await execSudo(server, 'systemctl start docker 2>/dev/null || true');
     const recheck = await execSudo(server, 'systemctl is-active docker 2>/dev/null || echo inactive');
     if (recheck.stdout.trim() !== 'active') {
-      throw new Error('Docker установлен, но служба не запускается (systemctl is-active docker != active).');
+      throw new UserError('Docker установлен, но служба не запускается (systemctl is-active docker != active).');
     }
   }
   return true;
@@ -90,7 +91,7 @@ export interface ScannedProtocol {
   clients: ScannedClient[];
 }
 
-// Сканирует /opt/amnezia/<proto>/* контейнеров AWG/WG/Xray и восстанавливает их конфиг.
+// Сканирует /opt/amnezia/<proto>/* контейнеров AWG/WG/Xray/Telemt и восстанавливает их конфиг.
 export async function scanExistingProtocols(server: Server): Promise<ScannedProtocol[]> {
   const found: ScannedProtocol[] = [];
 
@@ -98,6 +99,7 @@ export async function scanExistingProtocols(server: Server): Promise<ScannedProt
     { type: 'awg2',      containerName: 'amnezia-awg2',      confDir: '/opt/amnezia/awg' },
     { type: 'wireguard', containerName: 'amnezia-wireguard',  confDir: '/opt/amnezia/wireguard' },
     { type: 'xray',      containerName: 'amnezia-xray',       confDir: '/opt/amnezia/xray' },
+    { type: 'telemt',    containerName: 'amnezia-telemt',     confDir: '/opt/amnezia/telemt' },
   ];
 
   for (const c of candidates) {
@@ -129,6 +131,17 @@ export async function scanExistingProtocols(server: Server): Promise<ScannedProt
         h1: getConf('H1'), h2: getConf('H2'), h3: getConf('H3'), h4: getConf('H4'),
         i1: getConf('I1') ?? '', i2: getConf('I2') ?? '', i3: getConf('I3') ?? '',
         i4: getConf('I4') ?? '', i5: getConf('I5') ?? '',
+        // AWG 3.0 — восстанавливаем те же поля, что пишет installAWG2. Без этого
+        // клиенты, выпущенные после импорта, теряли бы header protection (сервер
+        // её требует) и не подключались.
+        headerProtectionKey: getConf('HeaderProtectionKey') ?? '',
+        contentPaddingAddition: getConf('ContentPaddingAddition') ?? '',
+        rekeyAfterTime: getConf('RekeyAfterTime') ?? '',
+        rekeyTimeout: getConf('RekeyTimeout') ?? '',
+        rejectAfterTime: getConf('RejectAfterTime') ?? '',
+        keepaliveTimeout: getConf('KeepaliveTimeout') ?? '',
+        maxHandshakeAttempts: getConf('MaxHandshakeAttempts') ?? '',
+        protocolVersion: getConf('HeaderProtectionKey') ? '3' : '2',
       };
     } else if (c.type === 'wireguard') {
       const pubKey  = await readContainerFile(server, c.containerName, `${c.confDir}/wireguard_server_public_key.key`);
@@ -137,6 +150,15 @@ export async function scanExistingProtocols(server: Server): Promise<ScannedProt
       const portMatch = confRaw.match(/ListenPort\s*=\s*(\d+)/);
       port = portMatch ? parseInt(portMatch[1]) : null;
       config = { port, subnetIp: '10.8.1.0', subnetCidr: '24', serverPubKey: pubKey };
+    } else if (c.type === 'telemt') {
+      // Конфиг собирается из config.base.toml (порт и FakeTLS-домен) и файла
+      // users (по строке `c_<12hex> = "<secret>"` на клиента).
+      const baseRaw = await readContainerFile(server, c.containerName, `${c.confDir}/config.base.toml`);
+      if (!baseRaw) continue;
+      const portMatch = baseRaw.match(/^\s*port\s*=\s*(\d+)/m);
+      port = portMatch ? parseInt(portMatch[1]) : null;
+      const domainMatch = baseRaw.match(/^\s*tls_domain\s*=\s*"([^"]*)"/m);
+      config = { port, tlsDomain: domainMatch ? domainMatch[1] : '' };
     } else if (c.type === 'xray') {
       let serverJson: any = null;
       try {
@@ -154,14 +176,25 @@ export async function scanExistingProtocols(server: Server): Promise<ScannedProt
     }
 
     let clients: ScannedClient[] = [];
-    try {
-      const raw = await readContainerFile(server, c.containerName, `${c.confDir}/clientsTable`);
-      const table: Array<{ clientId: string; userData?: { clientName?: string } }> = JSON.parse(raw);
-      clients = table.map(e => ({
-        clientId: e.clientId,
-        name: e.userData?.clientName || `client-${String(e.clientId).slice(0, 8)}`,
-      }));
-    } catch { /* ignore */ }
+    if (c.type === 'telemt') {
+      // У Telemt нет clientsTable: пользователи лежат в файле users строками
+      // `c_<12hex> = "<secret>"`. Имя ключа совпадает с peer_id, по которому
+      // мапится статистика, поэтому берём его как clientId.
+      const usersRaw = await readContainerFile(server, c.containerName, `${c.confDir}/users`);
+      clients = usersRaw.split('\n')
+        .map(l => l.match(/^\s*([A-Za-z0-9_]+)\s*=\s*"/))
+        .filter((m): m is RegExpMatchArray => m !== null)
+        .map(m => ({ clientId: m[1], name: m[1] }));
+    } else {
+      try {
+        const raw = await readContainerFile(server, c.containerName, `${c.confDir}/clientsTable`);
+        const table: Array<{ clientId: string; userData?: { clientName?: string } }> = JSON.parse(raw);
+        clients = table.map(e => ({
+          clientId: e.clientId,
+          name: e.userData?.clientName || `client-${String(e.clientId).slice(0, 8)}`,
+        }));
+      } catch { /* ignore */ }
+    }
 
     found.push({ type: c.type, containerName: c.containerName, status, port, config, clients });
   }
@@ -170,9 +203,12 @@ export async function scanExistingProtocols(server: Server): Promise<ScannedProt
 }
 
 export const PROTOCOLS: Record<ProtocolType, { name: string; description: string; icon: string }> = {
-  awg2:      { name: 'AmneziaWG 2.0',     description: 'WireGuard + расширенная обфускация DPI',  icon: '🛡️' },
+  // Тип протокола остаётся 'awg2', а контейнер — 'amnezia-awg2': это идентификатор
+  // из перечисления DockerContainer самого AmneziaVPN (Awg2), и контейнера
+  // 'amnezia-awg3' у апстрима нет — AWG 3.0 это набор параметров того же контейнера.
+  // Здесь только отображаемое имя.
+  awg2:      { name: 'AmneziaWG 3.0',      description: 'WireGuard + обфускация DPI и защита заголовков', icon: '🛡️' },
   xray:      { name: 'Xray VLESS Reality', description: 'VLESS + Reality — имитирует TLS трафик',  icon: '⚡' },
   wireguard: { name: 'WireGuard',          description: 'Классический WireGuard без обфускации',   icon: '🔒' },
-  mtproxy:   { name: 'MTProxy',            description: 'Telegram MTProto-прокси (только Telegram)', icon: '✈️' },
   telemt:    { name: 'Telemt',             description: 'Telegram-прокси с FakeTLS-маскировкой',    icon: '📨' },
 };

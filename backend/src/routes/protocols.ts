@@ -5,12 +5,14 @@ import { query, queryOne, run } from '../services/db.js';
 import { authMiddleware } from '../middleware/auth.js';
 import { validateBody } from '../middleware/validate.js';
 import {
-  installAWG2, installXray, installWireGuard, installMtproxy, installTelemt,
+  installAWG2, installXray, installWireGuard, installTelemt,
   getContainerStatus, getContainersHealth, startContainer, stopContainer,
   removeContainer, getContainerLogs, PROTOCOLS,
   isXrayStatsEnabled, enableXrayStats,
 } from '../services/protocols/index.js';
 import { prepareHost } from '../services/protocols/common.js';
+import { getProtocolsDrift, type ProtocolDrift } from '../services/protocols/drift.js';
+import { logger } from '../services/logger.js';
 import { shInt } from '../services/shell.js';
 import type { Server, Protocol, ProtocolType } from '../types.js';
 
@@ -18,7 +20,7 @@ const router = Router();
 router.use(authMiddleware);
 
 const installSchema = z.object({
-  type: z.enum(['awg2', 'wireguard', 'xray', 'mtproxy', 'telemt']),
+  type: z.enum(['awg2', 'wireguard', 'xray', 'telemt']),
   options: z.record(z.unknown()).optional().default({}),
 });
 
@@ -31,22 +33,34 @@ router.get('/server/:serverId', (req, res) => {
 
 // Реальные статусы всех контейнеров за один SSH-вызов
 router.get('/server/:serverId/health', async (req, res) => {
-  const protocols = query<Pick<Protocol, 'id' | 'container_name'>>(
-    'SELECT id, container_name FROM protocols WHERE server_id = ?', [req.params.serverId]);
-  if (!protocols.length) return res.json({});
+  const protocols = query<Pick<Protocol, 'id' | 'container_name' | 'type' | 'port'>>(
+    'SELECT id, container_name, type, port FROM protocols WHERE server_id = ?', [req.params.serverId]);
+  if (!protocols.length) return res.json({ statuses: {}, drift: {} });
 
   const server = queryOne<Server>('SELECT * FROM servers WHERE id = ?', [req.params.serverId]);
   if (!server) return res.status(404).json({ error: 'Server not found' });
 
   const statusMap = await getContainersHealth(server, protocols.map(p => p.container_name));
 
-  const result: Record<string, string> = {};
+  const statuses: Record<string, string> = {};
   for (const p of protocols) {
     const status = statusMap[p.container_name] ?? 'not_found';
     run('UPDATE protocols SET status = ? WHERE id = ?', [status, p.id]);
-    result[p.id] = status;
+    statuses[p.id] = status;
   }
-  res.json(result);
+
+  // Расхождение с тем, что панель поставила бы сейчас. Не ошибка — подсказка,
+  // что протокол стоит переустановить. Падение проверки не должно ронять health.
+  let drift: Record<string, ProtocolDrift> = {};
+  try {
+    drift = await getProtocolsDrift(server, protocols.map(p => ({
+      id: p.id, type: p.type, containerName: p.container_name, port: p.port,
+    })));
+  } catch (e) {
+    logger.warn({ err: e }, 'drift check failed');
+  }
+
+  res.json({ statuses, drift });
 });
 
 router.post('/server/:serverId', validateBody(installSchema), async (req: Request, res: Response) => {
@@ -61,17 +75,23 @@ router.post('/server/:serverId', validateBody(installSchema), async (req: Reques
   let result;
   if      (type === 'awg2')      result = await installAWG2(server, options);
   else if (type === 'xray')      result = await installXray(server, options);
-  else if (type === 'mtproxy')   result = await installMtproxy(server, options);
   else if (type === 'telemt')    result = await installTelemt(server, options);
   else                            result = await installWireGuard(server, options);
 
   const id = uuidv4();
+  // name не пишем: это был снимок имени на момент установки, он не обновлялся, и
+  // после переименования протокола карточки показывали устаревшее название.
+  // Заголовок выводится из type + config на фронте (frontend/src/protocols.ts).
   run(
     'INSERT INTO protocols (id, server_id, type, name, container_name, port, config, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-    [id, server.id, type, PROTOCOLS[type]?.name || type, result.containerName, result.port, JSON.stringify(result.config), 'running']
+    [id, server.id, type, null, result.containerName, result.port, JSON.stringify(result.config), 'running']
   );
 
-  res.json({ id, type, containerName: result.containerName, port: result.port, config: result.config });
+  // Отдаём строку целиком и в том же виде, что и GET /server/:serverId — фронт
+  // кладёт ответ прямо в список протоколов, и на усечённой форме (без name,
+  // container_name, status) карточка оставалась пустой до перезагрузки страницы.
+  const row = queryOne<Protocol>('SELECT * FROM protocols WHERE id = ?', [id]);
+  res.json({ ...row, config: row?.config ? JSON.parse(row.config) : {} });
 });
 
 router.delete('/:id', async (req, res) => {

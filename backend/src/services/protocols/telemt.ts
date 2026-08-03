@@ -1,19 +1,44 @@
 import { randomBytes } from 'node:crypto';
 import { exec, execSudo } from '../ssh.js';
 import { assertContainerName, assertPort, assertDomain, sh } from '../shell.js';
-import { randPort, writeRemoteFile, buildImage, renderTemplate, assertPortFree } from './common.js';
+import { randPort, writeRemoteFile, buildImage, renderTemplate, assertPortFree, runContainer } from './common.js';
 import { DOCKERFILES, START_SCRIPTS, TELEMT_BASE_CONFIG_TEMPLATE } from './dockerfiles.js';
-import { buildMtprotoLink } from './mtproxy.js';
 import type { Server, Protocol, AddClientResult, InstallResult, TelemtConfig } from '../../types.js';
+import { UserError } from '../errors.js';
 
 interface TelemtInstallOptions { port?: number; tlsDomain?: string }
+
+// Строит ссылку tg://proxy (через https://t.me/proxy — QR-дружелюбно).
+// FakeTLS: ee<secret><domain-hex>. Secure mode: dd<secret>.
+// Жила в mtproxy.ts, переехала сюда вместе с удалением MTProxy — формат ссылки
+// общий для MTProto-прокси, а Telemt теперь единственный его потребитель.
+function buildMtprotoLink(host: string, port: number, secret: string, tlsDomain: string): string {
+  const linkSecret = tlsDomain
+    ? `ee${secret}${Buffer.from(tlsDomain, 'utf8').toString('hex')}`
+    : `dd${secret}`;
+  return `https://t.me/proxy?server=${host}&port=${port}&secret=${linkSecret}`;
+}
+
+export const TELEMT_CONTAINER = 'amnezia-telemt';
+export const TELEMT_IMAGE = 'amnezia-telemt:latest';
+
+export function telemtRunArgs(port: number): string[] {
+  return [
+    `--name ${TELEMT_CONTAINER}`,
+    `--restart always`,
+    `--log-driver none`,
+    `-v /opt/amnezia:/opt/amnezia`,
+    `-p ${port}:${port}/tcp`,
+    TELEMT_IMAGE,
+  ];
+}
 
 export async function installTelemt(server: Server, options: TelemtInstallOptions = {}): Promise<InstallResult> {
   const port = assertPort(options.port || randPort());
   // Telemt всегда работает в FakeTLS-режиме — домен обязателен.
   const tlsDomain = assertDomain(options.tlsDomain || 'www.google.com');
-  const containerName = 'amnezia-telemt';
-  const imageName = 'amnezia-telemt:latest';
+  const containerName = TELEMT_CONTAINER;
+  const imageName = TELEMT_IMAGE;
   const buildDir = '/opt/amnezia/amnezia-telemt';
 
   // Освобождаем порт от своего старого контейнера (переустановка), затем проверяем,
@@ -35,15 +60,7 @@ export async function installTelemt(server: Server, options: TelemtInstallOption
   await execSudo(server, `chmod +x /opt/amnezia/telemt/start.sh`);
   await execSudo(server, `touch /opt/amnezia/telemt/users`);
 
-  await execSudo(server, [
-    `docker run -d`,
-    `--name ${containerName}`,
-    `--restart always`,
-    `--log-driver none`,
-    `-v /opt/amnezia:/opt/amnezia`,
-    `-p ${port}:${port}/tcp`,
-    imageName,
-  ].join(' \\\n  '));
+  await runContainer(server, telemtRunArgs(port));
 
   const config: TelemtConfig = { port, tlsDomain };
   return { containerName, port, config };
@@ -55,12 +72,12 @@ export async function addTelemtClient(server: Server, protocol: Protocol, _clien
   const cn = protocol.container_name;
 
   if (!c.port) {
-    throw new Error('Telemt protocol config is incomplete (missing port). Reinstall the protocol.');
+    throw new UserError('Telemt protocol config is incomplete (missing port). Reinstall the protocol.');
   }
 
   const statusRes = await exec(server, `docker inspect --format='{{.State.Status}}' ${cn} 2>/dev/null || echo ''`);
   if (statusRes.stdout.trim() !== 'running') {
-    throw new Error(`Telemt container '${cn}' is not running. Start the protocol first.`);
+    throw new UserError(`Telemt container '${cn}' is not running. Start the protocol first.`);
   }
 
   const secret = randomBytes(16).toString('hex');
@@ -73,7 +90,7 @@ export async function addTelemtClient(server: Server, protocol: Protocol, _clien
   await execSudo(server, `printf '%s = "%s"\\n' '${userKey}' '${secret}' >> /opt/amnezia/telemt/users`);
   const restartRes = await execSudo(server, `docker restart ${cn}`);
   if (restartRes.code !== 0) {
-    throw new Error(`Failed to restart Telemt container: ${restartRes.stderr}`);
+    throw new UserError(`Failed to restart Telemt container: ${restartRes.stderr}`);
   }
 
   // Telemt всегда FakeTLS — ee-secret с доменом.

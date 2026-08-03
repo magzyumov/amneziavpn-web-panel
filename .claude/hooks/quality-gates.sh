@@ -38,13 +38,18 @@ trap 'rm -rf "$TMP"' EXIT
 typecheck() {
   local dir="$1" log="$2" rc="$3"
   if command -v npx >/dev/null 2>&1; then
-    ( cd "$dir" && npx --no-install tsc --noEmit ) > "$log" 2>&1
+    # backend имеет тесты (vitest) — гоняем их вместе с проверкой типов.
+    if [ "$dir" = "backend" ]; then
+      ( cd "$dir" && npx --no-install tsc --noEmit && npm test --silent ) > "$log" 2>&1
+    else
+      ( cd "$dir" && npx --no-install tsc --noEmit ) > "$log" 2>&1
+    fi
     echo $? > "$rc"
   elif [ "$dir" = "backend" ] && command -v docker >/dev/null 2>&1 \
        && docker ps --format '{{.Names}}' | grep -q '^amnezia-panel-backend$'; then
     # Host has no node — typecheck the host sources inside the backend container.
     docker cp backend/src amnezia-panel-backend:/app/ >/dev/null 2>&1
-    docker exec amnezia-panel-backend sh -c 'cd /app && npx tsc --noEmit' > "$log" 2>&1
+    docker exec amnezia-panel-backend sh -c 'cd /app && npx tsc --noEmit && npm test --silent' > "$log" 2>&1
     echo $? > "$rc"
   else
     echo "skipped: no local node/npx and no container fallback for $dir" > "$log"

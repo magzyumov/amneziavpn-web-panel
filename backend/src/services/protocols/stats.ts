@@ -12,6 +12,7 @@ import { exec, execSudo } from '../ssh.js';
 import { assertContainerName } from '../shell.js';
 import { readContainerFile } from './common.js';
 import type { Server } from '../../types.js';
+import { UserError } from '../errors.js';
 
 export interface PeerStats {
   pubkey: string;
@@ -216,11 +217,11 @@ export async function enableXrayStats(server: Server, containerName: string): Pr
   const patchCmd = `docker exec ${containerName} sh -c "cd /opt/amnezia/xray && jq '${jqScript.replace(/"/g, '\\"').replace(/'/g, "'\\''")}' server.json > server.json.new && mv server.json.new server.json"`;
   const patchRes = await execSudo(server, patchCmd);
   if (patchRes.code !== 0) {
-    throw new Error(`Failed to patch xray server.json with jq: ${patchRes.stderr || patchRes.stdout}`);
+    throw new UserError(`Failed to patch xray server.json with jq: ${patchRes.stderr || patchRes.stdout}`);
   }
 
   const restartRes = await execSudo(server, `docker restart ${containerName}`);
   if (restartRes.code !== 0) {
-    throw new Error(`Failed to restart xray container: ${restartRes.stderr || restartRes.stdout}`);
+    throw new UserError(`Failed to restart xray container: ${restartRes.stderr || restartRes.stdout}`);
   }
 }
