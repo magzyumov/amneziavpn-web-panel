@@ -123,7 +123,10 @@ CMD [ "" ]`,
   // AmneziaDNS — unbound-резолвер. Резолвит на сервере, наружу ходит к Cloudflare
   // по DNS-over-TLS (:853). Stub-зоны Emercoin (.coin/.emc/.lib/.bazar/.enum) — как
   // в оригинале. mvance/unbound подключает forward-records.conf автоматически.
-  dns: `FROM mvance/unbound:latest
+  // Версия прибита: с :latest пересборка молча меняла бы резолвер под работающими
+  // клиентами — ровно та ловушка, что выстрелила с amneziavpn/amneziawg-go:latest
+  // (0.2.19 → 3.0.3). 1.22.0 — то, что уже стоит на боевом.
+  dns: `FROM mvance/unbound:1.22.0
 LABEL maintainer="AmneziaVPN"
 RUN printf '%s\\n' \\
   'domain-insecure: "coin."' \\
