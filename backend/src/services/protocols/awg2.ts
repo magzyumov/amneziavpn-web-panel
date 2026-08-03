@@ -1,5 +1,7 @@
 import { exec, execSudo } from '../ssh.js';
-import { assertContainerName, assertPort, shInt, assertMagicHeader, sh } from '../shell.js';
+import {
+  assertContainerName, assertPort, shInt, assertMagicHeader, assertUint32Range, assertWgKey, sh,
+} from '../shell.js';
 import {
   randInt, randPort,
   writeRemoteFile, readRemoteFile, buildImage, renderTemplate, assertPortFree, removePeerBlock,
@@ -19,6 +21,15 @@ interface InstallOptions {
   s1?: number; s2?: number; s3?: number; s4?: number;
   // H1-H4 в AWG 2.0 — диапазоны "min-max" либо одиночные uint32.
   h1?: number | string; h2?: number | string; h3?: number | string; h4?: number | string;
+  // AWG 3.0. headerProtection выключается только явным false (по умолчанию — вкл).
+  // Остальные — тип "uint32,range", по умолчанию не задаются (как в апстриме).
+  headerProtection?: boolean;
+  contentPaddingAddition?: string;
+  rekeyAfterTime?: string;
+  rekeyTimeout?: string;
+  rejectAfterTime?: string;
+  keepaliveTimeout?: string;
+  maxHandshakeAttempts?: string;
 }
 
 // Базовые размеры handshake-пакетов AmneziaWG (AwgConstant). Нужны, чтобы итоговые
@@ -38,19 +49,28 @@ const DEFAULT_I1 = '<r 2><b 0x858000010001000000000669636c6f756403636f6d00000100
 // конфигов, где H1-H4 ещё не сохранены (protocolConstants.h:191-194).
 const DEFAULT_H = { h1: '1020325451', h2: '3288052141', h3: '1766607858', h4: '2528465083' };
 
-// Генерация S1-S4 — точная копия AwgInstaller::generateAwgParameters: значения
-// уникальны и не дают совпадающих итоговых размеров пакетов.
-function genPacketSizes(): { s1: number; s2: number; s3: number; s4: number } {
+// Минимальный размер S1-S4 при включённой header protection: S-паддинг служит
+// nonce для шифра заголовков, и amneziawg-go 3.x жёстко требует >= 12 (проверено:
+// с S3=5 и заданным HeaderProtectionKey `awg setconf` падает с "Unable to modify
+// interface: Invalid argument"). Апстримные нижние границы (s3 от 0, s4 от 0) с
+// header protection несовместимы.
+const HP_MIN_JUNK = 12;
+
+// Генерация S1-S4 — копия AwgInstaller::generateAwgParameters: значения уникальны
+// и не дают совпадающих итоговых размеров пакетов. min поднимается до HP_MIN_JUNK,
+// когда включена header protection (AWG 3.0).
+function genPacketSizes(min: number): { s1: number; s2: number; s3: number; s4: number } {
   const used = new Set<number>();
-  const s1 = randInt(15, 149); used.add(s1);
-  let s2 = randInt(15, 149);
-  while (used.has(s2) || s1 + MSG_INIT === s2 + MSG_RESP) s2 = randInt(15, 149);
+  const lo1 = Math.max(15, min), lo3 = Math.max(0, min), lo4 = Math.max(0, min);
+  const s1 = randInt(lo1, 149); used.add(s1);
+  let s2 = randInt(lo1, 149);
+  while (used.has(s2) || s1 + MSG_INIT === s2 + MSG_RESP) s2 = randInt(lo1, 149);
   used.add(s2);
-  let s3 = randInt(0, 63);
-  while (used.has(s3) || s1 + MSG_INIT === s3 + MSG_COOKIE || s2 + MSG_RESP === s3 + MSG_COOKIE) s3 = randInt(0, 63);
+  let s3 = randInt(lo3, 63);
+  while (used.has(s3) || s1 + MSG_INIT === s3 + MSG_COOKIE || s2 + MSG_RESP === s3 + MSG_COOKIE) s3 = randInt(lo3, 63);
   used.add(s3);
-  let s4 = randInt(0, 19);
-  while (used.has(s4)) s4 = randInt(0, 19);
+  let s4 = randInt(lo4, 19);
+  while (used.has(s4)) s4 = randInt(lo4, 19);
   return { s1, s2, s3, s4 };
 }
 
@@ -73,7 +93,9 @@ export async function installAWG2(server: Server, options: InstallOptions = {}):
   const subnetIp  = '10.8.1.0';
   const subnetCidr = '24';
   const containerName = 'amnezia-awg2';
-  const imageName = 'amnezia-awg2:latest';
+  // Тег включает версию amneziawg-go: buildImage делает ранний выход по существующему
+  // образу, поэтому переезд на новую базу возможен только через новый тег.
+  const imageName = 'amnezia-awg2:3.0.3';
   const buildDir  = '/opt/amnezia/amnezia-awg2';
 
   // Параметры обфускации AWG 2.0 — дефолты и алгоритм один-в-один с апстримом
@@ -85,13 +107,36 @@ export async function installAWG2(server: Server, options: InstallOptions = {}):
   const jmin = intOpt(options.jmin, 10,            'jmin');
   const jmax = intOpt(options.jmax, 50,            'jmax');
 
+  // AWG 3.0: header protection включена по умолчанию, выключается явным false.
+  const headerProtection = options.headerProtection !== false;
+
   // S1-S4 генерируем единым набором (уникальны + без коллизий размеров пакетов),
-  // одиночные override'ы валидируем поверх.
-  const gen = genPacketSizes();
+  // одиночные override'ы валидируем поверх. При header protection все четыре
+  // обязаны быть >= HP_MIN_JUNK — иначе awg setconf отвергнет конфиг.
+  const sMin = headerProtection ? HP_MIN_JUNK : 0;
+  const gen = genPacketSizes(sMin);
   const s1 = intOpt(options.s1, gen.s1, 's1');
   const s2 = intOpt(options.s2, gen.s2, 's2');
   const s3 = intOpt(options.s3, gen.s3, 's3');
   const s4 = intOpt(options.s4, gen.s4, 's4');
+  if (headerProtection) {
+    for (const [label, v] of [['s1', s1], ['s2', s2], ['s3', s3], ['s4', s4]] as const) {
+      if (v < HP_MIN_JUNK) {
+        throw new Error(`Invalid ${label}: header protection requires S1-S4 >= ${HP_MIN_JUNK}, got ${v}`);
+      }
+    }
+  }
+
+  // Клиентские параметры AWG 3.0 — тип "uint32,range". По умолчанию не задаются
+  // (апстрим их тоже не генерирует при self-hosted установке).
+  const rangeOpt = (v: string | undefined, label: string): string =>
+    v == null || v === '' ? '' : assertUint32Range(v, label);
+  const contentPaddingAddition = rangeOpt(options.contentPaddingAddition, 'contentPaddingAddition');
+  const rekeyAfterTime         = rangeOpt(options.rekeyAfterTime,         'rekeyAfterTime');
+  const rekeyTimeout           = rangeOpt(options.rekeyTimeout,           'rekeyTimeout');
+  const rejectAfterTime        = rangeOpt(options.rejectAfterTime,        'rejectAfterTime');
+  const keepaliveTimeout       = rangeOpt(options.keepaliveTimeout,       'keepaliveTimeout');
+  const maxHandshakeAttempts   = rangeOpt(options.maxHandshakeAttempts,   'maxHandshakeAttempts');
 
   // H1-H4 — диапазоны "min-max" (AWG 2.0). amneziawg-go в образе их поддерживает
   // (формат "%d-%d", h как строка в UAPI).
@@ -128,7 +173,25 @@ export async function installAWG2(server: Server, options: InstallOptions = {}):
   ].join(' \\\n  '));
   await execSudo(server, `docker network connect amnezia-dns-net ${containerName}`);
 
+  // HeaderProtectionKey (AWG 3.0) генерируем тем же `awg genkey`, что и остальные
+  // ключи — внутри уже запущенного контейнера. Это server-side параметр: одно и то
+  // же значение уходит и в awg0.conf, и в клиентские конфиги.
+  let headerProtectionKey = '';
+  if (headerProtection) {
+    const hpkRes = await execSudo(server, `docker exec ${containerName} awg genkey`);
+    if (hpkRes.code !== 0 || !hpkRes.stdout.trim()) {
+      throw new Error(`Failed to generate AWG3 header protection key: ${hpkRes.stderr || 'empty output'}`);
+    }
+    headerProtectionKey = assertWgKey(hpkRes.stdout.trim(), 'headerProtectionKey');
+  }
+  // Пустое значение параметра = ошибка парсинга у awg setconf, поэтому строку
+  // либо пишем целиком, либо не пишем вовсе (вместо неё — комментарий).
+  const awg3ServerParams = headerProtectionKey
+    ? `HeaderProtectionKey = ${headerProtectionKey}`
+    : '# AWG 3.0 header protection disabled';
+
   const awg2ConfigureScript = [
+    `export AWG3_SERVER_PARAMS='${awg3ServerParams}'`,
     `export AWG_SUBNET_IP=${subnetIp}`,
     `export WIREGUARD_SUBNET_CIDR=${subnetCidr}`,
     `export AWG_SERVER_PORT=${port}`,
@@ -168,11 +231,16 @@ export async function installAWG2(server: Server, options: InstallOptions = {}):
 
   const config: Awg2Config = {
     port, subnetIp, subnetCidr, serverPubKey,
-    protocolVersion: '2',
+    // protocolVersion=3 означает "инсталляция знает про AWG 3.0" — по нему
+    // addAWG2Client решает, можно ли писать AWG3-параметры в клиентский конфиг.
+    protocolVersion: headerProtection ? '3' : '2',
     jc, jmin, jmax,
     s1, s2, s3, s4,
     h1, h2, h3, h4,
     i1: DEFAULT_I1, i2: '', i3: '', i4: '', i5: '',
+    headerProtectionKey,
+    contentPaddingAddition, rekeyAfterTime, rekeyTimeout,
+    rejectAfterTime, keepaliveTimeout, maxHandshakeAttempts,
   };
   return { containerName, port, config };
 }
@@ -231,6 +299,31 @@ export async function addAWG2Client(server: Server, protocol: Protocol, _clientN
   // а мусор; для них подставляем корректный DEFAULT_I1 (мимикрия под icloud DNS).
   const i1 = (typeof c.i1 === 'string' && c.i1.trimStart().startsWith('<')) ? c.i1 : DEFAULT_I1;
 
+  // Параметры AWG 3.0 пишем только для инсталляций, где они реально заданы:
+  // на старом сервере (amneziawg-go 0.2.x) HeaderProtectionKey в клиентском конфиге
+  // сломает handshake, а пустое значение — сам парсинг конфига. Значения из БД
+  // валидируем перед подстановкой.
+  const awg3Lines: string[] = [];
+  const awg3Json: string[] = [];
+  const pushAwg3 = (confKey: string, jsonKey: string, raw: unknown, validate: (v: unknown, label: string) => string) => {
+    if (typeof raw !== 'string' || raw === '') return;
+    const value = validate(raw, jsonKey);
+    awg3Lines.push(`${confKey} = ${value}`);
+    awg3Json.push(`        "${jsonKey}": "${value}"`);
+  };
+  pushAwg3('HeaderProtectionKey',  'headerProtectionKey',  c.headerProtectionKey,  assertWgKey);
+  pushAwg3('ContentPaddingAddition', 'contentPaddingAddition', c.contentPaddingAddition, assertUint32Range);
+  pushAwg3('RekeyAfterTime',       'rekeyAfterTime',       c.rekeyAfterTime,       assertUint32Range);
+  pushAwg3('RekeyTimeout',         'rekeyTimeout',         c.rekeyTimeout,         assertUint32Range);
+  pushAwg3('RejectAfterTime',      'rejectAfterTime',      c.rejectAfterTime,      assertUint32Range);
+  pushAwg3('KeepaliveTimeout',     'keepaliveTimeout',     c.keepaliveTimeout,     assertUint32Range);
+  pushAwg3('MaxHandshakeAttempts', 'maxHandshakeAttempts', c.maxHandshakeAttempts, assertUint32Range);
+
+  // Плейсхолдер занимает отдельную строку шаблона: пустое значение схлопывается в
+  // пустую строку-разделитель перед [Peer], непустое — в блок строк + разделитель.
+  const awg3ClientParams = awg3Lines.length ? `${awg3Lines.join('\n')}\n` : '';
+  const awg3JsonFields = awg3Json.length ? `,\n${awg3Json.join(',\n')}` : '';
+
   const templateVars: Record<string, string | number> = {
     WIREGUARD_CLIENT_IP: clientIp,
     CLIENT_DNS: clientDns,
@@ -252,6 +345,9 @@ export async function addAWG2Client(server: Server, protocol: Protocol, _clientN
     SPECIAL_JUNK_3: c.i3 ?? '',
     SPECIAL_JUNK_4: c.i4 ?? '',
     SPECIAL_JUNK_5: c.i5 ?? '',
+    AWG3_CLIENT_PARAMS: awg3ClientParams,
+    AWG3_JSON_FIELDS: awg3JsonFields,
+    PROTOCOL_VERSION: typeof c.protocolVersion === 'string' ? c.protocolVersion : '2',
     WIREGUARD_SERVER_PUBLIC_KEY: c.serverPubKey,
     WIREGUARD_PSK: presharedKey,
     SERVER_IP_ADDRESS: server.host,

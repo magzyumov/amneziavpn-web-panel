@@ -72,9 +72,23 @@ function buildAwgContainer(reader: ConfReader, server: Server | null): Container
   const I1 = reader.get('I1'), I2 = reader.get('I2'), I3 = reader.get('I3');
   const I4 = reader.get('I4'), I5 = reader.get('I5');
 
+  // Параметры AmneziaWG 3.0. Имена ключей — как в апстримном configKeys.h.
+  // Апстрим (AwgClientConfig::toJson) кладёт их в JSON только непустыми, повторяем:
+  // пустое значение приложение записало бы в .conf строкой "X = " и сломало парсинг.
+  const awg3: Record<string, string> = {};
+  for (const key of ['HeaderProtectionKey', 'ContentPaddingAddition', 'RekeyAfterTime',
+                     'RekeyTimeout', 'RejectAfterTime', 'KeepaliveTimeout', 'MaxHandshakeAttempts']) {
+    const value = reader.get(key);
+    if (value) awg3[key] = value;
+  }
+  // protocol_version=3 — маркер инсталляции с header protection (её задаёт панель
+  // при установке AWG2 на amneziawg-go 3.x).
+  const protocolVersion = awg3.HeaderProtectionKey ? '3' : '2';
+
   const lastConfigObj = {
     H1, H2, H3, H4, I1, I2, I3, I4, I5,
     Jc, Jmax, Jmin, S1, S2, S3, S4,
+    ...awg3,
     allowed_ips: ['0.0.0.0/0', '::/0'],
     clientId: clientPubKey || clientPrivKey, // pub key; fallback на priv для старых клиентов
     client_ip: clientIp,
@@ -94,9 +108,10 @@ function buildAwgContainer(reader: ConfReader, server: Server | null): Container
     awg: {
       H1, H2, H3, H4, I1, I2, I3, I4, I5,
       Jc, Jmax, Jmin, S1, S2, S3, S4,
+      ...awg3,
       last_config: JSON.stringify(lastConfigObj, null, 4) + '\n',
       port: String(port),
-      protocol_version: '2',
+      protocol_version: protocolVersion,
       subnet_address: '10.8.1.0',
       transport_proto: 'udp',
     },
