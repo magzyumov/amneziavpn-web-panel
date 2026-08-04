@@ -81,6 +81,14 @@ export default function DashboardPage() {
           <Tile label="Трафик сегодня" value={formatBytes(todayTotal)}
             sub={`за неделю ${formatBytes(weekTotal)}`} />
           <Tile label="Подписки" value={subscriptions} to="/subscriptions" sub="Clash / FLClash" />
+          {/* Хранилище — тоже показатель состояния, и в общем ряду оно перестаёт
+              висеть отдельной строкой в подвале. Дата первого снимка убрана в
+              подсказку: в плитке важна не она, а что ретеншен работает. */}
+          <Tile label="Хранилище" value={formatBytes(storage.dbBytes)}
+            sub={`${storage.statsRows.toLocaleString('ru-RU')} снимков · ${storage.retentionDays} дн.`}
+            title={storage.oldestSnapshotAt
+              ? `Снимки статистики с ${new Date(storage.oldestSnapshotAt * 1000).toLocaleDateString('ru-RU')}, хранятся ${storage.retentionDays} дней`
+              : 'Снимков статистики пока нет'} />
         </div>
 
         <Alerts data={data} />
@@ -151,15 +159,6 @@ export default function DashboardPage() {
           </div>
         </div>
 
-        <div className="mono text-muted" style={{ fontSize: 10, display: 'flex', gap: 16, flexWrap: 'wrap', padding: '0 2px' }}>
-          <span>база: {formatBytes(storage.dbBytes)}</span>
-          <span>снимков статистики: {storage.statsRows.toLocaleString('ru-RU')}</span>
-          <span>
-            глубина: {storage.oldestSnapshotAt
-              ? `с ${new Date(storage.oldestSnapshotAt * 1000).toLocaleDateString('ru-RU')}`
-              : 'снимков нет'} (хранение {storage.retentionDays} дн.)
-          </span>
-        </div>
       </div>
     </>
   );
@@ -250,11 +249,13 @@ interface TileProps {
   warn?: boolean; accent?: boolean;
   /** Куда ведёт плитка. Без него — просто цифра. */
   to?: string;
+  /** Подробность, которой не место в двух строках плитки. */
+  title?: string;
 }
 
-function Tile({ label, value, sub, warn, accent, to }: TileProps) {
+function Tile({ label, value, sub, warn, accent, to, title }: TileProps) {
   const body = (
-    <div className="card" style={{ padding: 14, height: '100%' }}>
+    <div className="card" style={{ padding: 14, height: '100%' }} title={title}>
       <div className="mono text-muted" style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
         {label}
       </div>
@@ -359,9 +360,11 @@ function TrafficChart({ daily }: { daily: DayBucket[] }) {
         ))}
       </div>
 
+      {/* Разница 0.85/0.4 хорошо видна на столбцах, но на восьмипиксельных
+          квадратиках легенды сливалась — здесь контраст выше. */}
       <div className="flex gap-8 mono text-muted" style={{ fontSize: 10, marginTop: 8 }}>
-        <span><Swatch opacity={0.85} /> принято</span>
-        <span><Swatch opacity={0.4} /> отправлено</span>
+        <span><Swatch opacity={1} /> принято</span>
+        <span><Swatch opacity={0.3} /> отправлено</span>
       </div>
     </div>
   );
