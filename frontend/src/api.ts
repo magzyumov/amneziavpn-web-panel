@@ -90,6 +90,11 @@ export interface MyClientRecord extends ClientRecord {
   protocol_type: ProtocolRecord['type'];
   protocol_config: Record<string, unknown>;
   server_name: string;
+  /** Трафик за последние 7 дней. */
+  week_rx: number;
+  week_tx: number;
+  last_handshake: number | null;
+  online: boolean;
 }
 
 // Протокол, на котором текущему пользователю разрешено завести клиента.

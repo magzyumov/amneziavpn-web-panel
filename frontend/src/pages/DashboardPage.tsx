@@ -1,10 +1,15 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { dashboardApi, type DashboardSummary, type DayBucket, type ServerSummary } from '../api';
 import { PROTOCOL_ICONS, PROTOCOL_NAMES } from '../protocols';
 import { formatBytes, formatRelativeTime } from './server/format';
 
 const REFRESH_MS = 30_000;
+
+// Метрики хоста снимаются только вручную. Старее этого срока показывать их как
+// действующие нельзя: диск «95%» может быть давно почищен, а красная плашка
+// продолжала бы кричать — интерфейс уверенно показывал бы неверное.
+const METRICS_FRESH_SEC = 6 * 3600;
 
 export default function DashboardPage() {
   const [data, setData] = useState<DashboardSummary | null>(null);
@@ -36,16 +41,17 @@ export default function DashboardPage() {
   if (error && !data) return <div className="page-body"><div className="notice notice-error">{error}</div></div>;
   if (!data) return <div style={{ padding: 48, textAlign: 'center' }}><span className="spinner" style={{ width: 24, height: 24 }} /></div>;
 
-  const { servers, protocols, users, clients, traffic, subscriptions, issues, storage } = data;
+  const { servers, protocols, users, clients, traffic, subscriptions, storage } = data;
   const todayTotal = traffic.today.rx + traffic.today.tx;
   const weekTotal = traffic.week.rx + traffic.week.tx;
+  const maxDay = Math.max(0, ...traffic.daily.map(d => d.rx + d.tx));
 
   return (
     <>
       <div className="page-header">
         <div className="flex items-center justify-between page-header-row">
           <div>
-            <div className="page-title">Dashboard</div>
+            <div className="page-title">Сводка</div>
             <div className="page-sub mono">// обзор инфраструктуры</div>
           </div>
           <div className="flex gap-8 page-header-actions">
@@ -60,28 +66,31 @@ export default function DashboardPage() {
       <div className="page-body" style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
         {error && <div className="notice notice-error">{error}</div>}
 
-        {/* Плитки: то, на что смотрят первым делом */}
-        <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: 12 }}>
-          <Tile label="Серверы" value={servers.length}
+        {/* Плитки: то, на что смотрят первым делом. Ведут туда, где этим управляют. */}
+        <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: 12, alignItems: 'start' }}>
+          <Tile label="Серверы" value={servers.length} to="/servers"
             sub={servers.some(s => s.stale) ? '⚠ есть не отвечающие' : 'все отвечают'}
             warn={servers.some(s => s.stale)} />
-          <Tile label="Протоколы" value={`${protocols.running} / ${protocols.total}`}
+          <Tile label="Протоколы" value={`${protocols.running} / ${protocols.total}`} to="/servers"
             sub="запущено / всего" warn={protocols.running < protocols.total} />
           <Tile label="Клиенты" value={clients.total}
-            sub={`${clients.online} онлайн · ${clients.activeToday} заходили сегодня`}
+            sub={`${clients.online} онлайн · ${clients.activeToday} за сутки`}
             accent={clients.online > 0} />
-          <Tile label="Пользователи" value={users.total}
+          <Tile label="Пользователи" value={users.total} to="/users"
             sub={`${users.admins} admin · ${users.regular} user`} />
           <Tile label="Трафик сегодня" value={formatBytes(todayTotal)}
             sub={`за неделю ${formatBytes(weekTotal)}`} />
-          <Tile label="Подписки" value={subscriptions} sub="Clash / FLClash" />
+          <Tile label="Подписки" value={subscriptions} to="/subscriptions" sub="Clash / FLClash" />
         </div>
 
         <Alerts data={data} />
 
-        <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(340px, 1fr))', gap: 16 }}>
+        <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(340px, 1fr))', gap: 16, alignItems: 'start' }}>
           <div className="card">
-            <div className="input-label" style={{ marginBottom: 12 }}>Трафик за 14 дней</div>
+            <div className="flex items-center justify-between" style={{ marginBottom: 12, gap: 8 }}>
+              <span className="input-label" style={{ margin: 0 }}>Трафик за 14 дней</span>
+              <span className="mono text-muted" style={{ fontSize: 10 }}>макс. за сутки: {formatBytes(maxDay)}</span>
+            </div>
             <TrafficChart daily={traffic.daily} />
           </div>
 
@@ -106,7 +115,7 @@ export default function DashboardPage() {
           </div>
         </div>
 
-        <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(340px, 1fr))', gap: 16 }}>
+        <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(340px, 1fr))', gap: 16, alignItems: 'start' }}>
           <div className="card">
             <div className="input-label" style={{ marginBottom: 12 }}>Серверы</div>
             {servers.length === 0 ? (
@@ -142,17 +151,14 @@ export default function DashboardPage() {
           </div>
         </div>
 
-        <div className="card">
-          <div className="input-label" style={{ marginBottom: 8 }}>Хранилище</div>
-          <div className="mono text-muted" style={{ fontSize: 11, display: 'flex', gap: 16, flexWrap: 'wrap' }}>
-            <span>база: {formatBytes(storage.dbBytes)}</span>
-            <span>снимков статистики: {storage.statsRows.toLocaleString('ru-RU')}</span>
-            <span>
-              глубина: {storage.oldestSnapshotAt
-                ? `с ${new Date(storage.oldestSnapshotAt * 1000).toLocaleDateString('ru-RU')}`
-                : 'снимков нет'} (хранение {storage.retentionDays} дн.)
-            </span>
-          </div>
+        <div className="mono text-muted" style={{ fontSize: 10, display: 'flex', gap: 16, flexWrap: 'wrap', padding: '0 2px' }}>
+          <span>база: {formatBytes(storage.dbBytes)}</span>
+          <span>снимков статистики: {storage.statsRows.toLocaleString('ru-RU')}</span>
+          <span>
+            глубина: {storage.oldestSnapshotAt
+              ? `с ${new Date(storage.oldestSnapshotAt * 1000).toLocaleDateString('ru-RU')}`
+              : 'снимков нет'} (хранение {storage.retentionDays} дн.)
+          </span>
         </div>
       </div>
     </>
@@ -169,13 +175,24 @@ function formatUptime(sec: number | null): string {
 }
 
 function ServerRow({ server: s }: { server: ServerSummary }) {
+  const nowSec = Math.floor(Date.now() / 1000);
   const hasMetrics = s.probedAt !== null && !s.probeError;
+  // Замер старше нескольких часов — справка, а не показание: гасим цвет и
+  // говорим прямо, что данные устарели.
+  const fresh = hasMetrics && s.probedAt !== null && nowSec - s.probedAt < METRICS_FRESH_SEC;
+
   const diskUsedPct = s.diskTotalMb && s.diskFreeMb !== null
     ? Math.round(((s.diskTotalMb - s.diskFreeMb) / s.diskTotalMb) * 100)
     : null;
   const memUsedPct = s.memTotalMb && s.memUsedMb !== null
     ? Math.round((s.memUsedMb / s.memTotalMb) * 100)
     : null;
+
+  // Красным подсвечиваем только свежее: устаревший красный «диск 95%» опаснее
+  // отсутствия цифры вовсе.
+  const alarm = (pct: number | null) =>
+    fresh && pct !== null && pct >= 90 ? 'var(--danger, #e5534b)' : undefined;
+  const dim: React.CSSProperties = fresh ? {} : { opacity: 0.55 };
 
   return (
     <div>
@@ -204,19 +221,19 @@ function ServerRow({ server: s }: { server: ServerSummary }) {
           <span style={{ color: 'var(--danger, #e5534b)' }} title={s.probeError}>⚠ опрос не удался</span>
         ) : hasMetrics ? (
           <>
-            <span>⏱ {formatUptime(s.uptimeSec)}</span>
-            {s.load1 !== null && <span>load {s.load1.toFixed(2)}</span>}
-            {memUsedPct !== null && (
-              <span style={{ color: memUsedPct >= 90 ? 'var(--danger, #e5534b)' : undefined }}>
-                RAM {memUsedPct}%
-              </span>
-            )}
+            <span style={dim}>⏱ {formatUptime(s.uptimeSec)}</span>
+            {s.load1 !== null && <span style={dim}>load {s.load1.toFixed(2)}</span>}
+            {memUsedPct !== null && <span style={{ ...dim, color: alarm(memUsedPct) }}>RAM {memUsedPct}%</span>}
             {diskUsedPct !== null && (
-              <span style={{ color: diskUsedPct >= 90 ? 'var(--danger, #e5534b)' : undefined }}>
+              <span style={{ ...dim, color: alarm(diskUsedPct) }}>
                 диск {diskUsedPct}% ({formatBytes((s.diskFreeMb ?? 0) * 1024 * 1024)} свободно)
               </span>
             )}
-            <span>· снято {formatRelativeTime(s.probedAt)}</span>
+            {fresh
+              ? <span style={dim}>· снято {formatRelativeTime(s.probedAt)}</span>
+              : <span title="Метрики снимаются только по кнопке «Опросить серверы»">
+                  · данные от {formatRelativeTime(s.probedAt)} — устарели, опросите заново
+                </span>}
           </>
         ) : (
           <span>метрик нет — нажмите «Опросить серверы»</span>
@@ -228,11 +245,16 @@ function ServerRow({ server: s }: { server: ServerSummary }) {
 
 // ─── Плитка ───────────────────────────────────────────────────────────────────
 
-interface TileProps { label: string; value: string | number; sub?: string; warn?: boolean; accent?: boolean }
+interface TileProps {
+  label: string; value: string | number; sub?: string;
+  warn?: boolean; accent?: boolean;
+  /** Куда ведёт плитка. Без него — просто цифра. */
+  to?: string;
+}
 
-function Tile({ label, value, sub, warn, accent }: TileProps) {
-  return (
-    <div className="card" style={{ padding: 14 }}>
+function Tile({ label, value, sub, warn, accent, to }: TileProps) {
+  const body = (
+    <div className="card" style={{ padding: 14, height: '100%' }}>
       <div className="mono text-muted" style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
         {label}
       </div>
@@ -243,6 +265,8 @@ function Tile({ label, value, sub, warn, accent }: TileProps) {
       {sub && <div className="mono text-muted" style={{ fontSize: 10, marginTop: 4 }}>{sub}</div>}
     </div>
   );
+  if (!to) return body;
+  return <Link to={to} style={{ textDecoration: 'none', color: 'inherit', display: 'block' }}>{body}</Link>;
 }
 
 // ─── Предупреждения ───────────────────────────────────────────────────────────
@@ -289,16 +313,26 @@ function Alerts({ data }: { data: DashboardSummary }) {
 
 // ─── График ───────────────────────────────────────────────────────────────────
 
-// Столбики по суткам: rx снизу, tx сверху. Свой SVG, а не библиотека графиков —
-// одна диаграмма не стоит зависимости, а CSP запрещает внешние скрипты.
+// Столбики по суткам: принято снизу, отправлено сверху. Свой SVG, а не
+// библиотека графиков — одна диаграмма не стоит зависимости, а CSP панели всё
+// равно запрещает внешние скрипты.
 function TrafficChart({ daily }: { daily: DayBucket[] }) {
   const max = Math.max(1, ...daily.map(d => d.rx + d.tx));
   const W = 100, H = 40, gap = 1.2;
   const barW = (W - gap * (daily.length - 1)) / daily.length;
 
+  // Подписи под каждым вторым столбцом: под каждым они наезжают друг на друга
+  // при четырнадцати сутках, а без них непонятно, какой столбец какой день.
+  const label = (day: string, i: number) => {
+    if (i === daily.length - 1) return 'сег.';
+    return i % 2 === 0 ? day.slice(8) + '.' + day.slice(5, 7) : '';
+  };
+
   return (
     <div>
       <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" style={{ width: '100%', height: 120, display: 'block' }}>
+        {/* Линия максимума — иначе у столбиков нет никакого масштаба */}
+        <line x1={0} y1={0.4} x2={W} y2={0.4} stroke="var(--border)" strokeWidth={0.3} strokeDasharray="1 1.5" />
         {daily.map((d, i) => {
           const total = d.rx + d.tx;
           const h = (total / max) * H;
@@ -315,11 +349,29 @@ function TrafficChart({ daily }: { daily: DayBucket[] }) {
           );
         })}
       </svg>
-      <div className="flex justify-between mono text-muted" style={{ fontSize: 10, marginTop: 6 }}>
-        <span>{daily[0]?.day.slice(5)}</span>
-        <span>макс. за сутки: {formatBytes(max)}</span>
-        <span>сегодня</span>
+
+      <div style={{ display: 'grid', gridTemplateColumns: `repeat(${daily.length}, 1fr)`, marginTop: 4 }}>
+        {daily.map((d, i) => (
+          <span key={d.day} className="mono text-muted"
+            style={{ fontSize: 9, textAlign: 'center', whiteSpace: 'nowrap' }}>
+            {label(d.day, i)}
+          </span>
+        ))}
+      </div>
+
+      <div className="flex gap-8 mono text-muted" style={{ fontSize: 10, marginTop: 8 }}>
+        <span><Swatch opacity={0.85} /> принято</span>
+        <span><Swatch opacity={0.4} /> отправлено</span>
       </div>
     </div>
+  );
+}
+
+function Swatch({ opacity }: { opacity: number }): ReactNode {
+  return (
+    <span style={{
+      display: 'inline-block', width: 8, height: 8, borderRadius: 2,
+      background: 'var(--accent)', opacity, marginRight: 4, verticalAlign: 'middle',
+    }} />
   );
 }

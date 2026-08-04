@@ -99,6 +99,40 @@ export function fillMissingDays(buckets: readonly DayBucket[], days: number, now
   return out;
 }
 
+// Снимки за период, прореженные до одного в час. Прореживание делает SQLite:
+// при MIN/MAX остальные колонки берутся из той же строки — это документированное
+// поведение. Общая точка входа для сводки и для личной статистики пользователя,
+// чтобы цифры считались одним способом.
+export function hourlySamplesSince(sinceSec: number): HourlySample[] {
+  return query<HourlySample>(`
+    SELECT client_id, MAX(ts) AS ts, rx_bytes, tx_bytes
+    FROM client_stats
+    WHERE ts >= ?
+    GROUP BY client_id, ts / ${HOUR}
+    ORDER BY client_id ASC, ts ASC
+  `, [sinceSec]);
+}
+
+// Трафик каждого клиента с указанного момента. Используется страницей «Мои
+// клиенты»: пользователь видит расход по своим устройствам.
+export function clientTrafficSince(sinceSec: number): Map<string, { rx: number; tx: number }> {
+  return trafficByClient(hourlySamplesSince(sinceSec));
+}
+
+// Последнее рукопожатие каждого клиента — для отметки «онлайн».
+export function lastHandshakes(): Map<string, number> {
+  const rows = query<{ client_id: string; last_handshake: number | null }>(`
+    SELECT client_id, MAX(ts) AS ts, last_handshake FROM client_stats GROUP BY client_id
+  `);
+  const out = new Map<string, number>();
+  for (const r of rows) if (r.last_handshake) out.set(r.client_id, r.last_handshake);
+  return out;
+}
+
+export function isOnline(lastHandshake: number | undefined, nowSec: number): boolean {
+  return !!lastHandshake && nowSec - lastHandshake < ONLINE_WINDOW_SEC;
+}
+
 // ─── Сбор сводки ──────────────────────────────────────────────────────────────
 
 const ONLINE_WINDOW_SEC = 180;   // как в статистике клиента: 3 минуты от handshake
@@ -271,16 +305,7 @@ export function buildDashboard(nowSec: number = Math.floor(Date.now() / 1000)): 
     WHERE last_handshake IS NOT NULL AND last_handshake >= ?
   `, [dayStartSec(new Date(nowSec * 1000))])?.n ?? 0;
 
-  // Прореживание до одного снимка в час делает SQLite: при MIN/MAX остальные
-  // колонки берутся из той же строки — это документированное поведение.
-  const since = nowSec - TRAFFIC_DAYS * 24 * HOUR;
-  const samples = query<HourlySample>(`
-    SELECT client_id, MAX(ts) AS ts, rx_bytes, tx_bytes
-    FROM client_stats
-    WHERE ts >= ?
-    GROUP BY client_id, ts / ${HOUR}
-    ORDER BY client_id ASC, ts ASC
-  `, [since]);
+  const samples = hourlySamplesSince(nowSec - TRAFFIC_DAYS * 24 * HOUR);
 
   const daily = fillMissingDays(trafficByDay(samples), TRAFFIC_DAYS, nowSec);
   const todayKey = dayKey(nowSec);
@@ -288,7 +313,9 @@ export function buildDashboard(nowSec: number = Math.floor(Date.now() / 1000)): 
   const week = daily.slice(-7).reduce((a, d) => ({ rx: a.rx + d.rx, tx: a.tx + d.tx }), { rx: 0, tx: 0 });
 
   const perClient = trafficByClient(samples);
+  // Клиенты без трафика в «топе» выглядят как сбой — их отсекаем.
   const topIds = [...perClient.entries()]
+    .filter(([, v]) => v.rx + v.tx > 0)
     .sort((a, b) => (b[1].rx + b[1].tx) - (a[1].rx + a[1].tx))
     .slice(0, TOP_CLIENTS);
 

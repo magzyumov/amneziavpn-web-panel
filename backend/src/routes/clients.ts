@@ -15,6 +15,7 @@ import {
 } from '../services/protocols/index.js';
 import { loadClientContext, revokePeer, purgeClientRows } from '../services/clientLifecycle.js';
 import { usedToday, enforceLimitsForClient } from '../services/limits.js';
+import { clientTrafficSince, lastHandshakes, isOnline } from '../services/dashboard.js';
 import { createSubscription, getVpsHost } from '../services/subscription.js';
 import { buildAmneziaExportJson, buildVpnUri, buildChunkedAmneziaQr } from '../services/amneziaExport.js';
 import { extractPeerId } from '../services/peerId.js';
@@ -44,12 +45,17 @@ const MB = 1024 * 1024;
 
 // Поля лимитов в том виде, в каком их ждёт фронт: срок, суточный лимит,
 // израсходованное за сегодня и признак приостановки.
+//
+// used_today считаем всегда, а не только при заданном лимите: расход за сутки
+// показывается и сам по себе (личная сводка пользователя), и раньше клиент без
+// лимита отдавал бы ноль вместо реальной цифры. Запрос идёт по первичному ключу
+// client_stats (client_id, ts), так что это две быстрые выборки на клиента.
 function limitFields(client: Client): Record<string, unknown> {
   return {
     expires_at: client.expires_at ?? null,
     daily_limit_bytes: client.daily_limit_bytes ?? 0,
     suspended_at: client.suspended_at ?? null,
-    used_today: client.daily_limit_bytes ? usedToday(client.id) : 0,
+    used_today: usedToday(client.id),
   };
 }
 
@@ -105,7 +111,12 @@ router.get('/available-protocols', (req: Request, res: Response) => {
   res.json(accessibleProtocols(req.user!));
 });
 
-// GET /api/clients/mine — свои клиенты со всем, что нужно для карточки.
+// GET /api/clients/mine — свои клиенты со всем, что нужно для карточки:
+// лимиты, расход за сегодня и за неделю, онлайн-статус. Пользователь не видит
+// сводки по инфраструктуре, но про свои устройства должен знать столько же,
+// сколько администратор.
+const WEEK_SEC = 7 * 24 * 60 * 60;
+
 router.get('/mine', (req: Request, res: Response) => {
   const clients = query<Client & {
     has_config: number; protocol_type: ProtocolType; protocol_config: string | null; server_name: string;
@@ -121,11 +132,22 @@ router.get('/mine', (req: Request, res: Response) => {
     ORDER BY c.created_at DESC
   `, [req.user!.id]);
 
-  res.json(clients.map(c => ({
-    ...c,
-    protocol_config: c.protocol_config ? JSON.parse(c.protocol_config) : {},
-    ...limitFields(c),
-  })));
+  const now = Math.floor(Date.now() / 1000);
+  const week = clientTrafficSince(now - WEEK_SEC);
+  const handshakes = lastHandshakes();
+
+  res.json(clients.map(c => {
+    const w = week.get(c.id);
+    return {
+      ...c,
+      protocol_config: c.protocol_config ? JSON.parse(c.protocol_config) : {},
+      ...limitFields(c),
+      week_rx: w?.rx ?? 0,
+      week_tx: w?.tx ?? 0,
+      last_handshake: handshakes.get(c.id) ?? null,
+      online: isOnline(handshakes.get(c.id), now),
+    };
+  }));
 });
 
 // Список клиентов протокола — карточка протокола на странице сервера.

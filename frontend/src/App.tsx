@@ -41,10 +41,10 @@ function Sidebar({ isOpen, onClose, user }: SidebarProps) {
           {isAdmin ? (
             <>
               <Link to="/" className={`nav-link ${location.pathname === '/' ? 'active' : ''}`} onClick={onClose}>
-                <span className="icon">⬡</span> Dashboard
+                <span className="icon">⬡</span> Сводка
               </Link>
               <Link to="/servers" className={`nav-link ${location.pathname.startsWith('/server') ? 'active' : ''}`} onClick={onClose}>
-                <span className="icon">⊡</span> Servers
+                <span className="icon">⊡</span> Серверы
               </Link>
               <Link to="/subscriptions" className={`nav-link ${location.pathname === '/subscriptions' ? 'active' : ''}`} onClick={onClose}>
                 <span className="icon">📡</span> Подписки
