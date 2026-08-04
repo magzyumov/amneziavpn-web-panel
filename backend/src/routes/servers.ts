@@ -6,6 +6,7 @@ import { encrypt } from '../services/crypto.js';
 import { authMiddleware, requireAdmin } from '../middleware/auth.js';
 import { revokeProtocolGrants } from '../services/access.js';
 import { cacheDnsStatus } from '../services/serverProbe.js';
+import { auditTarget, auditDetails } from '../middleware/audit.js';
 import { validateBody } from '../middleware/validate.js';
 import { testConnection, disconnect } from '../services/ssh.js';
 import { listAmneziaContainers, ensureDocker, scanExistingProtocols, installDns, removeDns, isDnsRunning } from '../services/protocols/index.js';
@@ -19,6 +20,15 @@ const router = Router();
 // Обычному пользователю здесь не нужно ничего, включая чтение списка.
 router.use(authMiddleware);
 router.use(requireAdmin);
+
+// Загрузка сервера по :id + запись его имени в журнал действий: в записи
+// «удалил сервер» id ничего не говорит, а имя говорит всё.
+function loadServer(req: Request, res: Response): Server | null {
+  const server = queryOne<Server>('SELECT * FROM servers WHERE id = ?', [req.params.id]);
+  if (!server) { res.status(404).json({ error: 'Server not found' }); return null; }
+  auditTarget(req, { id: server.id, name: server.name });
+  return server;
+}
 
 const serverSchema = z.object({
   name: z.string().min(1).max(128),
@@ -55,13 +65,16 @@ router.post('/', validateBody(serverSchema), (req: Request, res: Response) => {
     'INSERT INTO servers (id, name, host, port, username, auth_type, password, private_key) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
     [id, name, host, port, username, auth_type, encrypt(password) || null, encrypt(private_key) || null]
   );
+  auditTarget(req, { id, name });
+  // Хост и способ входа — да, пароль и ключ — никогда.
+  auditDetails(req, { host, port, username, authType: auth_type });
   res.json({ id, name, host, port, username, auth_type });
 });
 
 // PUT /api/servers/:id
 router.put('/:id', validateBody(serverSchema), (req: Request, res: Response) => {
-  const server = queryOne<Server>('SELECT * FROM servers WHERE id = ?', [req.params.id]);
-  if (!server) return res.status(404).json({ error: 'Server not found' });
+  const server = loadServer(req, res);
+  if (!server) return;
 
   const { name, host, port, username, auth_type, password, private_key } = req.body;
 
@@ -88,10 +101,16 @@ router.put('/:id', validateBody(serverSchema), (req: Request, res: Response) => 
 
 // DELETE /api/servers/:id
 router.delete('/:id', (req, res) => {
+  // Имя нужно снять ДО удаления — потом его взять будет неоткуда.
+  const existing = queryOne<Server>('SELECT id, name FROM servers WHERE id = ?', [req.params.id]);
+  if (existing) auditTarget(req, { id: existing.id, name: existing.name });
+
   disconnect(req.params.id);
   // Выдачи протоколов этого сервера — вручную: foreign_keys в базе выключены,
   // иначе в user_protocols остались бы строки на несуществующие протоколы.
-  for (const p of query<{ id: string }>('SELECT id FROM protocols WHERE server_id = ?', [req.params.id])) {
+  const affected = query<{ id: string }>('SELECT id FROM protocols WHERE server_id = ?', [req.params.id]);
+  auditDetails(req, { protocols: affected.length });
+  for (const p of affected) {
     revokeProtocolGrants(p.id);
   }
   run('DELETE FROM servers WHERE id = ?', [req.params.id]);
@@ -99,16 +118,16 @@ router.delete('/:id', (req, res) => {
 });
 
 router.post('/:id/test', async (req, res) => {
-  const server = queryOne<Server>('SELECT * FROM servers WHERE id = ?', [req.params.id]);
-  if (!server) return res.status(404).json({ error: 'Server not found' });
+  const server = loadServer(req, res);
+  if (!server) return;
 
   const result = await testConnection(server);
   res.json(result);
 });
 
 router.post('/:id/ensure-docker', async (req, res) => {
-  const server = queryOne<Server>('SELECT * FROM servers WHERE id = ?', [req.params.id]);
-  if (!server) return res.status(404).json({ error: 'Server not found' });
+  const server = loadServer(req, res);
+  if (!server) return;
 
   await ensureDocker(server);
   res.json({ ok: true });
@@ -116,8 +135,8 @@ router.post('/:id/ensure-docker', async (req, res) => {
 
 // AmneziaDNS — серверный DNS-резолвер (защита от DNS-leak). Один на сервер.
 router.get('/:id/dns', async (req, res) => {
-  const server = queryOne<Server>('SELECT * FROM servers WHERE id = ?', [req.params.id]);
-  if (!server) return res.status(404).json({ error: 'Server not found' });
+  const server = loadServer(req, res);
+  if (!server) return;
   const installed = await isDnsRunning(server);
   // Кэшируем для дашборда — он про DNS знает, но по SSH за этим не ходит.
   cacheDnsStatus(server.id, installed);
@@ -125,24 +144,24 @@ router.get('/:id/dns', async (req, res) => {
 });
 
 router.post('/:id/dns', async (req, res) => {
-  const server = queryOne<Server>('SELECT * FROM servers WHERE id = ?', [req.params.id]);
-  if (!server) return res.status(404).json({ error: 'Server not found' });
+  const server = loadServer(req, res);
+  if (!server) return;
   const result = await installDns(server);
   cacheDnsStatus(server.id, true);
   res.json({ ok: true, ...result });
 });
 
 router.delete('/:id/dns', async (req, res) => {
-  const server = queryOne<Server>('SELECT * FROM servers WHERE id = ?', [req.params.id]);
-  if (!server) return res.status(404).json({ error: 'Server not found' });
+  const server = loadServer(req, res);
+  if (!server) return;
   await removeDns(server);
   cacheDnsStatus(server.id, false);
   res.json({ ok: true });
 });
 
 router.get('/:id/containers', async (req, res) => {
-  const server = queryOne<Server>('SELECT * FROM servers WHERE id = ?', [req.params.id]);
-  if (!server) return res.status(404).json({ error: 'Server not found' });
+  const server = loadServer(req, res);
+  if (!server) return;
 
   const containers = await listAmneziaContainers(server);
   res.json(containers);
@@ -150,8 +169,8 @@ router.get('/:id/containers', async (req, res) => {
 
 // Сканирует сервер на наличие уже установленных протоколов Amnezia
 router.post('/:id/scan-protocols', async (req, res) => {
-  const server = queryOne<Server>('SELECT * FROM servers WHERE id = ?', [req.params.id]);
-  if (!server) return res.status(404).json({ error: 'Server not found' });
+  const server = loadServer(req, res);
+  if (!server) return;
 
   try {
     const found = await scanExistingProtocols(server);
@@ -164,8 +183,8 @@ router.post('/:id/scan-protocols', async (req, res) => {
 
 // Импортирует найденный протокол в БД (после сканирования) и создаёт записи клиентов
 router.post('/:id/import-protocol', validateBody(importSchema), (req: Request, res: Response) => {
-  const server = queryOne<Server>('SELECT * FROM servers WHERE id = ?', [req.params.id]);
-  if (!server) return res.status(404).json({ error: 'Server not found' });
+  const server = loadServer(req, res);
+  if (!server) return;
 
   const { type, containerName, port, config, clients } = req.body as {
     type: ProtocolType; containerName: string; port: number | null | undefined;
@@ -215,6 +234,11 @@ router.post('/:id/import-protocol', validateBody(importSchema), (req: Request, r
     );
     importedClients++;
   }
+
+  // Действие про протокол, а не про сервер: перебиваем цель, выставленную
+  // loadServer, и оставляем имя сервера в подробностях.
+  auditTarget(req, { id: protocolId, name: `${type} на ${server.name}`, type: 'protocol' });
+  auditDetails(req, { type, container: containerName, importedClients });
 
   // Как и при установке — строка целиком в форме GET /protocols/server/:serverId
   // (config объектом, а не строкой), плюс счётчик для окна сканирования.

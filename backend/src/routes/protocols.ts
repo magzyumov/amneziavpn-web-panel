@@ -5,6 +5,7 @@ import { query, queryOne, run } from '../services/db.js';
 import { authMiddleware, requireAdmin } from '../middleware/auth.js';
 import { revokeProtocolGrants } from '../services/access.js';
 import { cacheDrift } from '../services/serverProbe.js';
+import { auditTarget, auditDetails } from '../middleware/audit.js';
 import { validateBody } from '../middleware/validate.js';
 import {
   installAWG2, installXray, installWireGuard, installTelemt,
@@ -95,6 +96,9 @@ router.post('/server/:serverId', validateBody(installSchema), async (req: Reques
     [id, server.id, type, null, result.containerName, result.port, JSON.stringify(result.config), 'running']
   );
 
+  auditTarget(req, { id, name: `${type} на ${server.name}` });
+  auditDetails(req, { type, port: result.port, container: result.containerName });
+
   // Отдаём строку целиком и в том же виде, что и GET /server/:serverId — фронт
   // кладёт ответ прямо в список протоколов, и на усечённой форме (без name,
   // container_name, status) карточка оставалась пустой до перезагрузки страницы.
@@ -107,6 +111,8 @@ router.delete('/:id', async (req, res) => {
   if (!p) return res.status(404).json({ error: 'Not found' });
   const server = queryOne<Server>('SELECT * FROM servers WHERE id = ?', [p.server_id]);
   if (!server) return res.status(404).json({ error: 'Server not found' });
+  auditTarget(req, { id: p.id, name: `${p.type} на ${server.name}` });
+  auditDetails(req, { clients: queryOne<{ n: number }>('SELECT COUNT(*) AS n FROM clients WHERE protocol_id = ?', [p.id])?.n ?? 0 });
   await removeContainer(server, p.container_name);
   run('DELETE FROM clients WHERE protocol_id = ?', [p.id]);
   revokeProtocolGrants(p.id);
@@ -119,6 +125,7 @@ router.post('/:id/start', async (req, res) => {
   if (!p) return res.status(404).json({ error: 'Not found' });
   const server = queryOne<Server>('SELECT * FROM servers WHERE id = ?', [p.server_id]);
   if (!server) return res.status(404).json({ error: 'Server not found' });
+  auditTarget(req, { id: p.id, name: `${p.type} на ${server.name}` });
   await startContainer(server, p.container_name);
   run("UPDATE protocols SET status = 'running' WHERE id = ?", [p.id]);
   res.json({ ok: true });
@@ -129,6 +136,7 @@ router.post('/:id/stop', async (req, res) => {
   if (!p) return res.status(404).json({ error: 'Not found' });
   const server = queryOne<Server>('SELECT * FROM servers WHERE id = ?', [p.server_id]);
   if (!server) return res.status(404).json({ error: 'Server not found' });
+  auditTarget(req, { id: p.id, name: `${p.type} на ${server.name}` });
   await stopContainer(server, p.container_name);
   run("UPDATE protocols SET status = 'stopped' WHERE id = ?", [p.id]);
   res.json({ ok: true });
@@ -169,6 +177,7 @@ router.post('/:id/enable-stats', async (req, res) => {
   const server = queryOne<Server>('SELECT * FROM servers WHERE id = ?', [p.server_id]);
   if (!server) return res.status(404).json({ error: 'Server not found' });
 
+  auditTarget(req, { id: p.id, name: `${p.type} на ${server.name}` });
   await enableXrayStats(server, p.container_name);
   res.json({ ok: true });
 });

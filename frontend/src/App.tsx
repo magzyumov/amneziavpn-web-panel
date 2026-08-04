@@ -10,6 +10,7 @@ import ServerPage from './pages/ServerPage';
 import SubscriptionsPage from './pages/SubscriptionsPage';
 import MyClientsPage from './pages/MyClientsPage';
 import UsersPage from './pages/UsersPage';
+import AuditPage from './pages/AuditPage';
 import './App.css';
 
 interface SidebarProps {
@@ -51,6 +52,9 @@ function Sidebar({ isOpen, onClose, user }: SidebarProps) {
               </Link>
               <Link to="/users" className={`nav-link ${location.pathname === '/users' ? 'active' : ''}`} onClick={onClose}>
                 <span className="icon">👤</span> Пользователи
+              </Link>
+              <Link to="/audit" className={`nav-link ${location.pathname === '/audit' ? 'active' : ''}`} onClick={onClose}>
+                <span className="icon">📋</span> Журнал
               </Link>
             </>
           ) : (
@@ -128,6 +132,7 @@ export default function App() {
         <Route path="/server/:id" element={<PrivateLayout adminOnly><ServerPage /></PrivateLayout>} />
         <Route path="/subscriptions" element={<PrivateLayout adminOnly><SubscriptionsPage /></PrivateLayout>} />
         <Route path="/users" element={<PrivateLayout adminOnly><UsersPage /></PrivateLayout>} />
+        <Route path="/audit" element={<PrivateLayout adminOnly><AuditPage /></PrivateLayout>} />
       </Routes>
     </BrowserRouter>
   );

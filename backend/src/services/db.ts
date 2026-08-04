@@ -313,6 +313,31 @@ function initSchema(): void {
       key TEXT PRIMARY KEY,
       value TEXT NOT NULL
     );
+
+    -- Журнал действий. Имена пользователя и объекта хранятся СНИМКОМ, а не
+    -- ссылкой: смысл журнала в том, чтобы пережить удаление того, о чём он
+    -- рассказывает. «Кто-то удалил пользователя X» должно читаться и через год,
+    -- когда ни автора, ни X уже нет.
+    --
+    -- Секретов здесь нет и не должно быть: ни паролей, ни приватных ключей, ни
+    -- slug'ов подписок (slug — фактически пароль от конфига).
+    CREATE TABLE IF NOT EXISTS audit_log (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      ts INTEGER NOT NULL,          -- unix sec
+      user_id TEXT,                 -- NULL, если действие анонимное (неудачный вход)
+      username TEXT NOT NULL,       -- снимок имени на момент действия
+      role TEXT,                    -- роль на момент действия
+      action TEXT NOT NULL,         -- 'client.create', 'auth.login', …
+      target_type TEXT,             -- 'client' | 'user' | 'protocol' | 'server' | …
+      target_id TEXT,
+      target_name TEXT,             -- снимок имени объекта
+      details TEXT,                 -- JSON, только безопасные поля
+      ip TEXT,
+      status TEXT NOT NULL,         -- 'ok' | 'denied' | 'failed'
+      http_status INTEGER
+    );
+    CREATE INDEX IF NOT EXISTS idx_audit_ts ON audit_log(ts DESC);
+    CREATE INDEX IF NOT EXISTS idx_audit_user ON audit_log(user_id);
   `);
 }
 

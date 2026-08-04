@@ -6,6 +6,7 @@ import { z } from 'zod';
 import { query, queryOne, run } from '../services/db.js';
 import { signToken, setAuthCookies, clearAuthCookies, authMiddleware } from '../middleware/auth.js';
 import { validateBody } from '../middleware/validate.js';
+import { auditTarget } from '../middleware/audit.js';
 import type { AppUser } from '../types.js';
 
 const router = Router();
@@ -37,6 +38,8 @@ router.post('/setup', validateBody(credentialsSchema), async (req: Request, res:
   // эти права некому.
   run("INSERT INTO users (id, username, password_hash, role, client_limit) VALUES (?, ?, ?, 'admin', 0)",
     [uuidv4(), username, hash]);
+  req.auditActor = username;
+  auditTarget(req, { name: username });
   res.json({ ok: true });
 });
 
@@ -49,6 +52,10 @@ router.get('/status', (_req, res) => {
 // POST /api/auth/login
 router.post('/login', loginLimiter, validateBody(credentialsSchema), async (req: Request, res: Response) => {
   const { username, password } = req.body;
+  // Имя для журнала ставим до проверки: неудачный вход тоже должен быть виден,
+  // причём с тем логином, который пытались подобрать.
+  req.auditActor = username;
+
   const user = queryOne<AppUser>('SELECT * FROM users WHERE username = ?', [username]);
   if (!user) return res.status(401).json({ error: 'Invalid credentials' });
 

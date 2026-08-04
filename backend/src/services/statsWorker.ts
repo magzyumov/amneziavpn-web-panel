@@ -19,6 +19,7 @@
 import { query, queryOne, run } from './db.js';
 import { readAwgWgPeerStats, readXrayPeerStats, readTelemtPeerStats, type PeerStats } from './protocols/index.js';
 import { enforceLimits } from './limits.js';
+import { purgeOldAudit } from './audit.js';
 import { logger } from './logger.js';
 import type { Server, Protocol } from '../types.js';
 
@@ -178,4 +179,6 @@ function purgeOldStats(): void {
   } catch (e) {
     logger.error({ err: e }, 'stats purge failed');
   }
+  // Журнал действий чистится тем же таймером — иначе он растёт вечно.
+  purgeOldAudit();
 }

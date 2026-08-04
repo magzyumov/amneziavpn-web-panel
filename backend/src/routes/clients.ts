@@ -10,6 +10,7 @@ import {
 } from '../services/access.js';
 import { validateBody } from '../middleware/validate.js';
 import { requireAdmin } from '../middleware/auth.js';
+import { auditTarget, auditDetails } from '../middleware/audit.js';
 import {
   addAWG2Client, addXrayClient, addWireGuardClient, addTelemtClient,
 } from '../services/protocols/index.js';
@@ -69,6 +70,8 @@ function loadClient(req: Request, res: Response): Client | null {
     res.status(404).json({ error: 'Not found' });
     return null;
   }
+  // Имя в журнал: «скачал конфиг iPhone» читается, «скачал конфиг 7fb860f8…» нет.
+  auditTarget(req, { id: client.id, name: client.name });
   return client;
 }
 
@@ -226,6 +229,12 @@ router.post('/', validateBody(createClientSchema), async (req: Request, res: Res
     } catch (e) { logger.error({ err: e }, 'Failed to create subscription'); }
   }
 
+  auditTarget(req, { id, name: safeName });
+  auditDetails(req, {
+    protocol: protocol.type, server: server.name,
+    expiresInDays: days || null, dailyLimitMb: limitMb || null,
+  });
+
   const created = queryOne<{ created_at: string }>('SELECT created_at FROM clients WHERE id = ?', [id]);
   res.json({
     id, name: safeName, config: result.config, type: result.type, subscriptionSlug,
@@ -239,8 +248,13 @@ router.post('/', validateBody(createClientSchema), async (req: Request, res: Res
 router.put('/:id/limits', requireAdmin, validateBody(limitsSchema), async (req: Request, res: Response) => {
   const client = queryOne<Client>('SELECT * FROM clients WHERE id = ?', [req.params.id]);
   if (!client) return res.status(404).json({ error: 'Not found' });
+  auditTarget(req, { id: client.id, name: client.name });
 
   const { expiresInDays, dailyLimitMb } = req.body as z.infer<typeof limitsSchema>;
+  auditDetails(req, {
+    ...(expiresInDays !== undefined ? { expiresInDays } : {}),
+    ...(dailyLimitMb !== undefined ? { dailyLimitMb } : {}),
+  });
 
   // Срок отсчитывается от «сейчас», а не от создания: продление на 7 дней
   // означает «ещё неделю с этого момента», это и ожидается от кнопки продления.

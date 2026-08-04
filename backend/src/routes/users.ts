@@ -10,6 +10,7 @@ import { query, queryOne, run } from '../services/db.js';
 import { authMiddleware, requireAdmin } from '../middleware/auth.js';
 import { validateBody } from '../middleware/validate.js';
 import { grantedProtocolIds, setUserProtocols, revokeUserGrants } from '../services/access.js';
+import { auditTarget, auditDetails } from '../middleware/audit.js';
 import type { AppUser, UserRole } from '../types.js';
 
 const router = Router();
@@ -83,6 +84,9 @@ router.post('/', validateBody(createSchema), async (req: Request, res: Response)
     [id, username, hash, role, clientLimit, defaultExpiryDays, defaultDailyLimitMb]);
   setUserProtocols(id, protocolIds);
 
+  auditTarget(req, { id, name: username });
+  auditDetails(req, { role, clientLimit, defaultExpiryDays, defaultDailyLimitMb, protocols: protocolIds.length });
+
   const created = listUsers().find(u => u.id === id);
   res.json(created);
 });
@@ -91,10 +95,21 @@ router.post('/', validateBody(createSchema), async (req: Request, res: Response)
 router.put('/:id', validateBody(updateSchema), async (req: Request, res: Response) => {
   const target = queryOne<AppUser>('SELECT * FROM users WHERE id = ?', [req.params.id]);
   if (!target) return res.status(404).json({ error: 'Пользователь не найден' });
+  auditTarget(req, { id: target.id, name: target.username });
 
   const {
     password, role, clientLimit, defaultExpiryDays, defaultDailyLimitMb, protocolIds,
   } = req.body as z.infer<typeof updateSchema>;
+
+  // Что именно поменяли. Сам пароль в журнал, разумеется, не попадает.
+  auditDetails(req, {
+    passwordChanged: !!password,
+    ...(role !== undefined ? { role } : {}),
+    ...(clientLimit !== undefined ? { clientLimit } : {}),
+    ...(defaultExpiryDays !== undefined ? { defaultExpiryDays } : {}),
+    ...(defaultDailyLimitMb !== undefined ? { defaultDailyLimitMb } : {}),
+    ...(protocolIds !== undefined ? { protocols: protocolIds.length } : {}),
+  });
 
   // Последний админ не должен уметь разжаловать сам себя: панель осталась бы
   // без администратора, и вернуть права было бы уже нечем.
@@ -125,6 +140,7 @@ router.put('/:id', validateBody(updateSchema), async (req: Request, res: Respons
 router.delete('/:id', (req: Request, res: Response) => {
   const target = queryOne<AppUser>('SELECT * FROM users WHERE id = ?', [req.params.id]);
   if (!target) return res.json({ ok: true }); // уже удалён
+  auditTarget(req, { id: target.id, name: target.username });
 
   if (target.id === req.user!.id) {
     return res.status(400).json({ error: 'Нельзя удалить самого себя' });
@@ -137,6 +153,7 @@ router.delete('/:id', (req: Request, res: Response) => {
   // людям связь при удалении аккаунта неправильно. Они становятся «ничьими» —
   // видны только админам, которые решат, отозвать их или передать другому.
   const orphaned = queryOne<{ n: number }>('SELECT COUNT(*) AS n FROM clients WHERE user_id = ?', [target.id])?.n ?? 0;
+  auditDetails(req, { role: target.role, orphanedClients: orphaned });
   run('UPDATE clients SET user_id = NULL WHERE user_id = ?', [target.id]);
   revokeUserGrants(target.id);
   run('DELETE FROM users WHERE id = ?', [target.id]);

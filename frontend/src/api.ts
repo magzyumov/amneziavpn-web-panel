@@ -212,6 +212,47 @@ export interface DashboardSummary {
   subscriptions: number;
 }
 
+export type AuditStatus = 'ok' | 'denied' | 'failed';
+
+// Запись журнала действий. Имена пользователя и объекта — снимки на момент
+// действия, поэтому читаются и после их удаления.
+export interface AuditRecord {
+  id: number;
+  ts: number;
+  user_id: string | null;
+  username: string;
+  role: string | null;
+  action: string;
+  target_type: string | null;
+  target_id: string | null;
+  target_name: string | null;
+  details: Record<string, unknown> | null;
+  ip: string | null;
+  status: AuditStatus;
+  http_status: number | null;
+}
+
+export interface AuditResponse {
+  rows: AuditRecord[];
+  total: number;
+  retentionDays: number;
+  usernames: string[];
+  actions: string[];
+}
+
+export interface AuditQuery {
+  username?: string;
+  action?: string;
+  status?: AuditStatus;
+  since?: number;
+  limit?: number;
+  offset?: number;
+}
+
+export const auditApi = {
+  list: (params: AuditQuery = {}) => api.get<AuditResponse>('/audit', { params }),
+};
+
 export const dashboardApi = {
   summary: () => api.get<DashboardSummary>('/dashboard'),
   // Единственное действие дашборда, которое ходит по SSH — и только по кнопке.

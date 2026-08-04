@@ -8,6 +8,7 @@ import cookieParser from 'cookie-parser';
 import { getDb, flushSave } from './services/db.js';
 import { initEncryption } from './services/crypto.js';
 import { csrfMiddleware } from './middleware/auth.js';
+import { auditMiddleware } from './middleware/audit.js';
 import { disconnectAll } from './services/ssh.js';
 import { startStatsWorker, stopStatsWorker } from './services/statsWorker.js';
 import { logger } from './services/logger.js';
@@ -15,6 +16,7 @@ import { isUserError } from './services/errors.js';
 import authRoutes from './routes/auth.js';
 import userRoutes from './routes/users.js';
 import dashboardRoutes from './routes/dashboard.js';
+import auditRoutes from './routes/audit.js';
 import serverRoutes from './routes/servers.js';
 import protocolRoutes from './routes/protocols.js';
 import clientRoutes from './routes/clients.js';
@@ -58,6 +60,9 @@ app.use(helmet({
 app.use(cookieParser());
 app.use(express.json({ limit: '2mb' }));
 app.use('/api', csrfMiddleware);
+// После CSRF: запрос, отбитый на CSRF, до действия не доходит, и в журнале
+// действий ему делать нечего.
+app.use('/api', auditMiddleware);
 
 logger.info('Initializing encryption...');
 try {
@@ -84,6 +89,7 @@ app.get('/api/health', (_req, res) => res.json({ ok: true }));
 app.use('/api/auth',          authRoutes);
 app.use('/api/users',         userRoutes);
 app.use('/api/dashboard',     dashboardRoutes);
+app.use('/api/audit',         auditRoutes);
 app.use('/api/servers',       serverRoutes);
 app.use('/api/protocols',     protocolRoutes);
 app.use('/api/clients',       clientRoutes);
