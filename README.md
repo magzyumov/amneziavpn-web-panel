@@ -27,6 +27,7 @@ VPN-протоколы на ваших VPS по SSH, выпускает клие
 
 - **Несколько серверов** в одной панели. SSH по паролю или ключу, креды шифруются AES-256-GCM.
 - **Аккаунты с разделением прав**: администратор управляет серверами и протоколами, обычный пользователь заходит и выпускает конфиги себе сам — в пределах того, что ему выдали.
+- **Дашборд**: состояние серверов и протоколов, кто онлайн, трафик за две недели, топ клиентов и предупреждения — одним экраном, без единого SSH-запроса.
 - **Установка протоколов в один клик** — панель сама поставит Docker, подготовит хост и соберёт образы на VPS.
 - **Импорт того, что уже стоит**: сканирует сервер, находит развёрнутые контейнеры (AmneziaWG, WireGuard, Xray, Telemt) и подхватывает их вместе с клиентами.
 - **Клиентские конфиги** — файл, `vpn://`-ссылка, QR (включая нативный многокадровый QR Amnezia), `tg://proxy` для Telegram.
@@ -258,6 +259,7 @@ amneziavpn-web-panel/
 │       ├── routes/
 │       │   ├── auth.ts             — login / setup / me / logout
 │       │   ├── users.ts            — аккаунты, роли, лимиты, выдача протоколов (admin)
+│       │   ├── dashboard.ts        — сводка для главной (admin)
 │       │   ├── servers.ts          — CRUD + scan + import + AmneziaDNS
 │       │   ├── protocols.ts        — install / start / stop / health / logs
 │       │   ├── clients.ts          — create / qr / config / stats
@@ -265,6 +267,7 @@ amneziavpn-web-panel/
 │       └── services/
 │           ├── db.ts               — better-sqlite3 (WAL), схема и миграции
 │           ├── access.ts           — роли, владение клиентами, выданные протоколы
+│           ├── dashboard.ts        — агрегация сводки главной страницы
 │           ├── limits.ts           — срок действия и суточный лимит трафика
 │           ├── clientLifecycle.ts  — отзыв, возврат и удаление клиента на сервере
 │           ├── crypto.ts           — AES-256-GCM для SSH-кредов
@@ -297,7 +300,7 @@ amneziavpn-web-panel/
 │       ├── api.ts                  — axios + CSRF + типы API
 │       ├── protocols.ts            — названия и иконки протоколов
 │       ├── auth.ts                 — контекст текущего пользователя и его роли
-│       └── pages/                  — Dashboard, Server, Subscriptions, MyClients, Users
+│       └── pages/                  — Dashboard (сводка), Servers, Server, Subscriptions, MyClients, Users
 │   └── templates/clash.yaml        — дефолтный шаблон Clash-подписки
 ├── data/                           — база и ключ шифрования (создаются сами)
 └── docker-compose.yml
@@ -327,6 +330,12 @@ GET    /api/users          — список { id, username, role, client_limit, 
 POST   /api/users          — завести { username, password, role, clientLimit, protocolIds }
 PUT    /api/users/:id      — пароль / роль / лимит / выданные протоколы
 DELETE /api/users/:id      — удалить; клиенты не удаляются, а становятся «ничьими»
+```
+
+### Dashboard (только admin)
+```
+GET  /api/dashboard        — сводка: серверы, протоколы, пользователи, клиенты,
+                             трафик за 14 дней, топ клиентов. Только из базы, без SSH
 ```
 
 ### Servers

@@ -155,6 +155,9 @@ function migrateAccessControl(): void {
   // ничего не включается: NULL = бессрочно, 0 = без лимита.
   addColumnIfMissing('users', 'default_expiry_days', 'default_expiry_days INTEGER NOT NULL DEFAULT 0');
   addColumnIfMissing('users', 'default_daily_limit_mb', 'default_daily_limit_mb INTEGER NOT NULL DEFAULT 0');
+  // Отметка последнего успешного опроса протокола воркером статистики. Даёт
+  // дашборду «живость» сервера бесплатно: SSH туда и так ходит раз в минуту.
+  addColumnIfMissing('protocols', 'last_poll_at', 'last_poll_at INTEGER');
   addColumnIfMissing('clients', 'expires_at', 'expires_at INTEGER');
   addColumnIfMissing('clients', 'daily_limit_bytes', 'daily_limit_bytes INTEGER NOT NULL DEFAULT 0');
   addColumnIfMissing('clients', 'suspended_at', 'suspended_at INTEGER');
@@ -219,6 +222,7 @@ function initSchema(): void {
       port INTEGER,
       config TEXT,
       status TEXT DEFAULT 'stopped',
+      last_poll_at INTEGER, -- unix sec последнего успешного опроса статистики
       installed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (server_id) REFERENCES servers(id) ON DELETE CASCADE
     );

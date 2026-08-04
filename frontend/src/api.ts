@@ -142,6 +142,44 @@ export interface UserPayload {
   protocolIds?: string[];
 }
 
+export interface DayBucket { day: string; rx: number; tx: number }
+
+// Сводка главной страницы. Считается целиком из базы панели — SSH при открытии
+// дашборда не происходит, поэтому он не зависит от доступности VPS.
+export interface DashboardSummary {
+  servers: Array<{
+    id: string; name: string; host: string;
+    protocols: number; running: number;
+    /** unix sec последнего успешного опроса статистики; null — ни разу. */
+    lastPollAt: number | null;
+    /** Протоколы числятся запущенными, но воркер до них давно не достучался. */
+    stale: boolean;
+  }>;
+  protocols: {
+    total: number; running: number;
+    byType: Array<{ type: ProtocolRecord['type']; count: number; clients: number }>;
+  };
+  users: { total: number; admins: number; regular: number };
+  clients: {
+    total: number; online: number; suspended: number;
+    withLimits: number; expiringSoon: number; orphaned: number;
+  };
+  traffic: {
+    today: { rx: number; tx: number };
+    week: { rx: number; tx: number };
+    daily: DayBucket[];
+    topClients: Array<{
+      id: string; name: string; type: ProtocolRecord['type'];
+      owner: string | null; rx: number; tx: number;
+    }>;
+  };
+  subscriptions: number;
+}
+
+export const dashboardApi = {
+  summary: () => api.get<DashboardSummary>('/dashboard'),
+};
+
 export const usersApi = {
   list: () => api.get<PanelUser[]>('/users'),
   create: (data: UserPayload & { username: string; password: string }) => api.post<PanelUser>('/users', data),

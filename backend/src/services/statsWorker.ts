@@ -113,6 +113,11 @@ async function pollOnce(): Promise<void> {
       logger.debug({ err: e, protocol: row.id, container: row.container_name }, 'stats poll failed');
       continue;
     }
+
+    // Дошли сюда — значит SSH к серверу и docker exec в контейнер отработали.
+    // Этой отметкой дашборд показывает живость сервера, не гоняя свой SSH.
+    run('UPDATE protocols SET last_poll_at = ? WHERE id = ?', [now, row.id]);
+
     if (!peers.length) continue;
 
     const clients = query<ClientRow>(

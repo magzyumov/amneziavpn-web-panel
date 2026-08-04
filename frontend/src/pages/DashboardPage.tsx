@@ -1,204 +1,225 @@
-import { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { serversApi, type ServerRecord } from '../api';
+import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
+import { dashboardApi, type DashboardSummary, type DayBucket } from '../api';
+import { PROTOCOL_ICONS, PROTOCOL_NAMES } from '../protocols';
+import { formatBytes, formatRelativeTime } from './server/format';
 
-interface AddServerForm {
-  name: string;
-  host: string;
-  port: number;
-  username: string;
-  auth_type: 'password' | 'key';
-  password: string;
-  private_key: string;
-}
-
-interface AddServerModalProps {
-  onClose: () => void;
-  onAdded: (server: ServerRecord) => void;
-}
-
-function AddServerModal({ onClose, onAdded }: AddServerModalProps) {
-  const [form, setForm] = useState<AddServerForm>({ name: '', host: '', port: 22, username: 'root', auth_type: 'password', password: '', private_key: '' });
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
-  const navigate = useNavigate();
-
-  // Автоопределение IP текущего сервера (откуда открыта панель)
-  useEffect(() => {
-    const detectedHost = window.location.hostname;
-    if (detectedHost && detectedHost !== 'localhost' && detectedHost !== '127.0.0.1') {
-      setForm(f => ({ ...f, host: detectedHost }));
-    }
-  }, []);
-
-  const set = <K extends keyof AddServerForm>(k: K, v: AddServerForm[K]) => setForm(f => ({ ...f, [k]: v }));
-
-  const submit = async () => {
-    setLoading(true);
-    setError('');
-    try {
-      const r = await serversApi.create(form);
-      onAdded(r.data);
-      // Переходим на страницу сервера — там покажем результаты сканирования
-      navigate(`/server/${r.data.id}?scan=1`);
-    } catch (e: any) {
-      setError(e.response?.data?.error || 'Failed to add server');
-      setLoading(false);
-    }
-  };
-
-  return (
-    <div className="modal-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
-      <div className="modal">
-        <div className="modal-title">Add Server</div>
-        {error && <div className="notice notice-error" style={{ marginBottom: 16 }}>{error}</div>}
-        <div className="modal-form">
-          <div className="input-group">
-            <label className="input-label">Name</label>
-            <input className="input" placeholder="My VPS" value={form.name} onChange={e => set('name', e.target.value)} />
-          </div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 80px', gap: 8 }}>
-            <div className="input-group">
-              <label className="input-label">Host / IP</label>
-              <input className="input input-mono" placeholder="1.2.3.4" value={form.host} onChange={e => set('host', e.target.value)} />
-            </div>
-            <div className="input-group">
-              <label className="input-label">Port</label>
-              <input className="input input-mono" type="number" value={form.port} onChange={e => set('port', +e.target.value)} />
-            </div>
-          </div>
-          <div className="input-group">
-            <label className="input-label">Username</label>
-            <input className="input input-mono" value={form.username} onChange={e => set('username', e.target.value)} />
-          </div>
-          <div className="input-group">
-            <label className="input-label">Auth Type</label>
-            <select className="input" value={form.auth_type} onChange={e => set('auth_type', e.target.value as 'password' | 'key')}>
-              <option value="password">Password</option>
-              <option value="key">SSH Key</option>
-            </select>
-          </div>
-          {form.auth_type === 'password' ? (
-            <div className="input-group">
-              <label className="input-label">Password</label>
-              <input className="input" type="password" value={form.password} onChange={e => set('password', e.target.value)} />
-            </div>
-          ) : (
-            <div className="input-group">
-              <label className="input-label">Private Key (PEM)</label>
-              <textarea className="input input-mono" rows={5} placeholder="-----BEGIN RSA PRIVATE KEY-----" value={form.private_key} onChange={e => set('private_key', e.target.value)} />
-            </div>
-          )}
-          <div className="notice notice-info" style={{ fontSize: 11 }}>
-            After adding, the server will be automatically scanned for existing Amnezia protocols.
-          </div>
-        </div>
-        <div className="modal-actions">
-          <button className="btn btn-outline" onClick={onClose}>Cancel</button>
-          <button className="btn btn-primary" onClick={submit} disabled={loading}>
-            {loading ? <><span className="spinner" /> Adding…</> : 'Add & Scan Server'}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-interface ServerCardProps {
-  server: ServerRecord;
-  onDelete: (id: string) => void;
-}
-
-interface TestResult { ok: boolean; dockerAvailable?: boolean; error?: string }
-
-function ServerCard({ server, onDelete }: ServerCardProps) {
-  const navigate = useNavigate();
-  const [testing, setTesting] = useState(false);
-  const [testResult, setTestResult] = useState<TestResult | null>(null);
-
-  const test = async (e: React.MouseEvent) => {
-    e.stopPropagation();
-    setTesting(true);
-    try {
-      const r = await serversApi.test(server.id);
-      setTestResult(r.data as TestResult);
-    } catch {
-      setTestResult({ ok: false, error: 'Connection failed' });
-    } finally {
-      setTesting(false);
-    }
-  };
-
-  return (
-    <div className="card" style={{ cursor: 'pointer' }} onClick={() => navigate(`/server/${server.id}`)}>
-      <div className="flex items-center justify-between page-header-row" style={{ gap: 8 }}>
-        <div style={{ minWidth: 0 }}>
-          <div style={{ fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{server.name}</div>
-          <div className="mono text-dim mt-4" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{server.username}@{server.host}:{server.port}</div>
-        </div>
-        <div className="flex gap-8" style={{ flexShrink: 0 }} onClick={e => e.stopPropagation()}>
-          <button className="btn btn-ghost btn-sm" onClick={test} disabled={testing}>
-            {testing ? <span className="spinner" style={{ width: 12, height: 12 }} /> : '⚡ Test'}
-          </button>
-          <button className="btn btn-danger btn-sm" onClick={() => onDelete(server.id)}>✕</button>
-        </div>
-      </div>
-      {testResult && (
-        <div className={`notice mt-8 ${testResult.ok ? 'notice-success' : 'notice-error'}`} style={{ marginTop: 12 }}>
-          {testResult.ok ? `✓ Connected${testResult.dockerAvailable ? ' · Docker OK' : ' · Docker not found'}` : `✗ ${testResult.error}`}
-        </div>
-      )}
-    </div>
-  );
-}
+const REFRESH_MS = 30_000;
 
 export default function DashboardPage() {
-  const [servers, setServers] = useState<ServerRecord[]>([]);
-  const [showAdd, setShowAdd] = useState(false);
-  const [loading, setLoading] = useState(true);
+  const [data, setData] = useState<DashboardSummary | null>(null);
+  const [error, setError] = useState('');
 
   useEffect(() => {
-    serversApi.list().then(r => setServers(r.data)).finally(() => setLoading(false));
+    const load = () => dashboardApi.summary()
+      .then(r => { setData(r.data); setError(''); })
+      .catch(e => setError(e.response?.data?.error || 'Не удалось загрузить сводку'));
+    load();
+    const t = setInterval(load, REFRESH_MS);
+    return () => clearInterval(t);
   }, []);
 
-  const del = async (id: string) => {
-    if (!confirm('Remove server?')) return;
-    await serversApi.delete(id);
-    setServers(s => s.filter(x => x.id !== id));
-  };
+  if (error && !data) return <div className="page-body"><div className="notice notice-error">{error}</div></div>;
+  if (!data) return <div style={{ padding: 48, textAlign: 'center' }}><span className="spinner" style={{ width: 24, height: 24 }} /></div>;
+
+  const { servers, protocols, users, clients, traffic, subscriptions } = data;
+  const todayTotal = traffic.today.rx + traffic.today.tx;
+  const weekTotal = traffic.week.rx + traffic.week.tx;
 
   return (
     <>
       <div className="page-header">
         <div className="flex items-center justify-between page-header-row">
           <div>
-            <div className="page-title">Servers</div>
-            <div className="page-sub">// manage vpn infrastructure</div>
+            <div className="page-title">Dashboard</div>
+            <div className="page-sub mono">// обзор инфраструктуры</div>
           </div>
-          <button className="btn btn-primary" onClick={() => setShowAdd(true)}>+ Add Server</button>
         </div>
       </div>
-      <div className="page-body">
-        {loading ? (
-          <div style={{ textAlign: 'center', padding: 48 }}><span className="spinner" style={{ width: 24, height: 24 }} /></div>
-        ) : servers.length === 0 ? (
-          <div className="empty-state">
-            <div className="empty-icon">⬡</div>
-            <div className="empty-text">No servers yet. Add your VPS to get started.</div>
-            <button className="btn btn-primary" style={{ marginTop: 16 }} onClick={() => setShowAdd(true)}>+ Add Server</button>
+
+      <div className="page-body" style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+        {/* Плитки: то, на что смотрят первым делом */}
+        <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: 12 }}>
+          <Tile label="Серверы" value={servers.length}
+            sub={servers.some(s => s.stale) ? '⚠ есть не отвечающие' : 'все отвечают'}
+            warn={servers.some(s => s.stale)} />
+          <Tile label="Протоколы" value={`${protocols.running} / ${protocols.total}`}
+            sub="запущено / всего" warn={protocols.running < protocols.total} />
+          <Tile label="Клиенты" value={clients.total}
+            sub={`${clients.online} онлайн сейчас`} accent={clients.online > 0} />
+          <Tile label="Пользователи" value={users.total}
+            sub={`${users.admins} admin · ${users.regular} user`} />
+          <Tile label="Трафик сегодня" value={formatBytes(todayTotal)}
+            sub={`за неделю ${formatBytes(weekTotal)}`} />
+          <Tile label="Подписки" value={subscriptions} sub="Clash / FLClash" />
+        </div>
+
+        {/* Предупреждения — только когда есть о чём. Пустых блоков не рисуем. */}
+        <Alerts clients={clients} servers={servers} />
+
+        <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(340px, 1fr))', gap: 16 }}>
+          <div className="card">
+            <div className="input-label" style={{ marginBottom: 12 }}>Трафик за 14 дней</div>
+            <TrafficChart daily={traffic.daily} />
           </div>
-        ) : (
-          <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))' }}>
-            {servers.map(s => <ServerCard key={s.id} server={s} onDelete={del} />)}
+
+          <div className="card">
+            <div className="input-label" style={{ marginBottom: 12 }}>Протоколы</div>
+            {protocols.byType.length === 0 ? (
+              <div className="text-muted mono" style={{ fontSize: 11 }}>Ни одного протокола не установлено</div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {protocols.byType.map(p => (
+                  <div key={p.type} className="flex items-center justify-between" style={{ gap: 8 }}>
+                    <span style={{ fontSize: 13 }}>
+                      {PROTOCOL_ICONS[p.type]} {PROTOCOL_NAMES[p.type]}
+                    </span>
+                    <span className="mono text-muted" style={{ fontSize: 11 }}>
+                      {p.count} шт · {p.clients} клиентов
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
-        )}
+        </div>
+
+        <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(340px, 1fr))', gap: 16 }}>
+          <div className="card">
+            <div className="input-label" style={{ marginBottom: 12 }}>Серверы</div>
+            {servers.length === 0 ? (
+              <div className="text-muted mono" style={{ fontSize: 11 }}>
+                Серверов пока нет. <Link to="/servers">Добавить</Link>
+              </div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                {servers.map(s => (
+                  <Link key={s.id} to={`/server/${s.id}`}
+                    className="flex items-center justify-between"
+                    style={{ gap: 8, textDecoration: 'none', color: 'inherit' }}>
+                    <div style={{ minWidth: 0 }}>
+                      <div style={{ fontSize: 13, fontWeight: 500 }}>{s.name}</div>
+                      <div className="mono text-muted" style={{ fontSize: 11 }}>{s.host}</div>
+                    </div>
+                    <div style={{ textAlign: 'right', flexShrink: 0 }}>
+                      <span className={`badge badge-${s.stale ? 'stopped' : 'running'}`}>
+                        {s.stale ? 'не отвечает' : `${s.running}/${s.protocols}`}
+                      </span>
+                      <div className="mono text-muted" style={{ fontSize: 10, marginTop: 2 }}>
+                        {s.lastPollAt ? formatRelativeTime(s.lastPollAt) : 'опроса не было'}
+                      </div>
+                    </div>
+                  </Link>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="card">
+            <div className="input-label" style={{ marginBottom: 12 }}>Топ клиентов за 14 дней</div>
+            {traffic.topClients.length === 0 ? (
+              <div className="text-muted mono" style={{ fontSize: 11 }}>Трафика пока не было</div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {traffic.topClients.map(c => (
+                  <div key={c.id} className="flex items-center justify-between" style={{ gap: 8 }}>
+                    <div style={{ minWidth: 0 }}>
+                      <div style={{ fontSize: 13 }}>{PROTOCOL_ICONS[c.type]} {c.name}</div>
+                      <div className="mono text-muted" style={{ fontSize: 10 }}>
+                        {c.owner ?? 'без владельца'}
+                      </div>
+                    </div>
+                    <span className="mono" style={{ fontSize: 12, flexShrink: 0 }}>{formatBytes(c.rx + c.tx)}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
       </div>
-      {showAdd && (
-        <AddServerModal
-          onClose={() => setShowAdd(false)}
-          onAdded={s => { setServers(p => [...p, s]); setShowAdd(false); }}
-        />
-      )}
     </>
+  );
+}
+
+// ─── Плитка ───────────────────────────────────────────────────────────────────
+
+interface TileProps { label: string; value: string | number; sub?: string; warn?: boolean; accent?: boolean }
+
+function Tile({ label, value, sub, warn, accent }: TileProps) {
+  return (
+    <div className="card" style={{ padding: 14 }}>
+      <div className="mono text-muted" style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+        {label}
+      </div>
+      <div style={{
+        fontSize: 24, fontWeight: 700, marginTop: 4, lineHeight: 1.1,
+        color: warn ? 'var(--danger, #e5534b)' : accent ? 'var(--accent)' : undefined,
+      }}>{value}</div>
+      {sub && <div className="mono text-muted" style={{ fontSize: 10, marginTop: 4 }}>{sub}</div>}
+    </div>
+  );
+}
+
+// ─── Предупреждения ───────────────────────────────────────────────────────────
+
+function Alerts({ clients, servers }: Pick<DashboardSummary, 'clients' | 'servers'>) {
+  const items = [
+    servers.filter(s => s.stale).length > 0
+      ? `${servers.filter(s => s.stale).length} серв. числятся запущенными, но не отвечают на опрос статистики`
+      : null,
+    clients.suspended > 0
+      ? `${clients.suspended} клиентов приостановлены по суточному лимиту — вернутся сами с началом новых суток`
+      : null,
+    clients.expiringSoon > 0
+      ? `${clients.expiringSoon} клиентов истекают в ближайшие сутки и будут удалены`
+      : null,
+    clients.orphaned > 0
+      ? `${clients.orphaned} клиентов без владельца (импортированы или остались от удалённых пользователей)`
+      : null,
+  ].filter(Boolean) as string[];
+
+  if (items.length === 0) return null;
+
+  return (
+    <div className="notice" style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+      {items.map(t => <div key={t} style={{ fontSize: 12 }}>· {t}</div>)}
+    </div>
+  );
+}
+
+// ─── График ───────────────────────────────────────────────────────────────────
+
+// Столбики по суткам: rx снизу, tx сверху. Свой SVG, а не библиотека графиков —
+// одна диаграмма не стоит зависимости, а CSP запрещает внешние скрипты.
+function TrafficChart({ daily }: { daily: DayBucket[] }) {
+  const max = Math.max(1, ...daily.map(d => d.rx + d.tx));
+  const W = 100, H = 40, gap = 1.2;
+  const barW = (W - gap * (daily.length - 1)) / daily.length;
+
+  return (
+    <div>
+      <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" style={{ width: '100%', height: 120, display: 'block' }}>
+        {daily.map((d, i) => {
+          const total = d.rx + d.tx;
+          const h = (total / max) * H;
+          const rxH = total > 0 ? (d.rx / total) * h : 0;
+          const x = i * (barW + gap);
+          return (
+            <g key={d.day}>
+              <title>{`${d.day}: ↓ ${formatBytes(d.rx)} · ↑ ${formatBytes(d.tx)}`}</title>
+              <rect x={x} y={H - h} width={barW} height={rxH} fill="var(--accent)" opacity={0.85} />
+              <rect x={x} y={H - h + rxH} width={barW} height={Math.max(0, h - rxH)} fill="var(--accent)" opacity={0.4} />
+              {/* Прозрачная накладка на всю высоту — иначе подсказка не ловится у низких столбиков */}
+              <rect x={x} y={0} width={barW} height={H} fill="transparent" />
+            </g>
+          );
+        })}
+      </svg>
+      <div className="flex justify-between mono text-muted" style={{ fontSize: 10, marginTop: 6 }}>
+        <span>{daily[0]?.day.slice(5)}</span>
+        <span>макс. за сутки: {formatBytes(max)}</span>
+        <span>сегодня</span>
+      </div>
+    </div>
   );
 }

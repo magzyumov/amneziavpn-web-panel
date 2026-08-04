@@ -5,6 +5,7 @@ import { AuthContext, useCurrentUser } from './auth';
 import SetupPage from './pages/SetupPage';
 import LoginPage from './pages/LoginPage';
 import DashboardPage from './pages/DashboardPage';
+import ServersPage from './pages/ServersPage';
 import ServerPage from './pages/ServerPage';
 import SubscriptionsPage from './pages/SubscriptionsPage';
 import MyClientsPage from './pages/MyClientsPage';
@@ -123,7 +124,7 @@ export default function App() {
         <Route path="/setup" element={<SetupPage />} />
         <Route path="/login" element={<LoginPage />} />
         <Route path="/" element={<PrivateLayout><HomePage /></PrivateLayout>} />
-        <Route path="/servers" element={<PrivateLayout adminOnly><DashboardPage /></PrivateLayout>} />
+        <Route path="/servers" element={<PrivateLayout adminOnly><ServersPage /></PrivateLayout>} />
         <Route path="/server/:id" element={<PrivateLayout adminOnly><ServerPage /></PrivateLayout>} />
         <Route path="/subscriptions" element={<PrivateLayout adminOnly><SubscriptionsPage /></PrivateLayout>} />
         <Route path="/users" element={<PrivateLayout adminOnly><UsersPage /></PrivateLayout>} />
