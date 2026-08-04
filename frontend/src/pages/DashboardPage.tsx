@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { dashboardApi, type DashboardSummary, type DayBucket } from '../api';
+import { dashboardApi, type DashboardSummary, type DayBucket, type ServerSummary } from '../api';
 import { PROTOCOL_ICONS, PROTOCOL_NAMES } from '../protocols';
 import { formatBytes, formatRelativeTime } from './server/format';
 
@@ -9,6 +9,7 @@ const REFRESH_MS = 30_000;
 export default function DashboardPage() {
   const [data, setData] = useState<DashboardSummary | null>(null);
   const [error, setError] = useState('');
+  const [probing, setProbing] = useState(false);
 
   useEffect(() => {
     const load = () => dashboardApi.summary()
@@ -19,10 +20,23 @@ export default function DashboardPage() {
     return () => clearInterval(t);
   }, []);
 
+  const probe = async () => {
+    setProbing(true);
+    setError('');
+    try {
+      const r = await dashboardApi.probe();
+      setData(r.data.summary);
+    } catch (e: any) {
+      setError(e.response?.data?.error || 'Не удалось опросить серверы');
+    } finally {
+      setProbing(false);
+    }
+  };
+
   if (error && !data) return <div className="page-body"><div className="notice notice-error">{error}</div></div>;
   if (!data) return <div style={{ padding: 48, textAlign: 'center' }}><span className="spinner" style={{ width: 24, height: 24 }} /></div>;
 
-  const { servers, protocols, users, clients, traffic, subscriptions } = data;
+  const { servers, protocols, users, clients, traffic, subscriptions, issues, storage } = data;
   const todayTotal = traffic.today.rx + traffic.today.tx;
   const weekTotal = traffic.week.rx + traffic.week.tx;
 
@@ -34,10 +48,18 @@ export default function DashboardPage() {
             <div className="page-title">Dashboard</div>
             <div className="page-sub mono">// обзор инфраструктуры</div>
           </div>
+          <div className="flex gap-8 page-header-actions">
+            <button className="btn btn-outline" onClick={probe} disabled={probing}
+              title="Зайти по SSH на каждый сервер и снять аптайм, нагрузку, память, диск и статус AmneziaDNS">
+              {probing ? <><span className="spinner" /> Опрашиваю…</> : '⟳ Опросить серверы'}
+            </button>
+          </div>
         </div>
       </div>
 
       <div className="page-body" style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+        {error && <div className="notice notice-error">{error}</div>}
+
         {/* Плитки: то, на что смотрят первым делом */}
         <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: 12 }}>
           <Tile label="Серверы" value={servers.length}
@@ -46,7 +68,8 @@ export default function DashboardPage() {
           <Tile label="Протоколы" value={`${protocols.running} / ${protocols.total}`}
             sub="запущено / всего" warn={protocols.running < protocols.total} />
           <Tile label="Клиенты" value={clients.total}
-            sub={`${clients.online} онлайн сейчас`} accent={clients.online > 0} />
+            sub={`${clients.online} онлайн · ${clients.activeToday} заходили сегодня`}
+            accent={clients.online > 0} />
           <Tile label="Пользователи" value={users.total}
             sub={`${users.admins} admin · ${users.regular} user`} />
           <Tile label="Трафик сегодня" value={formatBytes(todayTotal)}
@@ -54,8 +77,7 @@ export default function DashboardPage() {
           <Tile label="Подписки" value={subscriptions} sub="Clash / FLClash" />
         </div>
 
-        {/* Предупреждения — только когда есть о чём. Пустых блоков не рисуем. */}
-        <Alerts clients={clients} servers={servers} />
+        <Alerts data={data} />
 
         <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(340px, 1fr))', gap: 16 }}>
           <div className="card">
@@ -92,25 +114,8 @@ export default function DashboardPage() {
                 Серверов пока нет. <Link to="/servers">Добавить</Link>
               </div>
             ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-                {servers.map(s => (
-                  <Link key={s.id} to={`/server/${s.id}`}
-                    className="flex items-center justify-between"
-                    style={{ gap: 8, textDecoration: 'none', color: 'inherit' }}>
-                    <div style={{ minWidth: 0 }}>
-                      <div style={{ fontSize: 13, fontWeight: 500 }}>{s.name}</div>
-                      <div className="mono text-muted" style={{ fontSize: 11 }}>{s.host}</div>
-                    </div>
-                    <div style={{ textAlign: 'right', flexShrink: 0 }}>
-                      <span className={`badge badge-${s.stale ? 'stopped' : 'running'}`}>
-                        {s.stale ? 'не отвечает' : `${s.running}/${s.protocols}`}
-                      </span>
-                      <div className="mono text-muted" style={{ fontSize: 10, marginTop: 2 }}>
-                        {s.lastPollAt ? formatRelativeTime(s.lastPollAt) : 'опроса не было'}
-                      </div>
-                    </div>
-                  </Link>
-                ))}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+                {servers.map(s => <ServerRow key={s.id} server={s} />)}
               </div>
             )}
           </div>
@@ -136,8 +141,88 @@ export default function DashboardPage() {
             )}
           </div>
         </div>
+
+        <div className="card">
+          <div className="input-label" style={{ marginBottom: 8 }}>Хранилище</div>
+          <div className="mono text-muted" style={{ fontSize: 11, display: 'flex', gap: 16, flexWrap: 'wrap' }}>
+            <span>база: {formatBytes(storage.dbBytes)}</span>
+            <span>снимков статистики: {storage.statsRows.toLocaleString('ru-RU')}</span>
+            <span>
+              глубина: {storage.oldestSnapshotAt
+                ? `с ${new Date(storage.oldestSnapshotAt * 1000).toLocaleDateString('ru-RU')}`
+                : 'снимков нет'} (хранение {storage.retentionDays} дн.)
+            </span>
+          </div>
+        </div>
       </div>
     </>
+  );
+}
+
+// ─── Строка сервера ───────────────────────────────────────────────────────────
+
+function formatUptime(sec: number | null): string {
+  if (!sec) return '—';
+  const days = Math.floor(sec / 86400);
+  const hours = Math.floor((sec % 86400) / 3600);
+  return days > 0 ? `${days} дн. ${hours} ч` : `${hours} ч`;
+}
+
+function ServerRow({ server: s }: { server: ServerSummary }) {
+  const hasMetrics = s.probedAt !== null && !s.probeError;
+  const diskUsedPct = s.diskTotalMb && s.diskFreeMb !== null
+    ? Math.round(((s.diskTotalMb - s.diskFreeMb) / s.diskTotalMb) * 100)
+    : null;
+  const memUsedPct = s.memTotalMb && s.memUsedMb !== null
+    ? Math.round((s.memUsedMb / s.memTotalMb) * 100)
+    : null;
+
+  return (
+    <div>
+      <Link to={`/server/${s.id}`} className="flex items-center justify-between"
+        style={{ gap: 8, textDecoration: 'none', color: 'inherit' }}>
+        <div style={{ minWidth: 0 }}>
+          <div style={{ fontSize: 13, fontWeight: 500 }}>{s.name}</div>
+          <div className="mono text-muted" style={{ fontSize: 11 }}>{s.host}</div>
+        </div>
+        <div style={{ textAlign: 'right', flexShrink: 0 }}>
+          <span className={`badge badge-${s.stale ? 'stopped' : 'running'}`}>
+            {s.stale ? 'не отвечает' : `${s.running}/${s.protocols}`}
+          </span>
+          <div className="mono text-muted" style={{ fontSize: 10, marginTop: 2 }}>
+            {s.lastPollAt ? formatRelativeTime(s.lastPollAt) : 'опроса не было'}
+          </div>
+        </div>
+      </Link>
+
+      <div className="mono text-muted" style={{ fontSize: 10, marginTop: 4, display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+        <span style={{ color: s.dnsInstalled === false ? 'var(--danger, #e5534b)' : undefined }}
+          title="AmneziaDNS — серверный резолвер, защита от DNS-leak">
+          🛡️ DNS: {s.dnsInstalled === null ? 'неизвестно' : s.dnsInstalled ? 'есть' : 'нет'}
+        </span>
+        {s.probeError ? (
+          <span style={{ color: 'var(--danger, #e5534b)' }} title={s.probeError}>⚠ опрос не удался</span>
+        ) : hasMetrics ? (
+          <>
+            <span>⏱ {formatUptime(s.uptimeSec)}</span>
+            {s.load1 !== null && <span>load {s.load1.toFixed(2)}</span>}
+            {memUsedPct !== null && (
+              <span style={{ color: memUsedPct >= 90 ? 'var(--danger, #e5534b)' : undefined }}>
+                RAM {memUsedPct}%
+              </span>
+            )}
+            {diskUsedPct !== null && (
+              <span style={{ color: diskUsedPct >= 90 ? 'var(--danger, #e5534b)' : undefined }}>
+                диск {diskUsedPct}% ({formatBytes((s.diskFreeMb ?? 0) * 1024 * 1024)} свободно)
+              </span>
+            )}
+            <span>· снято {formatRelativeTime(s.probedAt)}</span>
+          </>
+        ) : (
+          <span>метрик нет — нажмите «Опросить серверы»</span>
+        )}
+      </div>
+    </div>
   );
 }
 
@@ -162,21 +247,36 @@ function Tile({ label, value, sub, warn, accent }: TileProps) {
 
 // ─── Предупреждения ───────────────────────────────────────────────────────────
 
-function Alerts({ clients, servers }: Pick<DashboardSummary, 'clients' | 'servers'>) {
-  const items = [
-    servers.filter(s => s.stale).length > 0
-      ? `${servers.filter(s => s.stale).length} серв. числятся запущенными, но не отвечают на опрос статистики`
-      : null,
+// Блок рисуется только когда есть о чём: пустая «всё хорошо» карточка занимает
+// место и приучает не читать это место вовсе.
+function Alerts({ data }: { data: DashboardSummary }) {
+  const { clients, servers, issues } = data;
+  const stale = servers.filter(s => s.stale);
+  const noDns = servers.filter(s => s.dnsInstalled === false);
+
+  const items: string[] = [
+    stale.length > 0
+      ? `${stale.length} серв. числятся запущенными, но не отвечают на опрос статистики: ${stale.map(s => s.name).join(', ')}`
+      : '',
+    issues.silent.length > 0
+      ? `${issues.silent.length} протоколов работают, но не отдают статистику (${issues.silent.map(p => `${p.type} на ${p.serverName}`).join(', ')}). У Xray это обычно выключенный stats API — без него не сработает и суточный лимит трафика`
+      : '',
+    issues.drifted.length > 0
+      ? `${issues.drifted.length} протоколов собраны не по текущему коду (${issues.drifted.map(p => `${p.type} на ${p.serverName}`).join(', ')}) — переустановите, чтобы применить изменения`
+      : '',
+    noDns.length > 0
+      ? `На ${noDns.length} серв. не установлен AmneziaDNS (${noDns.map(s => s.name).join(', ')}) — клиенты WG/AWG ходят на публичный DNS`
+      : '',
     clients.suspended > 0
       ? `${clients.suspended} клиентов приостановлены по суточному лимиту — вернутся сами с началом новых суток`
-      : null,
+      : '',
     clients.expiringSoon > 0
       ? `${clients.expiringSoon} клиентов истекают в ближайшие сутки и будут удалены`
-      : null,
+      : '',
     clients.orphaned > 0
       ? `${clients.orphaned} клиентов без владельца (импортированы или остались от удалённых пользователей)`
-      : null,
-  ].filter(Boolean) as string[];
+      : '',
+  ].filter(Boolean);
 
   if (items.length === 0) return null;
 

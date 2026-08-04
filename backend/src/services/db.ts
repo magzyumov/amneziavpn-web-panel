@@ -158,6 +158,22 @@ function migrateAccessControl(): void {
   // Отметка последнего успешного опроса протокола воркером статистики. Даёт
   // дашборду «живость» сервера бесплатно: SSH туда и так ходит раз в минуту.
   addColumnIfMissing('protocols', 'last_poll_at', 'last_poll_at INTEGER');
+
+  // Кэш фактов, которые узнаются только по SSH. Дашборд читает их из базы и
+  // показывает вместе с возрастом — сам он в сеть не ходит принципиально.
+  // Дрейф пишет health-запрос страницы сервера, метрики хоста — ручной опрос.
+  addColumnIfMissing('protocols', 'drift_image', 'drift_image INTEGER');
+  addColumnIfMissing('protocols', 'drift_run_args', 'drift_run_args INTEGER');
+  addColumnIfMissing('protocols', 'drift_checked_at', 'drift_checked_at INTEGER');
+  addColumnIfMissing('servers', 'dns_installed', 'dns_installed INTEGER');
+  addColumnIfMissing('servers', 'probed_at', 'probed_at INTEGER');
+  addColumnIfMissing('servers', 'probe_error', 'probe_error TEXT');
+  addColumnIfMissing('servers', 'uptime_sec', 'uptime_sec INTEGER');
+  addColumnIfMissing('servers', 'load1', 'load1 REAL');
+  addColumnIfMissing('servers', 'mem_total_mb', 'mem_total_mb INTEGER');
+  addColumnIfMissing('servers', 'mem_used_mb', 'mem_used_mb INTEGER');
+  addColumnIfMissing('servers', 'disk_total_mb', 'disk_total_mb INTEGER');
+  addColumnIfMissing('servers', 'disk_free_mb', 'disk_free_mb INTEGER');
   addColumnIfMissing('clients', 'expires_at', 'expires_at INTEGER');
   addColumnIfMissing('clients', 'daily_limit_bytes', 'daily_limit_bytes INTEGER NOT NULL DEFAULT 0');
   addColumnIfMissing('clients', 'suspended_at', 'suspended_at INTEGER');

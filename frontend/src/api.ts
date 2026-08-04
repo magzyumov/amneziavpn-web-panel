@@ -146,15 +146,28 @@ export interface DayBucket { day: string; rx: number; tx: number }
 
 // Сводка главной страницы. Считается целиком из базы панели — SSH при открытии
 // дашборда не происходит, поэтому он не зависит от доступности VPS.
+// Метрики хоста и статус DNS приходят из ручного опроса (кнопка «Опросить
+// серверы») и живут в базе. null = замера ещё не было.
+export interface ServerSummary {
+  id: string; name: string; host: string;
+  protocols: number; running: number;
+  /** unix sec последнего успешного опроса статистики; null — ни разу. */
+  lastPollAt: number | null;
+  /** Протоколы числятся запущенными, но воркер до них давно не достучался. */
+  stale: boolean;
+  dnsInstalled: boolean | null;
+  probedAt: number | null;
+  probeError: string | null;
+  uptimeSec: number | null;
+  load1: number | null;
+  memTotalMb: number | null;
+  memUsedMb: number | null;
+  diskTotalMb: number | null;
+  diskFreeMb: number | null;
+}
+
 export interface DashboardSummary {
-  servers: Array<{
-    id: string; name: string; host: string;
-    protocols: number; running: number;
-    /** unix sec последнего успешного опроса статистики; null — ни разу. */
-    lastPollAt: number | null;
-    /** Протоколы числятся запущенными, но воркер до них давно не достучался. */
-    stale: boolean;
-  }>;
+  servers: ServerSummary[];
   protocols: {
     total: number; running: number;
     byType: Array<{ type: ProtocolRecord['type']; count: number; clients: number }>;
@@ -163,6 +176,24 @@ export interface DashboardSummary {
   clients: {
     total: number; online: number; suspended: number;
     withLimits: number; expiringSoon: number; orphaned: number;
+    /** Уникальных клиентов с рукопожатием за текущие сутки. */
+    activeToday: number;
+  };
+  issues: {
+    drifted: Array<{
+      id: string; serverId: string; serverName: string;
+      type: ProtocolRecord['type']; image: boolean; runArgs: boolean;
+    }>;
+    silent: Array<{
+      id: string; serverId: string; serverName: string;
+      type: ProtocolRecord['type']; clients: number;
+    }>;
+  };
+  storage: {
+    dbBytes: number;
+    statsRows: number;
+    oldestSnapshotAt: number | null;
+    retentionDays: number;
   };
   traffic: {
     today: { rx: number; tx: number };
@@ -178,6 +209,8 @@ export interface DashboardSummary {
 
 export const dashboardApi = {
   summary: () => api.get<DashboardSummary>('/dashboard'),
+  // Единственное действие дашборда, которое ходит по SSH — и только по кнопке.
+  probe: () => api.post<{ probed: number; summary: DashboardSummary }>('/dashboard/probe'),
 };
 
 export const usersApi = {

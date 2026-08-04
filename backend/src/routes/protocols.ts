@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { query, queryOne, run } from '../services/db.js';
 import { authMiddleware, requireAdmin } from '../middleware/auth.js';
 import { revokeProtocolGrants } from '../services/access.js';
+import { cacheDrift } from '../services/serverProbe.js';
 import { validateBody } from '../middleware/validate.js';
 import {
   installAWG2, installXray, installWireGuard, installTelemt,
@@ -61,6 +62,8 @@ router.get('/server/:serverId/health', async (req, res) => {
     drift = await getProtocolsDrift(server, protocols.map(p => ({
       id: p.id, type: p.type, containerName: p.container_name, port: p.port,
     })));
+    // Кэшируем: дашборд показывает дрейф, но сам по SSH не ходит.
+    for (const [id, d] of Object.entries(drift)) cacheDrift(id, d);
   } catch (e) {
     logger.warn({ err: e }, 'drift check failed');
   }

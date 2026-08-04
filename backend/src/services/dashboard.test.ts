@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { parseHostMetrics } from './serverProbe.js';
 import { trafficByDay, trafficByClient, fillMissingDays, dayKey, type HourlySample } from './dashboard.js';
 
 const s = (client_id: string, ts: number, rx: number, tx: number): HourlySample =>
@@ -72,5 +73,43 @@ describe('заполнение пропущенных суток', () => {
   it('последний элемент — всегда сегодня', () => {
     const now = noon(0);
     expect(fillMissingDays([], 14, now).at(-1)!.day).toBe(dayKey(now));
+  });
+});
+
+// Метрики хоста снимаются одной командой в формате KEY|значения — так парсер не
+// зависит ни от локали, ни от порядка полей в выводе free/df.
+describe('разбор метрик хоста', () => {
+  it('читает все четыре метрики', () => {
+    const out = [
+      'UPTIME|123456.78 987654.32',
+      'LOAD|0.42',
+      'MEM|3936|1204',
+      'DISK|40000|31234',
+    ].join('\n');
+    expect(parseHostMetrics(out)).toEqual({
+      uptimeSec: 123456,
+      load1: 0.42,
+      memTotalMb: 3936,
+      memUsedMb: 1204,
+      diskTotalMb: 40000,
+      diskFreeMb: 31234,
+    });
+  });
+
+  // На урезанных образах может не быть free или df — это не повод потерять
+  // остальные метрики и не повод показать ноль вместо «нет данных».
+  it('отсутствующие метрики дают null, а не нули', () => {
+    const m = parseHostMetrics('UPTIME|500\nLOAD|\nMEM|\nDISK|');
+    expect(m.uptimeSec).toBe(500);
+    expect(m.load1).toBeNull();
+    expect(m.memTotalMb).toBeNull();
+    expect(m.diskFreeMb).toBeNull();
+  });
+
+  it('пустой вывод не бросает', () => {
+    expect(parseHostMetrics('')).toEqual({
+      uptimeSec: null, load1: null, memTotalMb: null,
+      memUsedMb: null, diskTotalMb: null, diskFreeMb: null,
+    });
   });
 });

@@ -5,6 +5,7 @@ import { query, queryOne, run } from '../services/db.js';
 import { encrypt } from '../services/crypto.js';
 import { authMiddleware, requireAdmin } from '../middleware/auth.js';
 import { revokeProtocolGrants } from '../services/access.js';
+import { cacheDnsStatus } from '../services/serverProbe.js';
 import { validateBody } from '../middleware/validate.js';
 import { testConnection, disconnect } from '../services/ssh.js';
 import { listAmneziaContainers, ensureDocker, scanExistingProtocols, installDns, removeDns, isDnsRunning } from '../services/protocols/index.js';
@@ -117,13 +118,17 @@ router.post('/:id/ensure-docker', async (req, res) => {
 router.get('/:id/dns', async (req, res) => {
   const server = queryOne<Server>('SELECT * FROM servers WHERE id = ?', [req.params.id]);
   if (!server) return res.status(404).json({ error: 'Server not found' });
-  res.json({ installed: await isDnsRunning(server) });
+  const installed = await isDnsRunning(server);
+  // Кэшируем для дашборда — он про DNS знает, но по SSH за этим не ходит.
+  cacheDnsStatus(server.id, installed);
+  res.json({ installed });
 });
 
 router.post('/:id/dns', async (req, res) => {
   const server = queryOne<Server>('SELECT * FROM servers WHERE id = ?', [req.params.id]);
   if (!server) return res.status(404).json({ error: 'Server not found' });
   const result = await installDns(server);
+  cacheDnsStatus(server.id, true);
   res.json({ ok: true, ...result });
 });
 
@@ -131,6 +136,7 @@ router.delete('/:id/dns', async (req, res) => {
   const server = queryOne<Server>('SELECT * FROM servers WHERE id = ?', [req.params.id]);
   if (!server) return res.status(404).json({ error: 'Server not found' });
   await removeDns(server);
+  cacheDnsStatus(server.id, false);
   res.json({ ok: true });
 });
 

@@ -5,8 +5,16 @@
 //
 // Трафик берётся из тех же накопительных снимков client_stats, что и вкладка
 // статистики, поэтому цифры на дашборде и в карточке клиента сходятся.
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import { query, queryOne } from './db.js';
+import { dayStartSec } from './limits.js';
 import type { ProtocolType } from '../types.js';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const DB_PATH = process.env.DB_PATH || path.join(__dirname, '../../data/panel.db');
+const RETENTION_DAYS = Number(process.env.STATS_RETENTION_DAYS) || 30;
 
 // Снимки прореживаются до одного на час прямо в SQL: при минутном интервале и
 // 30-дневном хранении сырых строк на клиента набирается больше сорока тысяч, а
@@ -101,18 +109,47 @@ const EXPIRING_SOON_SEC = 24 * HOUR;
 // как «не отвечает», а не мигать на каждой сетевой икоте.
 const STALE_POLL_SEC = 5 * 60;
 
+// Метрики хоста и статус DNS приходят из ручного опроса (services/serverProbe.ts)
+// и живут в базе. null = замера ещё не было — так и показываем, не выдумывая.
+export interface ServerSummary {
+  id: string; name: string; host: string;
+  protocols: number; running: number;
+  lastPollAt: number | null;
+  stale: boolean;
+  dnsInstalled: boolean | null;
+  probedAt: number | null;
+  probeError: string | null;
+  uptimeSec: number | null;
+  load1: number | null;
+  memTotalMb: number | null;
+  memUsedMb: number | null;
+  diskTotalMb: number | null;
+  diskFreeMb: number | null;
+}
+
 export interface DashboardSummary {
-  servers: Array<{
-    id: string; name: string; host: string;
-    protocols: number; running: number;
-    lastPollAt: number | null;
-    stale: boolean;
-  }>;
+  servers: ServerSummary[];
   protocols: { total: number; running: number; byType: Array<{ type: ProtocolType; count: number; clients: number }> };
   users: { total: number; admins: number; regular: number };
   clients: {
     total: number; online: number; suspended: number;
     withLimits: number; expiringSoon: number; orphaned: number;
+    /** Уникальных клиентов с рукопожатием за текущие сутки. */
+    activeToday: number;
+  };
+  // Протоколы, где что-то стоит починить. Всё считается по кэшу и по свежести
+  // снимков — SSH здесь не происходит.
+  issues: {
+    /** Собран не из текущего Dockerfile или запущен со старыми аргументами. */
+    drifted: Array<{ id: string; serverId: string; serverName: string; type: ProtocolType; image: boolean; runArgs: boolean }>;
+    /** Запущен, клиенты есть, а снимков статистики нет — для Xray обычно значит выключенный stats API. */
+    silent: Array<{ id: string; serverId: string; serverName: string; type: ProtocolType; clients: number }>;
+  };
+  storage: {
+    dbBytes: number;
+    statsRows: number;
+    oldestSnapshotAt: number | null;
+    retentionDays: number;
   };
   traffic: {
     today: { rx: number; tx: number };
@@ -124,32 +161,77 @@ export interface DashboardSummary {
 }
 
 export function buildDashboard(nowSec: number = Math.floor(Date.now() / 1000)): DashboardSummary {
-  const servers = query<{ id: string; name: string; host: string }>(
-    'SELECT id, name, host FROM servers ORDER BY name',
-  );
+  const servers = query<{
+    id: string; name: string; host: string;
+    dns_installed: number | null; probed_at: number | null; probe_error: string | null;
+    uptime_sec: number | null; load1: number | null;
+    mem_total_mb: number | null; mem_used_mb: number | null;
+    disk_total_mb: number | null; disk_free_mb: number | null;
+  }>(`
+    SELECT id, name, host, dns_installed, probed_at, probe_error,
+           uptime_sec, load1, mem_total_mb, mem_used_mb, disk_total_mb, disk_free_mb
+    FROM servers ORDER BY name
+  `);
 
   const protocolRows = query<{
-    id: string; server_id: string; type: ProtocolType; status: string; last_poll_at: number | null; clients: number;
+    id: string; server_id: string; type: ProtocolType; status: string; last_poll_at: number | null;
+    drift_image: number | null; drift_run_args: number | null; clients: number;
   }>(`
-    SELECT p.id, p.server_id, p.type, p.status, p.last_poll_at,
+    SELECT p.id, p.server_id, p.type, p.status, p.last_poll_at, p.drift_image, p.drift_run_args,
            (SELECT COUNT(*) FROM clients c WHERE c.protocol_id = p.id) AS clients
     FROM protocols p
   `);
 
-  const serverSummary = servers.map(s => {
+  const serverSummary: ServerSummary[] = servers.map(s => {
     const own = protocolRows.filter(p => p.server_id === s.id);
     const polls = own.map(p => p.last_poll_at).filter((v): v is number => !!v);
     const lastPollAt = polls.length ? Math.max(...polls) : null;
     return {
-      ...s,
+      id: s.id, name: s.name, host: s.host,
       protocols: own.length,
       running: own.filter(p => p.status === 'running').length,
       lastPollAt,
       // «Не отвечает» имеет смысл только когда есть чему отвечать: сервер без
       // запущенных протоколов воркер не опрашивает вовсе.
       stale: own.some(p => p.status === 'running') && (!lastPollAt || nowSec - lastPollAt > STALE_POLL_SEC),
+      dnsInstalled: s.dns_installed === null ? null : s.dns_installed === 1,
+      probedAt: s.probed_at,
+      probeError: s.probe_error,
+      uptimeSec: s.uptime_sec,
+      load1: s.load1,
+      memTotalMb: s.mem_total_mb,
+      memUsedMb: s.mem_used_mb,
+      diskTotalMb: s.disk_total_mb,
+      diskFreeMb: s.disk_free_mb,
     };
   });
+
+  const serverName = (id: string) => servers.find(s => s.id === id)?.name ?? '—';
+
+  const drifted = protocolRows
+    .filter(p => p.drift_image === 1 || p.drift_run_args === 1)
+    .map(p => ({
+      id: p.id, serverId: p.server_id, serverName: serverName(p.server_id), type: p.type,
+      image: p.drift_image === 1, runArgs: p.drift_run_args === 1,
+    }));
+
+  // «Молчащий» протокол: запущен, клиенты есть, опрос проходит — а снимков за
+  // последний час нет. Для Xray это обычно выключенный stats API: такой протокол
+  // выглядит здоровым, но статистики не даёт, а значит и суточный лимит трафика
+  // на нём не сработает. Проверка по данным, а не по SSH, поэтому ловит и другие
+  // молчаливые поломки сбора.
+  const recentlyReporting = new Set(query<{ protocol_id: string }>(`
+    SELECT DISTINCT c.protocol_id FROM client_stats s
+    JOIN clients c ON c.id = s.client_id
+    WHERE s.ts >= ?
+  `, [nowSec - HOUR]).map(r => r.protocol_id));
+
+  const silent = protocolRows
+    .filter(p => p.status === 'running' && p.clients > 0 && !recentlyReporting.has(p.id))
+    .map(p => ({
+      id: p.id, serverId: p.server_id, serverName: serverName(p.server_id),
+      type: p.type, clients: p.clients,
+    }));
 
   const byType = new Map<ProtocolType, { count: number; clients: number }>();
   for (const p of protocolRows) {
@@ -181,6 +263,13 @@ export function buildDashboard(nowSec: number = Math.floor(Date.now() / 1000)): 
       FROM client_stats GROUP BY client_id
     ) WHERE last_handshake IS NOT NULL AND ? - last_handshake < ?
   `, [nowSec, ONLINE_WINDOW_SEC])?.n ?? 0;
+
+  // Заходившие за сутки: «онлайн сейчас» показывает срез, а востребованность
+  // видна по числу клиентов, у которых сегодня вообще было рукопожатие.
+  const activeToday = queryOne<{ n: number }>(`
+    SELECT COUNT(DISTINCT client_id) AS n FROM client_stats
+    WHERE last_handshake IS NOT NULL AND last_handshake >= ?
+  `, [dayStartSec(new Date(nowSec * 1000))])?.n ?? 0;
 
   // Прореживание до одного снимка в час делает SQLite: при MIN/MAX остальные
   // колонки берутся из той же строки — это документированное поведение.
@@ -229,12 +318,37 @@ export function buildDashboard(nowSec: number = Math.floor(Date.now() / 1000)): 
     clients: {
       total: clientCounts.total,
       online,
+      activeToday,
       suspended: clientCounts.suspended ?? 0,
       withLimits: clientCounts.with_limits ?? 0,
       expiringSoon: clientCounts.expiring ?? 0,
       orphaned: clientCounts.orphaned ?? 0,
     },
+    issues: { drifted, silent },
+    storage: storageStats(),
     traffic: { today: { rx: today.rx, tx: today.tx }, week, daily, topClients },
     subscriptions: queryOne<{ n: number }>('SELECT COUNT(*) AS n FROM subscriptions')?.n ?? 0,
+  };
+}
+
+// Размер файла базы и глубина хранения снимков: видно, что ретеншен работает и
+// база не растёт бесконечно. Раньше именно снимки были её основной массой.
+function storageStats(): DashboardSummary['storage'] {
+  let dbBytes = 0;
+  try {
+    // В WAL-режиме часть данных лежит в -wal: без него размер занижен.
+    for (const suffix of ['', '-wal']) {
+      try { dbBytes += fs.statSync(DB_PATH + suffix).size; } catch { /* файла может не быть */ }
+    }
+  } catch { /* :memory: и прочие не-файловые базы */ }
+
+  const stats = queryOne<{ n: number; oldest: number | null }>(
+    'SELECT COUNT(*) AS n, MIN(ts) AS oldest FROM client_stats',
+  );
+  return {
+    dbBytes,
+    statsRows: stats?.n ?? 0,
+    oldestSnapshotAt: stats?.oldest ?? null,
+    retentionDays: RETENTION_DAYS,
   };
 }
