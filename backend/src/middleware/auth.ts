@@ -1,7 +1,8 @@
 import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
 import type { Request, Response, NextFunction, CookieOptions } from 'express';
-import type { AuthPayload } from '../types.js';
+import { queryOne } from '../services/db.js';
+import type { AuthPayload, AuthUser, UserRole } from '../types.js';
 
 const JWT_SECRET = process.env.JWT_SECRET as string;
 const SECURE_COOKIE = process.env.NODE_ENV === 'production';
@@ -42,19 +43,48 @@ function readToken(req: Request): string | null {
 // Расширяем Request с req.user для авторизованных хендлеров.
 declare module 'express-serve-static-core' {
   interface Request {
-    user?: AuthPayload;
+    user?: AuthUser;
   }
 }
 
+// Права берём из БД, а не из токена: токен живёт 7 дней, и зашитая в него роль
+// означала бы, что разжалование или удаление пользователя вступает в силу через
+// неделю. Один индексированный SELECT по primary key — это доли миллисекунды,
+// зато отзыв прав мгновенный, а уже выданные токены не приходится инвалидировать.
 export function authMiddleware(req: Request, res: Response, next: NextFunction): void {
   const token = readToken(req);
   if (!token) { res.status(401).json({ error: 'Unauthorized' }); return; }
+
+  let payload: AuthPayload;
   try {
-    req.user = jwt.verify(token, JWT_SECRET) as AuthPayload;
-    next();
+    payload = jwt.verify(token, JWT_SECRET) as AuthPayload;
   } catch {
     res.status(401).json({ error: 'Invalid token' });
+    return;
   }
+
+  const row = queryOne<{ role: UserRole; client_limit: number }>(
+    'SELECT role, client_limit FROM users WHERE id = ?', [payload.id],
+  );
+  if (!row) {
+    // Пользователя удалили, а cookie на руках осталась.
+    clearAuthCookies(res);
+    res.status(401).json({ error: 'Unauthorized' });
+    return;
+  }
+
+  req.user = { id: payload.id, username: payload.username, role: row.role, clientLimit: row.client_limit };
+  next();
+}
+
+// Ставится ПОСЛЕ authMiddleware. Всё, что трогает серверы, контейнеры и чужие
+// данные, закрыто им.
+export function requireAdmin(req: Request, res: Response, next: NextFunction): void {
+  if (req.user?.role !== 'admin') {
+    res.status(403).json({ error: 'Требуются права администратора' });
+    return;
+  }
+  next();
 }
 
 // Double-submit cookie CSRF: для всех не-GET/HEAD/OPTIONS запросов под /api/
@@ -79,12 +109,6 @@ export function csrfMiddleware(req: Request, res: Response, next: NextFunction):
 
 export function signToken(payload: AuthPayload): string {
   return jwt.sign(payload, JWT_SECRET, { expiresIn: '7d' });
-}
-
-export function verifyAuth(req: Request): AuthPayload | null {
-  const token = readToken(req);
-  if (!token) return null;
-  try { return jwt.verify(token, JWT_SECRET) as AuthPayload; } catch { return null; }
 }
 
 export { JWT_SECRET };

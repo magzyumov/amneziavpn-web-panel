@@ -44,8 +44,19 @@ export async function getDb(): Promise<Db> {
   initSchema();
   migrateEncryption();
   migrateClientPeerIds();
+  migrateAccessControl();
   purgeOrphanStats();
   return db;
+}
+
+// Добавляет колонку, если её ещё нет. Существующие базы создавались более
+// ранними версиями initSchema, а sqlite не умеет "ADD COLUMN IF NOT EXISTS".
+function addColumnIfMissing(table: string, column: string, ddl: string): boolean {
+  const d = assertDb();
+  const columns = d.prepare(`PRAGMA table_info('${table}')`).all() as Array<{ name: string }>;
+  if (columns.some(c => c.name === column)) return false;
+  d.exec(`ALTER TABLE ${table} ADD COLUMN ${ddl}`);
+  return true;
 }
 
 // Одноразовая миграция: шифрует plaintext password / private_key в существующих записях.
@@ -125,6 +136,70 @@ function migrateClientPeerIds(): void {
   }
 }
 
+// Ролевая модель появилась позже базы: до неё любой залогиненный пользователь был
+// полным админом. Миграция добавляет колонки в существующие таблицы и раздаёт
+// начальные права так, чтобы поведение действующей установки не изменилось:
+// все текущие пользователи становятся админами, все текущие клиенты — их.
+// Понижать кого-то в правах автоматически нельзя: это отрезало бы живому
+// администратору доступ к панели.
+const ACCESS_MIGRATION_KEY = 'access_control_migration_v1';
+
+function migrateAccessControl(): void {
+  const d = assertDb();
+
+  addColumnIfMissing('users', 'role', "role TEXT NOT NULL DEFAULT 'user'");
+  addColumnIfMissing('users', 'client_limit', 'client_limit INTEGER NOT NULL DEFAULT 5');
+  addColumnIfMissing('clients', 'user_id', 'user_id TEXT');
+
+  // Лимиты срока и трафика. Дефолты подобраны так, что на существующих клиентах
+  // ничего не включается: NULL = бессрочно, 0 = без лимита.
+  addColumnIfMissing('users', 'default_expiry_days', 'default_expiry_days INTEGER NOT NULL DEFAULT 0');
+  addColumnIfMissing('users', 'default_daily_limit_mb', 'default_daily_limit_mb INTEGER NOT NULL DEFAULT 0');
+  // Отметка последнего успешного опроса протокола воркером статистики. Даёт
+  // дашборду «живость» сервера бесплатно: SSH туда и так ходит раз в минуту.
+  addColumnIfMissing('protocols', 'last_poll_at', 'last_poll_at INTEGER');
+
+  // Кэш фактов, которые узнаются только по SSH. Дашборд читает их из базы и
+  // показывает вместе с возрастом — сам он в сеть не ходит принципиально.
+  // Дрейф пишет health-запрос страницы сервера, метрики хоста — ручной опрос.
+  addColumnIfMissing('protocols', 'drift_image', 'drift_image INTEGER');
+  addColumnIfMissing('protocols', 'drift_run_args', 'drift_run_args INTEGER');
+  addColumnIfMissing('protocols', 'drift_checked_at', 'drift_checked_at INTEGER');
+  addColumnIfMissing('servers', 'dns_installed', 'dns_installed INTEGER');
+  addColumnIfMissing('servers', 'probed_at', 'probed_at INTEGER');
+  addColumnIfMissing('servers', 'probe_error', 'probe_error TEXT');
+  addColumnIfMissing('servers', 'uptime_sec', 'uptime_sec INTEGER');
+  addColumnIfMissing('servers', 'load1', 'load1 REAL');
+  addColumnIfMissing('servers', 'mem_total_mb', 'mem_total_mb INTEGER');
+  addColumnIfMissing('servers', 'mem_used_mb', 'mem_used_mb INTEGER');
+  addColumnIfMissing('servers', 'disk_total_mb', 'disk_total_mb INTEGER');
+  addColumnIfMissing('servers', 'disk_free_mb', 'disk_free_mb INTEGER');
+  addColumnIfMissing('clients', 'expires_at', 'expires_at INTEGER');
+  addColumnIfMissing('clients', 'daily_limit_bytes', 'daily_limit_bytes INTEGER NOT NULL DEFAULT 0');
+  addColumnIfMissing('clients', 'suspended_at', 'suspended_at INTEGER');
+
+  const done = d.prepare('SELECT value FROM settings WHERE key = ?').get(ACCESS_MIGRATION_KEY);
+  if (done) return;
+
+  const users = d.prepare('SELECT id FROM users ORDER BY created_at ASC').all() as Array<{ id: string }>;
+  const firstAdmin = users[0]?.id ?? null;
+
+  const apply = d.transaction(() => {
+    // Все, кто уже был в панели, и так имели полный доступ — фиксируем это явно.
+    d.prepare("UPDATE users SET role = 'admin', client_limit = 0").run();
+    // Клиенты, заведённые до разделения прав, принадлежат первому админу.
+    if (firstAdmin) {
+      d.prepare('UPDATE clients SET user_id = ? WHERE user_id IS NULL').run(firstAdmin);
+    }
+    d.prepare('INSERT INTO settings (key, value) VALUES (?, ?)').run(ACCESS_MIGRATION_KEY, 'done');
+  });
+  apply();
+
+  if (users.length) {
+    logger.info({ users: users.length }, 'Access control: existing users promoted to admin');
+  }
+}
+
 // Снимки статистики удалённых клиентов раньше оставались в базе навсегда: удаление
 // клиента их не трогало, а периодическая чистка работает только по возрасту.
 // Это и было основной массой файла БД. Чистим один раз при старте — строки
@@ -163,6 +238,7 @@ function initSchema(): void {
       port INTEGER,
       config TEXT,
       status TEXT DEFAULT 'stopped',
+      last_poll_at INTEGER, -- unix sec последнего успешного опроса статистики
       installed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (server_id) REFERENCES servers(id) ON DELETE CASCADE
     );
@@ -174,6 +250,10 @@ function initSchema(): void {
       name TEXT NOT NULL,
       config TEXT,
       peer_id TEXT, -- pubkey для AWG/WG, UUID для Xray; используется stats-воркером
+      user_id TEXT, -- владелец; NULL = «ничей», виден только админам
+      expires_at INTEGER,                          -- unix sec; NULL = бессрочно. По истечении клиент удаляется
+      daily_limit_bytes INTEGER NOT NULL DEFAULT 0, -- суточный лимит трафика; 0 = без лимита
+      suspended_at INTEGER,                        -- unix sec приостановки по лимиту; NULL = активен
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (protocol_id) REFERENCES protocols(id) ON DELETE CASCADE
     );
@@ -196,7 +276,25 @@ function initSchema(): void {
       id TEXT PRIMARY KEY,
       username TEXT UNIQUE NOT NULL,
       password_hash TEXT NOT NULL,
+      role TEXT NOT NULL DEFAULT 'user',      -- 'admin' | 'user'
+      client_limit INTEGER NOT NULL DEFAULT 5, -- сколько клиентов юзер заводит сам; 0 = без лимита
+      -- Лимиты, которые получают клиенты, заведённые этим пользователем. Сам он
+      -- их не выбирает: смысл ограничения в том, что его задаёт администратор.
+      default_expiry_days INTEGER NOT NULL DEFAULT 0,    -- 0 = бессрочно
+      default_daily_limit_mb INTEGER NOT NULL DEFAULT 0, -- 0 = без лимита
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
+    -- Что именно разрешено обычному пользователю. Выдаётся протоколами: строка
+    -- (user, protocol) даёт доступ и к самому протоколу, и — только на чтение
+    -- названия — к серверу, на котором он стоит. Отдельной таблицы user_servers
+    -- нет специально: сервер выводится из protocols.server_id, поэтому состояние
+    -- «сервер выдан, а протокол нет» невозможно by design.
+    -- Админам записи не нужны: им доступно всё.
+    CREATE TABLE IF NOT EXISTS user_protocols (
+      user_id TEXT NOT NULL,
+      protocol_id TEXT NOT NULL,
+      PRIMARY KEY (user_id, protocol_id)
     );
 
     CREATE TABLE IF NOT EXISTS subscriptions (
@@ -215,6 +313,31 @@ function initSchema(): void {
       key TEXT PRIMARY KEY,
       value TEXT NOT NULL
     );
+
+    -- Журнал действий. Имена пользователя и объекта хранятся СНИМКОМ, а не
+    -- ссылкой: смысл журнала в том, чтобы пережить удаление того, о чём он
+    -- рассказывает. «Кто-то удалил пользователя X» должно читаться и через год,
+    -- когда ни автора, ни X уже нет.
+    --
+    -- Секретов здесь нет и не должно быть: ни паролей, ни приватных ключей, ни
+    -- slug'ов подписок (slug — фактически пароль от конфига).
+    CREATE TABLE IF NOT EXISTS audit_log (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      ts INTEGER NOT NULL,          -- unix sec
+      user_id TEXT,                 -- NULL, если действие анонимное (неудачный вход)
+      username TEXT NOT NULL,       -- снимок имени на момент действия
+      role TEXT,                    -- роль на момент действия
+      action TEXT NOT NULL,         -- 'client.create', 'auth.login', …
+      target_type TEXT,             -- 'client' | 'user' | 'protocol' | 'server' | …
+      target_id TEXT,
+      target_name TEXT,             -- снимок имени объекта
+      details TEXT,                 -- JSON, только безопасные поля
+      ip TEXT,
+      status TEXT NOT NULL,         -- 'ok' | 'denied' | 'failed'
+      http_status INTEGER
+    );
+    CREATE INDEX IF NOT EXISTS idx_audit_ts ON audit_log(ts DESC);
+    CREATE INDEX IF NOT EXISTS idx_audit_user ON audit_log(user_id);
   `);
 }
 

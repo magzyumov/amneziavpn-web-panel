@@ -6,6 +6,7 @@ import { z } from 'zod';
 import { query, queryOne, run } from '../services/db.js';
 import { signToken, setAuthCookies, clearAuthCookies, authMiddleware } from '../middleware/auth.js';
 import { validateBody } from '../middleware/validate.js';
+import { auditTarget } from '../middleware/audit.js';
 import type { AppUser } from '../types.js';
 
 const router = Router();
@@ -33,7 +34,12 @@ router.post('/setup', validateBody(credentialsSchema), async (req: Request, res:
   }
   const { username, password } = req.body;
   const hash = await bcrypt.hash(password, 10);
-  run('INSERT INTO users (id, username, password_hash) VALUES (?, ?, ?)', [uuidv4(), username, hash]);
+  // Первый пользователь — администратор без лимита на клиентов: больше выдать
+  // эти права некому.
+  run("INSERT INTO users (id, username, password_hash, role, client_limit) VALUES (?, ?, ?, 'admin', 0)",
+    [uuidv4(), username, hash]);
+  req.auditActor = username;
+  auditTarget(req, { name: username });
   res.json({ ok: true });
 });
 
@@ -46,6 +52,10 @@ router.get('/status', (_req, res) => {
 // POST /api/auth/login
 router.post('/login', loginLimiter, validateBody(credentialsSchema), async (req: Request, res: Response) => {
   const { username, password } = req.body;
+  // Имя для журнала ставим до проверки: неудачный вход тоже должен быть виден,
+  // причём с тем логином, который пытались подобрать.
+  req.auditActor = username;
+
   const user = queryOne<AppUser>('SELECT * FROM users WHERE username = ?', [username]);
   if (!user) return res.status(401).json({ error: 'Invalid credentials' });
 
@@ -54,7 +64,7 @@ router.post('/login', loginLimiter, validateBody(credentialsSchema), async (req:
 
   const token = signToken({ id: user.id, username: user.username });
   setAuthCookies(res, token);
-  res.json({ username: user.username });
+  res.json({ username: user.username, role: user.role });
 });
 
 // POST /api/auth/logout
@@ -63,9 +73,19 @@ router.post('/logout', (_req, res) => {
   res.json({ ok: true });
 });
 
-// GET /api/auth/me — проверка авторизации (используется фронтом)
+// GET /api/auth/me — проверка авторизации + актуальные права (используется фронтом)
 router.get('/me', authMiddleware, (req: Request, res: Response) => {
-  res.json({ username: req.user!.username });
+  const { username, role, clientLimit } = req.user!;
+  // Лимиты, которые получат создаваемые пользователем клиенты. Выбирать их он
+  // не может, но видеть должен — иначе клиент молча оказывается на два дня.
+  const defaults = queryOne<{ default_expiry_days: number; default_daily_limit_mb: number }>(
+    'SELECT default_expiry_days, default_daily_limit_mb FROM users WHERE id = ?', [req.user!.id],
+  );
+  res.json({
+    username, role, clientLimit,
+    defaultExpiryDays: defaults?.default_expiry_days ?? 0,
+    defaultDailyLimitMb: defaults?.default_daily_limit_mb ?? 0,
+  });
 });
 
 export default router;

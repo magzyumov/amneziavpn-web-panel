@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { extractPeerId } from './peerId.js';
+import { extractPeerId, extractPeerRestoreInfo } from './peerId.js';
 
 const SEP = '\n---AMNEZIA_JSON---\n';
 
@@ -57,5 +57,51 @@ describe('extractPeerId — границы', () => {
     expect(extractPeerId(null, 'awg2')).toBeNull();
     expect(extractPeerId('', 'awg2')).toBeNull();
     expect(extractPeerId('что угодно', 'неизвестный')).toBeNull();
+  });
+});
+
+// Возврат пира после приостановки по суточному лимиту обязан идти ТЕМ ЖЕ
+// ключом и адресом — иначе выданный клиенту конфиг переставал бы работать
+// каждые сутки. Всё нужное берётся из уже сохранённого конфига.
+describe('extractPeerRestoreInfo', () => {
+  const wgConf = [
+    '[Interface]',
+    'Address = 10.8.1.7/32',
+    'DNS = 172.29.172.254',
+    'PrivateKey = privkey==',
+    '',
+    '[Peer]',
+    'PublicKey = serverpub=',
+    'PresharedKey = psk123==',
+    'AllowedIPs = 0.0.0.0/0',
+  ].join('\n');
+
+  it('AWG/WG: берёт адрес без маски и preshared-key', () => {
+    expect(extractPeerRestoreInfo(`${wgConf}${SEP}{"client_pub_key":"P="}`, 'awg2'))
+      .toEqual({ clientIp: '10.8.1.7', presharedKey: 'psk123==' });
+    expect(extractPeerRestoreInfo(wgConf, 'wireguard'))
+      .toEqual({ clientIp: '10.8.1.7', presharedKey: 'psk123==' });
+  });
+
+  it('AWG/WG: без PresharedKey восстановить нельзя — null, а не половина данных', () => {
+    expect(extractPeerRestoreInfo('[Interface]\nAddress = 10.8.1.7/32', 'awg2')).toBeNull();
+  });
+
+  it('Telemt: достаёт сырой secret из-под ee-префикса', () => {
+    const secret = '0123456789abcdef0123456789abcdef';
+    const link = `https://t.me/proxy?server=h&port=443&secret=ee${secret}77777`;
+    expect(extractPeerRestoreInfo(link, 'telemt')).toEqual({ secret });
+  });
+
+  it('Telemt: обрезанный secret не годится для восстановления', () => {
+    expect(extractPeerRestoreInfo('https://t.me/proxy?secret=eeabc', 'telemt')).toBeNull();
+  });
+
+  it('Xray: восстанавливается по одному uuid, дополнительных данных не нужно', () => {
+    expect(extractPeerRestoreInfo('vless://uuid@h:443', 'xray')).toEqual({});
+  });
+
+  it('пустой конфиг даёт null', () => {
+    expect(extractPeerRestoreInfo(null, 'awg2')).toBeNull();
   });
 });

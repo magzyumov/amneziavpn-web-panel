@@ -1,12 +1,30 @@
-FROM node:20-alpine
+# Двухстадийная сборка. Одностадийная тащила в прод-образ то, что нужно только
+# на сборке: python3/make/g++ ради нативного better-sqlite3 (~310 МБ) и кэш npm
+# с артефактами компиляции (~250 МБ). Образ весил гигабайт при 99 МБ реальных
+# зависимостей, и каждый деплой съедал место на диске VPS.
+#
+# dev-зависимости в финальном образе ОСТАЮТСЯ намеренно: typescript и vitest
+# нужны для прогона гейта внутри контейнера — на хосте панели Node не установлен,
+# и это единственный способ проверить типы и тесты.
 
-# Build deps for native modules
+# ─── Сборка зависимостей ──────────────────────────────────────────────────────
+FROM node:20-alpine AS deps
+
+# Тулчейн для нативных модулей (better-sqlite3). Дальше первой стадии не едет.
 RUN apk add --no-cache python3 make g++
 
 WORKDIR /app
-COPY package.json tsconfig.json ./
-RUN npm install
+COPY package.json package-lock.json ./
+# npm ci — установка строго по локу, воспроизводимо и быстрее install.
+RUN npm ci && npm cache clean --force
 
+# ─── Рантайм ──────────────────────────────────────────────────────────────────
+FROM node:20-alpine
+
+WORKDIR /app
+# Нативные бинарники собраны на той же базе, поэтому переносятся как есть.
+COPY --from=deps /app/node_modules ./node_modules
+COPY package.json package-lock.json tsconfig.json ./
 COPY src ./src
 
 EXPOSE 3001

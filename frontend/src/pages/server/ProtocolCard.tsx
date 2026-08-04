@@ -7,8 +7,10 @@ import {
 } from '../../api';
 import AddClientModal from './AddClientModal';
 import ClientModal from './ClientModal';
+import ClientLimitsModal from './ClientLimitsModal';
 import StatsModal from './StatsModal';
 import CopySubButton from './CopySubButton';
+import LimitBadges from './LimitBadges';
 import { PROTOCOL_ICONS, protocolTitle } from '../../protocols';
 
 interface ProtocolCardProps {
@@ -27,6 +29,7 @@ function ProtocolCard({ protocol, server: _server, onDelete, drift, dragHandlePr
   const [showAddClient, setShowAddClient] = useState(false);
   const [selectedClient, setSelectedClient] = useState<ClientRecord | null>(null);
   const [statsClient, setStatsClient] = useState<ClientRecord | null>(null);
+  const [limitsClient, setLimitsClient] = useState<ClientRecord | null>(null);
   const [status, setStatus] = useState(protocol.status);
   const [toggling, setToggling] = useState(false);
 
@@ -245,16 +248,17 @@ function ProtocolCard({ protocol, server: _server, onDelete, drift, dragHandlePr
 
                 {filtered.length > 0 && (() => {
                   const isXray = protocol.type === 'xray';
-                  // grid: SHARE | STATISTIC | (SUBSCRIPTION для xray) | ✕
+                  // grid: SHARE | STATISTIC | LIMITS | (SUBSCRIPTION для xray) | ✕
                   const gridTemplate = [
+                    '1fr',
                     '1fr',
                     '1fr',
                     isXray ? '1fr' : null,
                     '32px',
                   ].filter(Boolean).join(' ');
                   // По умолчанию col-actions = 186px (App.css). Для xray этого мало —
-                  // 4 кнопки сжимаются и текст наезжает. Расширяем под фактический контент.
-                  const actionsWidth = isXray ? 320 : 220;
+                  // кнопки сжимаются и текст наезжает. Расширяем под фактический контент.
+                  const actionsWidth = isXray ? 440 : 340;
                   const hdrCell: React.CSSProperties = {
                     fontSize: 11, color: 'var(--text-dim)', fontFamily: 'var(--font-mono)',
                     textTransform: 'uppercase', letterSpacing: '0.05em', textAlign: 'center',
@@ -268,6 +272,7 @@ function ProtocolCard({ protocol, server: _server, onDelete, drift, dragHandlePr
                         <div className="col-actions-hdr" style={{ display: 'grid', gridTemplateColumns: gridTemplate, gap: 8, width: actionsWidth }}>
                           <span style={hdrCell}>Share</span>
                           <span style={hdrCell}>Statistic</span>
+                          <span style={hdrCell}>Limits</span>
                           {isXray && <span style={hdrCell}>Subscription</span>}
                           <span />
                         </div>
@@ -278,10 +283,13 @@ function ProtocolCard({ protocol, server: _server, onDelete, drift, dragHandlePr
                         onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = 'var(--surface2)'}
                         onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = ''}>
                         <div className="col-name" style={{ fontWeight: 500, paddingRight: 8 }}>
-                          {c.name}
-                          {!c.has_config && (
-                            <span className="mono text-muted" style={{ fontSize: 10, marginLeft: 6 }}>[без конфига]</span>
-                          )}
+                          <div>
+                            {c.name}
+                            {!c.has_config && (
+                              <span className="mono text-muted" style={{ fontSize: 10, marginLeft: 6 }}>[без конфига]</span>
+                            )}
+                          </div>
+                          <LimitBadges compact {...c} />
                         </div>
                         <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                           <div className="col-date mono text-muted">
@@ -295,6 +303,7 @@ function ProtocolCard({ protocol, server: _server, onDelete, drift, dragHandlePr
                               title={c.has_config ? undefined : 'Импортированный клиент — конфиг недоступен'}
                             >⬡ View</button>
                             <button className="btn btn-outline btn-sm" onClick={() => setStatsClient(c)} title="Статистика клиента">📊 Stats</button>
+                            <button className="btn btn-outline btn-sm" onClick={() => setLimitsClient(c)} title="Срок действия и суточный лимит трафика">⏳ Лимиты</button>
                             {isXray && (
                               c.has_config
                                 ? <CopySubButton clientId={c.id} />
@@ -323,6 +332,19 @@ function ProtocolCard({ protocol, server: _server, onDelete, drift, dragHandlePr
       )}
       {selectedClient && <ClientModal client={selectedClient} protocolType={protocol.type} onClose={() => setSelectedClient(null)} />}
       {statsClient && <StatsModal client={statsClient} protocolType={protocol.type} onClose={() => setStatsClient(null)} />}
+      {limitsClient && (
+        <ClientLimitsModal
+          client={limitsClient}
+          onClose={() => setLimitsClient(null)}
+          onSaved={updated => {
+            // updated === null — срок выставили в прошлое, клиент уже удалён.
+            setClients(prev => updated
+              ? prev.map(x => x.id === updated.id ? updated : x)
+              : prev.filter(x => x.id !== limitsClient.id));
+            setLimitsClient(null);
+          }}
+        />
+      )}
     </div>
   );
 }

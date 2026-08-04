@@ -1,6 +1,7 @@
 // Доменные модели проекта.
 
 export type AuthType = 'password' | 'key';
+export type UserRole = 'admin' | 'user';
 export type ProtocolType = 'awg2' | 'wireguard' | 'xray' | 'telemt';
 export type ContainerStatus = 'running' | 'exited' | 'restarting' | 'paused' | 'dead' | 'created' | 'not_found';
 
@@ -39,6 +40,14 @@ export interface Client {
   name: string;
   config: string | null;
   peer_id?: string | null;
+  /** Владелец. NULL = «ничей», доступен только админам (legacy и клиенты удалённых юзеров). */
+  user_id?: string | null;
+  /** Unix sec. По истечении клиент удаляется вместе с peer'ом на сервере. NULL = бессрочно. */
+  expires_at?: number | null;
+  /** Суточный лимит трафика в байтах (rx+tx). 0 = без лимита. */
+  daily_limit_bytes?: number;
+  /** Unix sec приостановки по суточному лимиту. NULL = активен. */
+  suspended_at?: number | null;
   created_at?: string;
 }
 
@@ -46,6 +55,13 @@ export interface AppUser {
   id: string;
   username: string;
   password_hash: string;
+  role: UserRole;
+  /** Сколько клиентов юзер может завести себе сам. 0 = без ограничения. */
+  client_limit: number;
+  /** Срок действия клиентов, которые заводит этот пользователь. 0 = бессрочно. */
+  default_expiry_days: number;
+  /** Суточный лимит трафика его клиентов, МБ. 0 = без лимита. */
+  default_daily_limit_mb: number;
   created_at?: string;
 }
 
@@ -140,8 +156,16 @@ export interface AddClientResult {
   type: ProtocolType;
 }
 
-// JWT payload
+// JWT payload. Роль сюда СПЕЦИАЛЬНО не кладём: токен живёт 7 дней, и зашитая
+// в него роль означала бы, что разжалование юзера вступает в силу через неделю.
+// authMiddleware дочитывает актуальные права из БД на каждом запросе.
 export interface AuthPayload {
   id: string;
   username: string;
+}
+
+// То, что authMiddleware кладёт в req.user: payload + свежие права из БД.
+export interface AuthUser extends AuthPayload {
+  role: UserRole;
+  clientLimit: number;
 }
