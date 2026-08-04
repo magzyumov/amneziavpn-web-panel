@@ -159,12 +159,17 @@ router.get('/protocol/:protocolId', (req, res) => {
   if (!canUseProtocol(req.user!, req.params.protocolId)) {
     return res.status(404).json({ error: 'Not found' });
   }
-  const cols = 'id, name, created_at, (config IS NOT NULL) as has_config, expires_at, daily_limit_bytes, suspended_at';
+  const cols = 'c.id, c.name, c.created_at, (c.config IS NOT NULL) as has_config, c.expires_at, c.daily_limit_bytes, c.suspended_at';
+  // Админу дополнительно отдаём владельца: в общем списке протокола иначе не
+  // понять, чей это клиент. Обычному пользователю колонка не нужна — там все
+  // клиенты его собственные.
   const clients = isAdmin(req.user!)
     ? query<Client & { has_config: number }>(
-        `SELECT ${cols} FROM clients WHERE protocol_id = ?`, [req.params.protocolId])
+        `SELECT ${cols}, u.username AS owner_username
+           FROM clients c LEFT JOIN users u ON u.id = c.user_id
+          WHERE c.protocol_id = ?`, [req.params.protocolId])
     : query<Client & { has_config: number }>(
-        `SELECT ${cols} FROM clients WHERE protocol_id = ? AND user_id = ?`,
+        `SELECT ${cols} FROM clients c WHERE c.protocol_id = ? AND c.user_id = ?`,
         [req.params.protocolId, req.user!.id]);
   res.json(clients.map(c => ({ ...c, ...limitFields(c) })));
 });

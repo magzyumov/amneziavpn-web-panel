@@ -79,6 +79,8 @@ export interface ClientRecord extends ClientLimits {
   name: string;
   created_at: string;
   has_config: number;
+  /** Владелец клиента. Приходит только админу (список клиентов протокола). */
+  owner_username?: string | null;
 }
 
 export type UserRole = 'admin' | 'user';

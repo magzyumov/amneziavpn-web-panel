@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { clientsApi, downloadWithAuth, type ClientRecord, type ProtocolRecord } from '../../api';
+import { copyToClipboard } from './clipboard';
 
 interface Props {
   client: ClientRecord;
@@ -11,6 +12,37 @@ type Format = 'amnezia' | 'original';
 type Tab = 'qr' | 'cfg';
 
 const QR_AUTO_INTERVAL = 3000;
+const TOAST_MS = 2000;
+
+// Строку конфига выделять мышью неудобно (перенос строк, длинный base64) и легко
+// скопировать её кусок. Поэтому поле не выделяется, а копируется целиком по клику.
+function CopyBox({ text, placeholder, style, onCopy }: {
+  text: string;
+  placeholder: string;
+  style?: React.CSSProperties;
+  onCopy: () => void;
+}) {
+  const ready = !!text;
+  return (
+    <>
+      <div
+        className="config-box"
+        role="button"
+        title={ready ? 'Нажмите, чтобы скопировать' : undefined}
+        onClick={() => { if (ready) copyToClipboard(text).then(onCopy); }}
+        style={{ userSelect: 'none', cursor: ready ? 'pointer' : 'default', ...style }}
+      >
+        {text || placeholder}
+      </div>
+      <button
+        className="btn btn-outline btn-sm"
+        style={{ marginTop: 8 }}
+        disabled={!ready}
+        onClick={() => copyToClipboard(text).then(onCopy)}
+      >📋 Скопировать</button>
+    </>
+  );
+}
 
 export default function ClientModal({ client, protocolType, onClose }: Props) {
   const [format, setFormat] = useState<Format>('amnezia');
@@ -22,6 +54,13 @@ export default function ClientModal({ client, protocolType, onClose }: Props) {
   const [vpnUri,         setVpnUri]         = useState('');
   const [origConf,       setOrigConf]       = useState('');
   const [loadingQr,      setLoadingQr]      = useState(true);
+  const [toast,          setToast]          = useState(false);
+
+  useEffect(() => {
+    if (!toast) return;
+    const t = setTimeout(() => setToast(false), TOAST_MS);
+    return () => clearTimeout(t);
+  }, [toast]);
 
   const isXray = protocolType === 'xray';
   const isProxy = protocolType === 'telemt';
@@ -67,7 +106,7 @@ export default function ClientModal({ client, protocolType, onClose }: Props) {
              : 'Сканируйте в стандартном WireGuard клиенте';
 
   const activeDownloadUrl      = showAmnezia ? clientsApi.configAmneziaUrl(client.id) : clientsApi.configDownloadUrl(client.id);
-  const activeDownloadLabel    = showAmnezia ? '⬇ JSON для Amnezia' : (isXray || isProxy) ? '⬇ Скачать .txt' : '⬇ Скачать .conf';
+  const activeDownloadLabel    = showAmnezia ? '⬇ Скачать .json' : (isXray || isProxy) ? '⬇ Скачать .txt' : '⬇ Скачать .conf';
   const activeDownloadFilename = showAmnezia
     ? `${client.name}_amnezia.json`
     : (isXray || isProxy) ? `${client.name}.txt` : `${client.name}.conf`;
@@ -79,6 +118,7 @@ export default function ClientModal({ client, protocolType, onClose }: Props) {
 
   return (
     <div className="modal-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
+      {toast && <div className="copy-toast">✓ Строка скопирована</div>}
       <div className="modal" style={{ width: 500 }}>
 
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 16 }}>
@@ -196,9 +236,12 @@ export default function ClientModal({ client, protocolType, onClose }: Props) {
                   <div className="notice notice-info" style={{ marginBottom: 8, fontSize: 11 }}>
                     <b>vpn://</b> ссылка — вставьте или отсканируйте в AmneziaVPN (iOS / Android / Desktop)
                   </div>
-                  <div className="config-box" style={{ fontSize: 10, wordBreak: 'break-all', maxHeight: 160, overflowY: 'auto' }}>
-                    {vpnUri || 'Генерация…'}
-                  </div>
+                  <CopyBox
+                    text={vpnUri}
+                    placeholder="Генерация…"
+                    style={{ fontSize: 10, wordBreak: 'break-all', maxHeight: 160, overflowY: 'auto' }}
+                    onCopy={() => setToast(true)}
+                  />
                 </>
               ) : (
                 <>
@@ -212,9 +255,12 @@ export default function ClientModal({ client, protocolType, onClose }: Props) {
                       Ссылка для Telegram — откройте на устройстве, чтобы добавить прокси
                     </div>
                   )}
-                  <div className="config-box" style={{ maxHeight: 260, overflowY: 'auto' }}>
-                    {origConf || 'Загрузка…'}
-                  </div>
+                  <CopyBox
+                    text={origConf}
+                    placeholder="Загрузка…"
+                    style={{ maxHeight: 260, overflowY: 'auto' }}
+                    onCopy={() => setToast(true)}
+                  />
                 </>
               )}
             </div>

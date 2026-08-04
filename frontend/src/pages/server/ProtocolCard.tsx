@@ -12,6 +12,7 @@ import StatsModal from './StatsModal';
 import CopySubButton from './CopySubButton';
 import LimitBadges from './LimitBadges';
 import { PROTOCOL_ICONS, protocolTitle } from '../../protocols';
+import { useCurrentUser } from '../../auth';
 
 interface ProtocolCardProps {
   protocol: ProtocolRecord;
@@ -32,6 +33,9 @@ function ProtocolCard({ protocol, server: _server, onDelete, drift, dragHandlePr
   const [limitsClient, setLimitsClient] = useState<ClientRecord | null>(null);
   const [status, setStatus] = useState(protocol.status);
   const [toggling, setToggling] = useState(false);
+  // Колонка «Created by» — только админу: у обычного пользователя в списке
+  // и так одни его клиенты, а бэкенд владельца ему не отдаёт.
+  const isAdminView = useCurrentUser().role === 'admin';
 
   useEffect(() => { setStatus(protocol.status); }, [protocol.status]);
 
@@ -268,7 +272,10 @@ function ProtocolCard({ protocol, server: _server, onDelete, drift, dragHandlePr
                     <div style={{ display: 'flex', alignItems: 'center', padding: '0 0 6px 0', borderBottom: '1px solid var(--border)' }}>
                       <span className="col-name" style={{ fontSize: 11, color: 'var(--text-dim)', fontFamily: 'var(--font-mono)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Name</span>
                       <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                        <span className="col-date-hdr">Created</span>
+                        <div style={{ display: 'flex', alignItems: 'center' }}>
+                          <span className="col-date-hdr">Created</span>
+                          {isAdminView && <span className="col-owner-hdr">Created by</span>}
+                        </div>
                         <div className="col-actions-hdr" style={{ display: 'grid', gridTemplateColumns: gridTemplate, gap: 8, width: actionsWidth }}>
                           <span style={hdrCell}>Share</span>
                           <span style={hdrCell}>Statistic</span>
@@ -292,8 +299,15 @@ function ProtocolCard({ protocol, server: _server, onDelete, drift, dragHandlePr
                           <LimitBadges compact {...c} />
                         </div>
                         <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                          <div className="col-date mono text-muted">
-                            {c.created_at ? new Date(c.created_at.replace(' ', 'T')).toLocaleDateString() : '—'}
+                          <div style={{ display: 'flex', alignItems: 'center' }}>
+                            <div className="col-date mono text-muted">
+                              {c.created_at ? new Date(c.created_at.replace(' ', 'T')).toLocaleDateString() : '—'}
+                            </div>
+                            {isAdminView && (
+                              <div className="col-owner mono text-muted" title={c.owner_username || 'Владелец не определён'}>
+                                {c.owner_username || '—'}
+                              </div>
+                            )}
                           </div>
                           <div className="col-actions" style={{ display: 'grid', gridTemplateColumns: gridTemplate, gap: 8, width: actionsWidth }}>
                             <button

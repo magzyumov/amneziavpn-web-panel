@@ -390,7 +390,7 @@ POST   /api/protocols/:id/enable-stats         — включить stats-API у
 ```
 GET    /api/clients/available-protocols             — на чём текущий юзер может завести клиента
 GET    /api/clients/mine                            — свои клиенты (страница «Мои клиенты»)
-GET    /api/clients/protocol/:protocolId           — список (обычный юзер видит только своих)
+GET    /api/clients/protocol/:protocolId           — список (обычный юзер видит только своих; админу дополнительно owner_username)
 POST   /api/clients                                 — создать { protocolId, name, expiresInDays?, dailyLimitMb? }
 PUT    /api/clients/:id/limits                      — срок и суточный лимит (только admin)
 DELETE /api/clients/:id                             — удалить и отозвать peer на сервере
