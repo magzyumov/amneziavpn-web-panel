@@ -3,7 +3,11 @@ import { v4 as uuidv4 } from 'uuid';
 import QRCode from 'qrcode';
 import { z } from 'zod';
 import { query, queryOne, run } from '../services/db.js';
-import { authMiddleware, verifyAuth } from '../middleware/auth.js';
+import { authMiddleware } from '../middleware/auth.js';
+import {
+  canAccessClient, canUseProtocol, quotaReached, countUserClients,
+  accessibleProtocols, isAdmin,
+} from '../services/access.js';
 import { validateBody } from '../middleware/validate.js';
 import {
   addAWG2Client, addXrayClient, addWireGuardClient, addTelemtClient,
@@ -25,19 +29,28 @@ const createClientSchema = z.object({
   name: z.string().min(1).max(128),
 });
 
-function requireAuth(req: Request, res: Response): { id: string; username: string } | null {
-  const user = verifyAuth(req);
-  if (!user) { res.status(401).json({ error: 'Unauthorized' }); return null; }
-  return user;
+// ЕДИНСТВЕННЫЙ способ достать клиента по id в этом роутере. Раньше каждый
+// хендлер делал свой SELECT, и с появлением обычных пользователей любая
+// забытая проверка означала бы выдачу чужого VPN-конфига. Отдаём 404, а не 403:
+// пользователю незачем знать, что такой клиент вообще существует.
+function loadClient(req: Request, res: Response): Client | null {
+  const client = queryOne<Client>('SELECT * FROM clients WHERE id = ?', [req.params.id]);
+  if (!client || !canAccessClient(client, req.user!)) {
+    res.status(404).json({ error: 'Not found' });
+    return null;
+  }
+  return client;
 }
+
+// ─── Всё ниже — только для авторизованных ────────────────────────────────────
+router.use(authMiddleware);
 
 // ─── Endpoints скачивания конфигов (auth через httpOnly cookie) ──────────────
 
 // GET /api/clients/:id/config — скачать оригинальный .conf
 router.get('/:id/config', (req: Request, res: Response) => {
-  if (!requireAuth(req, res)) return;
-  const client = queryOne<Client>('SELECT * FROM clients WHERE id = ?', [req.params.id]);
-  if (!client) return res.status(404).json({ error: 'Not found' });
+  const client = loadClient(req, res);
+  if (!client) return;
   if (!client.config) return res.status(409).json({ error: 'Config unavailable: client was imported from an existing server and the original private key is not stored' });
   const protocol = queryOne<{ type: ProtocolType }>('SELECT type FROM protocols WHERE id = ?', [client.protocol_id]);
   const ext = (protocol?.type === 'xray' || protocol?.type === 'telemt') ? 'txt' : 'conf';
@@ -49,9 +62,8 @@ router.get('/:id/config', (req: Request, res: Response) => {
 
 // GET /api/clients/:id/config-amnezia — скачать Amnezia JSON (.json файл)
 router.get('/:id/config-amnezia', (req: Request, res: Response) => {
-  if (!requireAuth(req, res)) return;
-  const client = queryOne<Client>('SELECT * FROM clients WHERE id = ?', [req.params.id]);
-  if (!client) return res.status(404).json({ error: 'Not found' });
+  const client = loadClient(req, res);
+  if (!client) return;
   if (!client.config) return res.status(409).json({ error: 'Config unavailable: client was imported from an existing server and the original private key is not stored' });
   const protocol = queryOne<{ type: ProtocolType }>('SELECT type FROM protocols WHERE id = ?', [client.protocol_id]);
   const server   = queryOne<Server>('SELECT * FROM servers WHERE id = ?', [client.server_id]);
@@ -62,14 +74,47 @@ router.get('/:id/config-amnezia', (req: Request, res: Response) => {
   res.send(amneziaJson);
 });
 
-// ─── Защищённые endpoints ─────────────────────────────────────────────────────
-router.use(authMiddleware);
+// GET /api/clients/available-protocols — на чём текущий пользователь может
+// завести себе клиента. Админ видит все протоколы, обычный юзер — только
+// выданные ему администратором (user_protocols).
+router.get('/available-protocols', (req: Request, res: Response) => {
+  res.json(accessibleProtocols(req.user!));
+});
 
+// GET /api/clients/mine — свои клиенты со всем, что нужно для карточки.
+router.get('/mine', (req: Request, res: Response) => {
+  const clients = query(`
+    SELECT c.id, c.name, c.created_at, (c.config IS NOT NULL) AS has_config,
+           c.protocol_id, p.type AS protocol_type, p.config AS protocol_config,
+           s.name AS server_name
+    FROM clients c
+    JOIN protocols p ON p.id = c.protocol_id
+    JOIN servers s   ON s.id = c.server_id
+    WHERE c.user_id = ?
+    ORDER BY c.created_at DESC
+  `, [req.user!.id]) as Array<Record<string, unknown> & { protocol_config: string | null }>;
+
+  res.json(clients.map(c => ({
+    ...c,
+    protocol_config: c.protocol_config ? JSON.parse(c.protocol_config) : {},
+  })));
+});
+
+// Список клиентов протокола — карточка протокола на странице сервера.
+// Обычный пользователь видит здесь только своих; чужие имена — тоже информация.
 router.get('/protocol/:protocolId', (req, res) => {
-  const clients = query(
-    'SELECT id, name, created_at, (config IS NOT NULL) as has_config FROM clients WHERE protocol_id = ?',
-    [req.params.protocolId]
-  );
+  if (!canUseProtocol(req.user!, req.params.protocolId)) {
+    return res.status(404).json({ error: 'Not found' });
+  }
+  const clients = isAdmin(req.user!)
+    ? query(
+        'SELECT id, name, created_at, (config IS NOT NULL) as has_config FROM clients WHERE protocol_id = ?',
+        [req.params.protocolId],
+      )
+    : query(
+        'SELECT id, name, created_at, (config IS NOT NULL) as has_config FROM clients WHERE protocol_id = ? AND user_id = ?',
+        [req.params.protocolId, req.user!.id],
+      );
   res.json(clients);
 });
 
@@ -77,6 +122,17 @@ router.post('/', validateBody(createClientSchema), async (req: Request, res: Res
   const { protocolId, name } = req.body as { protocolId: string; name: string };
   const protocol = queryOne<Protocol>('SELECT * FROM protocols WHERE id = ?', [protocolId]);
   if (!protocol) return res.status(404).json({ error: 'Protocol not found' });
+
+  // Протокол должен быть выдан пользователю администратором. 404, а не 403:
+  // существование чужих протоколов — тоже информация.
+  if (!canUseProtocol(req.user!, protocolId)) {
+    return res.status(404).json({ error: 'Protocol not found' });
+  }
+  const limit = req.user!.clientLimit;
+  if (quotaReached(countUserClients(req.user!.id), req.user!)) {
+    return res.status(403).json({ error: `Достигнут лимит клиентов (${limit}). Удалите ненужный или попросите администратора поднять лимит.` });
+  }
+
   const server = queryOne<Server>('SELECT * FROM servers WHERE id = ?', [protocol.server_id]);
   if (!server) return res.status(404).json({ error: 'Server not found' });
   const safeName = name.trim().replace(/[^a-zA-Z0-9_\-А-Яа-яёЁ ]/g, '').trim();
@@ -94,8 +150,8 @@ router.post('/', validateBody(createClientSchema), async (req: Request, res: Res
     ? `${result.config}\n---AMNEZIA_JSON---\n${result.configJson}`
     : result.config;
   const peerId = extractPeerId(storedConfig, protocol.type);
-  run('INSERT INTO clients (id, protocol_id, server_id, name, config, peer_id) VALUES (?, ?, ?, ?, ?, ?)',
-    [id, protocolId, server.id, safeName, storedConfig, peerId]);
+  run('INSERT INTO clients (id, protocol_id, server_id, name, config, peer_id, user_id) VALUES (?, ?, ?, ?, ?, ?, ?)',
+    [id, protocolId, server.id, safeName, storedConfig, peerId, req.user!.id]);
 
   let subscriptionSlug: string | null = null;
   if (protocol.type === 'xray') {
@@ -112,8 +168,8 @@ router.post('/', validateBody(createClientSchema), async (req: Request, res: Res
 
 // GET /api/clients/:id/qr — QR для оригинального формата (.conf / VLESS URI)
 router.get('/:id/qr', async (req, res) => {
-  const client   = queryOne<Client>('SELECT * FROM clients WHERE id = ?', [req.params.id]);
-  if (!client) return res.status(404).json({ error: 'Not found' });
+  const client = loadClient(req, res);
+  if (!client) return;
   if (!client.config) return res.json({ qr: null, amneziaQr: null, vpnUri: null, noConfig: true });
   const protocol = queryOne<{ type: ProtocolType }>('SELECT type FROM protocols WHERE id = ?', [client.protocol_id]);
   const server   = queryOne<Server>('SELECT * FROM servers WHERE id = ?', [client.server_id]);
@@ -139,8 +195,8 @@ router.get('/:id/qr', async (req, res) => {
 
 // GET /api/clients/:id/config-text — текст оригинального конфига
 router.get('/:id/config-text', (req, res) => {
-  const client = queryOne<Client>('SELECT * FROM clients WHERE id = ?', [req.params.id]);
-  if (!client) return res.status(404).json({ error: 'Not found' });
+  const client = loadClient(req, res);
+  if (!client) return;
   if (!client.config) return res.json({ config: null, vpnUri: null, name: client.name, noConfig: true });
   const protocol = queryOne<{ type: ProtocolType }>('SELECT type FROM protocols WHERE id = ?', [client.protocol_id]);
   const server   = queryOne<Server>('SELECT * FROM servers WHERE id = ?', [client.server_id]);
@@ -158,8 +214,10 @@ router.get('/:id/config-text', (req, res) => {
 });
 
 router.delete('/:id', async (req, res) => {
-  const client = queryOne<Client>('SELECT * FROM clients WHERE id = ?', [req.params.id]);
-  if (!client) return res.json({ ok: true }); // уже удалён
+  const existing = queryOne<Client>('SELECT * FROM clients WHERE id = ?', [req.params.id]);
+  if (!existing) return res.json({ ok: true }); // уже удалён
+  const client = loadClient(req, res);
+  if (!client) return;
 
   const protocol = queryOne<Protocol>('SELECT * FROM protocols WHERE id = ?', [client.protocol_id]);
   const server = protocol ? queryOne<Server>('SELECT * FROM servers WHERE id = ?', [protocol.server_id]) : null;
@@ -189,6 +247,9 @@ router.delete('/:id', async (req, res) => {
 });
 
 router.get('/:id/subscription', (req, res) => {
+  // slug — это фактически пароль от конфига: по нему подписка отдаётся без
+  // авторизации. Поэтому проверка владельца здесь обязательна.
+  if (!loadClient(req, res)) return;
   const subs = query<{ slug: string }>('SELECT slug FROM subscriptions WHERE client_id = ?', [req.params.id]);
   res.json({ slug: subs[0]?.slug || null });
 });
@@ -221,8 +282,7 @@ router.get('/:id/stats', (req, res) => {
   const now = Math.floor(Date.now() / 1000);
   const since = now - rangeSec;
 
-  const client = queryOne<Client>('SELECT id FROM clients WHERE id = ?', [req.params.id]);
-  if (!client) return res.status(404).json({ error: 'Not found' });
+  if (!loadClient(req, res)) return;
 
   const rows = query<StatsRow>(
     'SELECT ts, rx_bytes, tx_bytes, last_handshake FROM client_stats WHERE client_id = ? AND ts >= ? ORDER BY ts ASC',

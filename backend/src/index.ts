@@ -13,6 +13,7 @@ import { startStatsWorker, stopStatsWorker } from './services/statsWorker.js';
 import { logger } from './services/logger.js';
 import { isUserError } from './services/errors.js';
 import authRoutes from './routes/auth.js';
+import userRoutes from './routes/users.js';
 import serverRoutes from './routes/servers.js';
 import protocolRoutes from './routes/protocols.js';
 import clientRoutes from './routes/clients.js';
@@ -80,6 +81,7 @@ try {
 app.get('/api/health', (_req, res) => res.json({ ok: true }));
 
 app.use('/api/auth',          authRoutes);
+app.use('/api/users',         userRoutes);
 app.use('/api/servers',       serverRoutes);
 app.use('/api/protocols',     protocolRoutes);
 app.use('/api/clients',       clientRoutes);

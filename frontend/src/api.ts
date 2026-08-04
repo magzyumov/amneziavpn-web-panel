@@ -72,12 +72,64 @@ export interface ClientRecord {
   has_config: number;
 }
 
+export type UserRole = 'admin' | 'user';
+
+// Свой клиент с точки зрения обычного пользователя: сервер и протокол он видит
+// только как подписи — ни хоста, ни контейнера, ни портов ему не отдают.
+export interface MyClientRecord extends ClientRecord {
+  protocol_id: string;
+  protocol_type: ProtocolRecord['type'];
+  protocol_config: Record<string, unknown>;
+  server_name: string;
+}
+
+// Протокол, на котором текущему пользователю разрешено завести клиента.
+export interface AvailableProtocol {
+  id: string;
+  type: ProtocolRecord['type'];
+  config: Record<string, unknown>;
+  status: string;
+  server_id: string;
+  server_name: string;
+}
+
+export interface PanelUser {
+  id: string;
+  username: string;
+  role: UserRole;
+  client_limit: number;
+  clients_count: number;
+  created_at: string;
+  protocolIds: string[];
+}
+
+export interface CurrentUser {
+  username: string;
+  role: UserRole;
+  clientLimit: number;
+}
+
 export const authApi = {
   status: () => api.get<{ configured: boolean }>('/auth/status'),
   setup: (data: { username: string; password: string }) => api.post('/auth/setup', data),
-  login: (data: { username: string; password: string }) => api.post<{ username: string }>('/auth/login', data),
+  login: (data: { username: string; password: string }) => api.post<{ username: string; role: UserRole }>('/auth/login', data),
   logout: () => api.post('/auth/logout'),
-  me: () => api.get<{ username: string }>('/auth/me'),
+  me: () => api.get<CurrentUser>('/auth/me'),
+};
+
+export interface UserPayload {
+  username?: string;
+  password?: string;
+  role?: UserRole;
+  clientLimit?: number;
+  protocolIds?: string[];
+}
+
+export const usersApi = {
+  list: () => api.get<PanelUser[]>('/users'),
+  create: (data: UserPayload & { username: string; password: string }) => api.post<PanelUser>('/users', data),
+  update: (id: string, data: UserPayload) => api.put<PanelUser>(`/users/${id}`, data),
+  delete: (id: string) => api.delete<{ ok: true; orphanedClients: number }>(`/users/${id}`),
 };
 
 export const serversApi = {
@@ -120,6 +172,8 @@ export interface ClientStatsResponse {
 
 export const clientsApi = {
   byProtocol: (protocolId: string) => api.get<ClientRecord[]>(`/clients/protocol/${protocolId}`),
+  mine: () => api.get<MyClientRecord[]>('/clients/mine'),
+  availableProtocols: () => api.get<AvailableProtocol[]>('/clients/available-protocols'),
   create: (data: { protocolId: string; name: string }) => api.post('/clients', data),
   delete: (id: string) => api.delete(`/clients/${id}`),
   qr: (id: string) => api.get(`/clients/${id}/qr`),

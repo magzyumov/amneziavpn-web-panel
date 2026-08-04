@@ -2,7 +2,8 @@ import { Router, type Request, type Response } from 'express';
 import { v4 as uuidv4 } from 'uuid';
 import { z } from 'zod';
 import { query, queryOne, run } from '../services/db.js';
-import { authMiddleware } from '../middleware/auth.js';
+import { authMiddleware, requireAdmin } from '../middleware/auth.js';
+import { revokeProtocolGrants } from '../services/access.js';
 import { validateBody } from '../middleware/validate.js';
 import {
   installAWG2, installXray, installWireGuard, installTelemt,
@@ -17,7 +18,11 @@ import { shInt } from '../services/shell.js';
 import type { Server, Protocol, ProtocolType } from '../types.js';
 
 const router = Router();
+// Весь роутер — административный: здесь ставят и сносят контейнеры, читают логи
+// и статусы. Обычному пользователю знать о протоколах нужно ровно столько,
+// сколько отдаёт GET /api/clients/available-protocols.
 router.use(authMiddleware);
+router.use(requireAdmin);
 
 const installSchema = z.object({
   type: z.enum(['awg2', 'wireguard', 'xray', 'telemt']),
@@ -101,6 +106,7 @@ router.delete('/:id', async (req, res) => {
   if (!server) return res.status(404).json({ error: 'Server not found' });
   await removeContainer(server, p.container_name);
   run('DELETE FROM clients WHERE protocol_id = ?', [p.id]);
+  revokeProtocolGrants(p.id);
   run('DELETE FROM protocols WHERE id = ?', [p.id]);
   res.json({ ok: true });
 });

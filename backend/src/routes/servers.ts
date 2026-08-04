@@ -3,7 +3,8 @@ import { v4 as uuidv4 } from 'uuid';
 import { z } from 'zod';
 import { query, queryOne, run } from '../services/db.js';
 import { encrypt } from '../services/crypto.js';
-import { authMiddleware } from '../middleware/auth.js';
+import { authMiddleware, requireAdmin } from '../middleware/auth.js';
+import { revokeProtocolGrants } from '../services/access.js';
 import { validateBody } from '../middleware/validate.js';
 import { testConnection, disconnect } from '../services/ssh.js';
 import { listAmneziaContainers, ensureDocker, scanExistingProtocols, installDns, removeDns, isDnsRunning } from '../services/protocols/index.js';
@@ -13,7 +14,10 @@ import { logger } from '../services/logger.js';
 import type { Server, Protocol, ProtocolType } from '../types.js';
 
 const router = Router();
+// Серверы = SSH-доступ к боевым VPS: креды, установка Docker, выполнение команд.
+// Обычному пользователю здесь не нужно ничего, включая чтение списка.
 router.use(authMiddleware);
+router.use(requireAdmin);
 
 const serverSchema = z.object({
   name: z.string().min(1).max(128),
@@ -84,6 +88,11 @@ router.put('/:id', validateBody(serverSchema), (req: Request, res: Response) => 
 // DELETE /api/servers/:id
 router.delete('/:id', (req, res) => {
   disconnect(req.params.id);
+  // Выдачи протоколов этого сервера — вручную: foreign_keys в базе выключены,
+  // иначе в user_protocols остались бы строки на несуществующие протоколы.
+  for (const p of query<{ id: string }>('SELECT id FROM protocols WHERE server_id = ?', [req.params.id])) {
+    revokeProtocolGrants(p.id);
+  }
   run('DELETE FROM servers WHERE id = ?', [req.params.id]);
   res.json({ ok: true });
 });

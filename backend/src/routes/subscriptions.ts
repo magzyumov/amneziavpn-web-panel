@@ -1,7 +1,7 @@
 import { Router, type Request, type Response } from 'express';
 import rateLimit from 'express-rate-limit';
 import { z } from 'zod';
-import { authMiddleware } from '../middleware/auth.js';
+import { authMiddleware, requireAdmin } from '../middleware/auth.js';
 import { validateBody } from '../middleware/validate.js';
 import {
   getTemplate, saveTemplate, getVpsHost, saveVpsHost,
@@ -33,8 +33,12 @@ router.get('/sub/:slug', subLimiter, (req: Request, res: Response) => {
   res.send(sub.yaml_content);
 });
 
-// ── Все остальные — с авторизацией ─────────────────────────────────────────
+// ── Все остальные — только для админов ──────────────────────────────────────
+// Здесь общий для всей панели шаблон подписок, глобальный vpsHost и список
+// подписок всех пользователей. Свою подписку юзер получает через
+// GET /api/clients/:id/subscription с проверкой владельца.
 router.use(authMiddleware);
+router.use(requireAdmin);
 
 router.get('/',         (_req, res) => res.json(listSubscriptions()));
 router.delete('/:id',   (req, res) => { deleteSubscription(req.params.id); res.json({ ok: true }); });

@@ -33,7 +33,10 @@ router.post('/setup', validateBody(credentialsSchema), async (req: Request, res:
   }
   const { username, password } = req.body;
   const hash = await bcrypt.hash(password, 10);
-  run('INSERT INTO users (id, username, password_hash) VALUES (?, ?, ?)', [uuidv4(), username, hash]);
+  // Первый пользователь — администратор без лимита на клиентов: больше выдать
+  // эти права некому.
+  run("INSERT INTO users (id, username, password_hash, role, client_limit) VALUES (?, ?, ?, 'admin', 0)",
+    [uuidv4(), username, hash]);
   res.json({ ok: true });
 });
 
@@ -54,7 +57,7 @@ router.post('/login', loginLimiter, validateBody(credentialsSchema), async (req:
 
   const token = signToken({ id: user.id, username: user.username });
   setAuthCookies(res, token);
-  res.json({ username: user.username });
+  res.json({ username: user.username, role: user.role });
 });
 
 // POST /api/auth/logout
@@ -63,9 +66,10 @@ router.post('/logout', (_req, res) => {
   res.json({ ok: true });
 });
 
-// GET /api/auth/me — проверка авторизации (используется фронтом)
+// GET /api/auth/me — проверка авторизации + актуальные права (используется фронтом)
 router.get('/me', authMiddleware, (req: Request, res: Response) => {
-  res.json({ username: req.user!.username });
+  const { username, role, clientLimit } = req.user!;
+  res.json({ username, role, clientLimit });
 });
 
 export default router;

@@ -26,6 +26,7 @@ VPN-протоколы на ваших VPS по SSH, выпускает клие
 ## Что умеет
 
 - **Несколько серверов** в одной панели. SSH по паролю или ключу, креды шифруются AES-256-GCM.
+- **Аккаунты с разделением прав**: администратор управляет серверами и протоколами, обычный пользователь заходит и выпускает конфиги себе сам — в пределах того, что ему выдали.
 - **Установка протоколов в один клик** — панель сама поставит Docker, подготовит хост и соберёт образы на VPS.
 - **Импорт того, что уже стоит**: сканирует сервер, находит развёрнутые контейнеры (AmneziaWG, WireGuard, Xray, Telemt) и подхватывает их вместе с клиентами.
 - **Клиентские конфиги** — файл, `vpn://`-ссылка, QR (включая нативный многокадровый QR Amnezia), `tg://proxy` для Telegram.
@@ -118,9 +119,41 @@ header protection) новые параметры не пишутся — их к
 
 ---
 
+## Аккаунты и права
+
+Ролей две, и разница между ними принципиальная.
+
+| | **admin** | **user** |
+|---|---|---|
+| Серверы, SSH-креды, установка Docker | да | нет, не видит даже списка |
+| Установка, удаление, старт/стоп протоколов, логи | да | нет |
+| Шаблон и настройки подписок | да | нет |
+| Управление пользователями | да | нет |
+| Свои клиенты: создать, конфиг/QR, статистика, удалить | да | да, в пределах лимита |
+| Чужие клиенты | видит все | не видит и не может скачать |
+
+Публичной регистрации нет: аккаунт в панели — это доступ к VPN, поэтому
+пользователей заводит администратор (**Пользователи → + Добавить**). Там же он
+задаёт лимит на число клиентов (`0` — без ограничения) и отмечает, **какие
+протоколы** человеку доступны.
+
+Выдача идёт протоколами, а не серверами: отметив протокол, вы открываете доступ
+именно к нему и к названию сервера, на котором он стоит, — управлять самим
+сервером пользователь не сможет. Состояния «сервер выдан, а протокол нет» не
+существует by design.
+
+Первый пользователь (экран первичной настройки) становится администратором. При
+обновлении уже работающей панели все существующие учётки получают роль `admin`,
+а все существующие клиенты — первого из них: поведение действующей установки не
+меняется.
+
+---
+
 ## Безопасность
 
 - SSH-креды шифруются **AES-256-GCM**; ключ — в `PANEL_ENCRYPTION_KEY` или в `data/encryption.key` (не забудьте про него при бэкапе).
+- Права проверяются на каждом запросе **по базе, а не по токену**: разжалование или удаление пользователя действует сразу, а не после истечения семидневной сессии.
+- Доступ к клиенту определяется владельцем: все `/api/clients/:id/*` проходят через одну проверку и отвечают `404` на чужой id, не раскрывая факт его существования.
 - Сессия — JWT в httpOnly cookie плюс **CSRF double-submit**: заголовок `X-CSRF-Token` против cookie `panel_csrf`.
 - Rate-limit: 10 попыток входа за 15 минут, 30 запросов в минуту на публичный `/sub/:slug`.
 - Slug подписки — 192 бита криптослучайных данных в base64url.
@@ -182,16 +215,18 @@ amneziavpn-web-panel/
 │       ├── index.ts                — Express app, graceful shutdown
 │       ├── types.ts                — доменные типы (Server, Protocol, Client, …)
 │       ├── middleware/
-│       │   ├── auth.ts             — JWT cookie + double-submit CSRF
+│       │   ├── auth.ts             — JWT cookie + double-submit CSRF + requireAdmin
 │       │   └── validate.ts         — zod-схема → 400 с понятным error.path
 │       ├── routes/
 │       │   ├── auth.ts             — login / setup / me / logout
+│       │   ├── users.ts            — аккаунты, роли, лимиты, выдача протоколов (admin)
 │       │   ├── servers.ts          — CRUD + scan + import + AmneziaDNS
 │       │   ├── protocols.ts        — install / start / stop / health / logs
 │       │   ├── clients.ts          — create / qr / config / stats
 │       │   └── subscriptions.ts    — Clash-подписки + публичный /sub/:slug
 │       └── services/
 │           ├── db.ts               — better-sqlite3 (WAL), схема и миграции
+│           ├── access.ts           — роли, владение клиентами, выданные протоколы
 │           ├── crypto.ts           — AES-256-GCM для SSH-кредов
 │           ├── ssh.ts              — пул соединений node-ssh + keepalive
 │           ├── shell.ts            — sh()/shInt()/assert* для безопасной интерполяции
@@ -221,7 +256,8 @@ amneziavpn-web-panel/
 │   └── src/
 │       ├── api.ts                  — axios + CSRF + типы API
 │       ├── protocols.ts            — названия и иконки протоколов
-│       └── pages/                  — Dashboard, Server, Subscriptions + компоненты
+│       ├── auth.ts                 — контекст текущего пользователя и его роли
+│       └── pages/                  — Dashboard, Server, Subscriptions, MyClients, Users
 │   └── templates/clash.yaml        — дефолтный шаблон Clash-подписки
 ├── data/                           — база и ключ шифрования (создаются сами)
 └── docker-compose.yml
@@ -242,7 +278,15 @@ GET  /api/auth/status      — нужна ли первичная настрой
 POST /api/auth/setup       — создать администратора (только если база пустая)
 POST /api/auth/login       — httpOnly cookie + CSRF cookie
 POST /api/auth/logout      — очистить cookies
-GET  /api/auth/me          — { username }
+GET  /api/auth/me          — { username, role, clientLimit }
+```
+
+### Users (только admin)
+```
+GET    /api/users          — список { id, username, role, client_limit, clients_count, protocolIds }
+POST   /api/users          — завести { username, password, role, clientLimit, protocolIds }
+PUT    /api/users/:id      — пароль / роль / лимит / выданные протоколы
+DELETE /api/users/:id      — удалить; клиенты не удаляются, а становятся «ничьими»
 ```
 
 ### Servers
@@ -279,7 +323,9 @@ POST   /api/protocols/:id/enable-stats         — включить stats-API у
 
 ### Clients
 ```
-GET    /api/clients/protocol/:protocolId           — список
+GET    /api/clients/available-protocols             — на чём текущий юзер может завести клиента
+GET    /api/clients/mine                            — свои клиенты (страница «Мои клиенты»)
+GET    /api/clients/protocol/:protocolId           — список (обычный юзер видит только своих)
 POST   /api/clients                                 — создать { protocolId, name }
 DELETE /api/clients/:id                             — удалить и отозвать peer на сервере
 GET    /api/clients/:id/qr                          — QR + vpn://
