@@ -65,7 +65,16 @@ export interface ProtocolRecord {
   status: string;
 }
 
-export interface ClientRecord {
+// Лимиты клиента. expires_at — unix sec (null = бессрочно); daily_limit_bytes
+// 0 = без лимита; suspended_at != null — пир снят с сервера до новых суток.
+export interface ClientLimits {
+  expires_at: number | null;
+  daily_limit_bytes: number;
+  suspended_at: number | null;
+  used_today: number;
+}
+
+export interface ClientRecord extends ClientLimits {
   id: string;
   name: string;
   created_at: string;
@@ -98,6 +107,9 @@ export interface PanelUser {
   username: string;
   role: UserRole;
   client_limit: number;
+  /** Лимиты, которые получают клиенты этого пользователя. 0 = без ограничения. */
+  default_expiry_days: number;
+  default_daily_limit_mb: number;
   clients_count: number;
   created_at: string;
   protocolIds: string[];
@@ -107,6 +119,9 @@ export interface CurrentUser {
   username: string;
   role: UserRole;
   clientLimit: number;
+  /** Лимиты, которые получат клиенты, создаваемые этим пользователем. 0 = без ограничения. */
+  defaultExpiryDays: number;
+  defaultDailyLimitMb: number;
 }
 
 export const authApi = {
@@ -122,6 +137,8 @@ export interface UserPayload {
   password?: string;
   role?: UserRole;
   clientLimit?: number;
+  defaultExpiryDays?: number;
+  defaultDailyLimitMb?: number;
   protocolIds?: string[];
 }
 
@@ -174,8 +191,12 @@ export const clientsApi = {
   byProtocol: (protocolId: string) => api.get<ClientRecord[]>(`/clients/protocol/${protocolId}`),
   mine: () => api.get<MyClientRecord[]>('/clients/mine'),
   availableProtocols: () => api.get<AvailableProtocol[]>('/clients/available-protocols'),
-  create: (data: { protocolId: string; name: string }) => api.post('/clients', data),
+  create: (data: { protocolId: string; name: string; expiresInDays?: number; dailyLimitMb?: number }) =>
+    api.post('/clients', data),
   delete: (id: string) => api.delete(`/clients/${id}`),
+  // Только для админа: срок и суточный лимит существующего клиента.
+  setLimits: (id: string, data: { expiresInDays?: number; dailyLimitMb?: number }) =>
+    api.put<(ClientLimits & { id: string; name: string }) | { deleted: true }>(`/clients/${id}/limits`, data),
   qr: (id: string) => api.get(`/clients/${id}/qr`),
   configText: (id: string) => api.get<{ config: string | null; vpnUri: string | null; name: string }>(`/clients/${id}/config-text`),
   configDownloadUrl: (id: string) => `/api/clients/${id}/config`,

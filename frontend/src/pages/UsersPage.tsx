@@ -72,7 +72,12 @@ export default function UsersPage() {
                   <div className="mono text-muted" style={{ fontSize: 11 }}>
                     {u.role === 'admin'
                       ? 'полный доступ ко всем серверам и протоколам'
-                      : `протоколов выдано: ${u.protocolIds.length} · клиентов: ${u.clients_count}${u.client_limit > 0 ? ` из ${u.client_limit}` : ' (без лимита)'}`}
+                      : [
+                          `протоколов выдано: ${u.protocolIds.length}`,
+                          `клиентов: ${u.clients_count}${u.client_limit > 0 ? ` из ${u.client_limit}` : ' (без лимита)'}`,
+                          u.default_expiry_days > 0 ? `срок: ${u.default_expiry_days} дн.` : null,
+                          u.default_daily_limit_mb > 0 ? `трафик: ${u.default_daily_limit_mb} МБ/сут` : null,
+                        ].filter(Boolean).join(' · ')}
                   </div>
                 </div>
                 <div className="flex gap-8 items-center">
@@ -122,6 +127,8 @@ function UserModal({ user, protocols, onClose, onSaved }: ModalProps) {
   const [password, setPassword] = useState('');
   const [role, setRole] = useState<UserRole>(user?.role ?? 'user');
   const [clientLimit, setClientLimit] = useState(String(user?.client_limit ?? 5));
+  const [expiryDays, setExpiryDays] = useState(String(user?.default_expiry_days ?? 0));
+  const [dailyLimitMb, setDailyLimitMb] = useState(String(user?.default_daily_limit_mb ?? 0));
   const [granted, setGranted] = useState<string[]>(user?.protocolIds ?? []);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -151,14 +158,17 @@ function UserModal({ user, protocols, onClose, onSaved }: ModalProps) {
     setLoading(true);
     setError('');
     try {
-      const limit = Number(clientLimit) || 0;
+      const common = {
+        role,
+        clientLimit: Number(clientLimit) || 0,
+        defaultExpiryDays: Number(expiryDays) || 0,
+        defaultDailyLimitMb: Number(dailyLimitMb) || 0,
+        protocolIds: granted,
+      };
       if (isEdit) {
-        await usersApi.update(user!.id, {
-          role, clientLimit: limit, protocolIds: granted,
-          ...(password ? { password } : {}),
-        });
+        await usersApi.update(user!.id, { ...common, ...(password ? { password } : {}) });
       } else {
-        await usersApi.create({ username, password, role, clientLimit: limit, protocolIds: granted });
+        await usersApi.create({ ...common, username, password });
       }
       onSaved();
     } catch (e: any) {
@@ -201,6 +211,22 @@ function UserModal({ user, protocols, onClose, onSaved }: ModalProps) {
               <label className="input-label">Лимит клиентов (0 — без ограничения)</label>
               <input className="input input-mono" type="number" min={0} max={1000}
                 value={clientLimit} onChange={e => setClientLimit(e.target.value)} />
+            </div>
+
+            <div className="input-group">
+              <label className="input-label">Срок действия его клиентов, дней (0 — бессрочно)</label>
+              <input className="input input-mono" type="number" min={0} max={3650}
+                value={expiryDays} onChange={e => setExpiryDays(e.target.value)} />
+            </div>
+
+            <div className="input-group">
+              <label className="input-label">Суточный лимит трафика его клиентов, МБ (0 — без лимита)</label>
+              <input className="input input-mono" type="number" min={0}
+                value={dailyLimitMb} onChange={e => setDailyLimitMb(e.target.value)} />
+              <div className="text-muted mono" style={{ fontSize: 10, marginTop: 4 }}>
+                // применяется к клиентам, которые пользователь создаст ПОСЛЕ сохранения.
+                Уже выпущенные не трогаем — их лимиты правятся на карточке протокола
+              </div>
             </div>
 
             <div className="input-group">

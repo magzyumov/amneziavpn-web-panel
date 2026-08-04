@@ -151,6 +151,14 @@ function migrateAccessControl(): void {
   addColumnIfMissing('users', 'client_limit', 'client_limit INTEGER NOT NULL DEFAULT 5');
   addColumnIfMissing('clients', 'user_id', 'user_id TEXT');
 
+  // Лимиты срока и трафика. Дефолты подобраны так, что на существующих клиентах
+  // ничего не включается: NULL = бессрочно, 0 = без лимита.
+  addColumnIfMissing('users', 'default_expiry_days', 'default_expiry_days INTEGER NOT NULL DEFAULT 0');
+  addColumnIfMissing('users', 'default_daily_limit_mb', 'default_daily_limit_mb INTEGER NOT NULL DEFAULT 0');
+  addColumnIfMissing('clients', 'expires_at', 'expires_at INTEGER');
+  addColumnIfMissing('clients', 'daily_limit_bytes', 'daily_limit_bytes INTEGER NOT NULL DEFAULT 0');
+  addColumnIfMissing('clients', 'suspended_at', 'suspended_at INTEGER');
+
   const done = d.prepare('SELECT value FROM settings WHERE key = ?').get(ACCESS_MIGRATION_KEY);
   if (done) return;
 
@@ -223,6 +231,9 @@ function initSchema(): void {
       config TEXT,
       peer_id TEXT, -- pubkey для AWG/WG, UUID для Xray; используется stats-воркером
       user_id TEXT, -- владелец; NULL = «ничей», виден только админам
+      expires_at INTEGER,                          -- unix sec; NULL = бессрочно. По истечении клиент удаляется
+      daily_limit_bytes INTEGER NOT NULL DEFAULT 0, -- суточный лимит трафика; 0 = без лимита
+      suspended_at INTEGER,                        -- unix sec приостановки по лимиту; NULL = активен
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (protocol_id) REFERENCES protocols(id) ON DELETE CASCADE
     );
@@ -247,6 +258,10 @@ function initSchema(): void {
       password_hash TEXT NOT NULL,
       role TEXT NOT NULL DEFAULT 'user',      -- 'admin' | 'user'
       client_limit INTEGER NOT NULL DEFAULT 5, -- сколько клиентов юзер заводит сам; 0 = без лимита
+      -- Лимиты, которые получают клиенты, заведённые этим пользователем. Сам он
+      -- их не выбирает: смысл ограничения в том, что его задаёт администратор.
+      default_expiry_days INTEGER NOT NULL DEFAULT 0,    -- 0 = бессрочно
+      default_daily_limit_mb INTEGER NOT NULL DEFAULT 0, -- 0 = без лимита
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
 

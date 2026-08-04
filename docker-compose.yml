@@ -9,6 +9,9 @@ services:
       JWT_SECRET: ${JWT_SECRET}
       PANEL_ENCRYPTION_KEY: ${PANEL_ENCRYPTION_KEY:-}
       DB_PATH: /data/panel.db
+      # Определяет, когда начинаются «сутки» для суточного лимита трафика.
+      # По умолчанию UTC — для Москвы это 03:00, поэтому TZ стоит задать явно.
+      TZ: ${TZ:-UTC}
     volumes:
       - ./data:/data
     healthcheck:

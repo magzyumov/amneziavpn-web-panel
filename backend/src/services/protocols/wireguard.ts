@@ -90,6 +90,17 @@ export async function addWireGuardClient(server: Server, protocol: Protocol, _cl
   };
 }
 
+// Возвращает ранее отозванного пира тем же ключом и адресом — см.
+// restoreAWG2Client, механика общая.
+export async function restoreWireGuardClient(
+  server: Server, protocol: Protocol,
+  peer: { clientPubKey: string; presharedKey: string; clientIp: string },
+): Promise<void> {
+  assertContainerName(protocol.container_name);
+  await assertContainerRunning(server, WG_FLAVOR);
+  await addPeer(server, WG_FLAVOR, peer);
+}
+
 export async function removeWireGuardClient(server: Server, protocol: Protocol, peerId: string): Promise<void> {
   assertContainerName(protocol.container_name);
   await removePeer(server, WG_FLAVOR, peerId);

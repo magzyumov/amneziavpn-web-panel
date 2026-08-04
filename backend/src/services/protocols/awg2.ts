@@ -316,3 +316,15 @@ export async function removeAWG2Client(server: Server, protocol: Protocol, peerI
   assertContainerName(protocol.container_name);
   await removePeer(server, AWG2_FLAVOR, peerId);
 }
+
+// Возвращает ранее отозванного пира с ТЕМ ЖЕ ключом и адресом — снятие
+// приостановки по суточному лимиту. Конфиг на руках у клиента при этом
+// остаётся рабочим: перевыпускать профиль каждые сутки было бы бессмысленно.
+export async function restoreAWG2Client(
+  server: Server, protocol: Protocol,
+  peer: { clientPubKey: string; presharedKey: string; clientIp: string },
+): Promise<void> {
+  assertContainerName(protocol.container_name);
+  await assertContainerRunning(server, AWG2_FLAVOR);
+  await addPeer(server, AWG2_FLAVOR, peer);
+}

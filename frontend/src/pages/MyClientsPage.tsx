@@ -7,6 +7,7 @@ import { PROTOCOL_ICONS, protocolTitle } from '../protocols';
 import ClientModal from './server/ClientModal';
 import StatsModal from './server/StatsModal';
 import CopySubButton from './server/CopySubButton';
+import LimitBadges from './server/LimitBadges';
 
 // Самообслуживание: пользователь заводит себе клиентов на тех протоколах,
 // которые ему выдал администратор, и не видит ничего за их пределами —
@@ -106,6 +107,7 @@ export default function MyClientsPage() {
                         {protocolTitle({ type: c.protocol_type, config: c.protocol_config })} · {c.server_name}
                         {c.created_at && ` · ${new Date(c.created_at.replace(' ', 'T')).toLocaleDateString()}`}
                       </div>
+                      <LimitBadges {...c} />
                     </div>
                   </div>
                   <div className="flex gap-8 items-center">
@@ -129,6 +131,8 @@ export default function MyClientsPage() {
       {showAdd && (
         <AddMyClientModal
           protocols={protocols}
+          expiryDays={me.defaultExpiryDays}
+          dailyLimitMb={me.defaultDailyLimitMb}
           onClose={() => setShowAdd(false)}
           onAdded={c => { setClients(prev => [c, ...prev]); setShowAdd(false); }}
         />
@@ -141,11 +145,14 @@ export default function MyClientsPage() {
 
 interface AddProps {
   protocols: AvailableProtocol[];
+  /** Лимиты, заданные администратором для этого пользователя. Только показ. */
+  expiryDays: number;
+  dailyLimitMb: number;
   onClose: () => void;
   onAdded: (client: MyClientRecord) => void;
 }
 
-function AddMyClientModal({ protocols, onClose, onAdded }: AddProps) {
+function AddMyClientModal({ protocols, expiryDays, dailyLimitMb, onClose, onAdded }: AddProps) {
   const [name, setName] = useState('');
   const [protocolId, setProtocolId] = useState(protocols[0]?.id ?? '');
   const [loading, setLoading] = useState(false);
@@ -158,13 +165,18 @@ function AddMyClientModal({ protocols, onClose, onAdded }: AddProps) {
     try {
       const r = await clientsApi.create({ protocolId, name });
       const proto = protocols.find(p => p.id === protocolId)!;
-      // POST /clients отдаёт саму запись; сервер и протокол дописываем из выбора,
-      // чтобы не перезапрашивать весь список ради одной новой карточки.
+      // POST /clients отдаёт саму запись вместе с применёнными лимитами; сервер и
+      // протокол дописываем из выбора, чтобы не перезапрашивать весь список ради
+      // одной новой карточки.
       onAdded({
         id: r.data.id,
         name: r.data.name,
         created_at: r.data.created_at,
         has_config: 1,
+        expires_at: r.data.expires_at ?? null,
+        daily_limit_bytes: r.data.daily_limit_bytes ?? 0,
+        suspended_at: null,
+        used_today: 0,
         protocol_id: proto.id,
         protocol_type: proto.type,
         protocol_config: proto.config,
@@ -200,6 +212,18 @@ function AddMyClientModal({ protocols, onClose, onAdded }: AddProps) {
             onChange={e => setName(e.target.value)}
             onKeyDown={e => e.key === 'Enter' && submit()} autoFocus />
         </div>
+
+        {(expiryDays > 0 || dailyLimitMb > 0) && (
+          <div className="notice" style={{ marginBottom: 12, fontSize: 12 }}>
+            Ограничения, заданные администратором:
+            <ul style={{ margin: '6px 0 0', paddingLeft: 18 }}>
+              {expiryDays > 0 && <li>срок действия — {expiryDays} дн., затем клиент удаляется</li>}
+              {dailyLimitMb > 0 && (
+                <li>не более {dailyLimitMb} МБ в сутки; при исчерпании доступ приостановится до начала новых суток</li>
+              )}
+            </ul>
+          </div>
+        )}
 
         <div className="modal-actions">
           <button className="btn btn-outline" onClick={onClose}>Отмена</button>

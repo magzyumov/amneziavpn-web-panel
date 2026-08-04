@@ -37,3 +37,44 @@ export function extractPeerId(config: string | null, protocolType: string): stri
 
   return null;
 }
+
+// Всё, что нужно, чтобы вернуть пира на сервер ТЕМ ЖЕ ключом, каким он был
+// выпущен. Нужно при снятии приостановки по суточному лимиту: конфиг у клиента
+// на руках уже есть, перевыпускать его нельзя — иначе приостановка на сутки
+// превращалась бы в обязательную переустановку профиля.
+//
+// Ничего лишнего мы не храним: адрес и PSK и так лежат в выданном конфиге,
+// pubkey/uuid — в peer_id.
+export interface PeerRestoreInfo {
+  /** WG/AWG: адрес пира без маски (Address = 10.8.1.3/32 → 10.8.1.3). */
+  clientIp?: string;
+  /** WG/AWG: preshared-key пира. */
+  presharedKey?: string;
+  /** Telemt: «сырой» 32-символьный secret (без ee/dd-префикса ссылки). */
+  secret?: string;
+}
+
+export function extractPeerRestoreInfo(config: string | null, protocolType: string): PeerRestoreInfo | null {
+  if (!config) return null;
+
+  if (protocolType === 'awg2' || protocolType === 'wireguard') {
+    const conf = config.split('\n---AMNEZIA_JSON---\n')[0];
+    const ip  = conf.match(/^\s*Address\s*=\s*([0-9a-fA-F.:]+)/m);
+    const psk = conf.match(/^\s*PresharedKey\s*=\s*(\S+)/m);
+    if (!ip || !psk) return null;
+    return { clientIp: ip[1], presharedKey: psk[1] };
+  }
+
+  if (protocolType === 'telemt') {
+    const m = config.match(/[?&]secret=([0-9a-fA-F]+)/);
+    if (!m) return null;
+    const linkSecret = m[1];
+    const raw = /^(dd|ee)/i.test(linkSecret) ? linkSecret.slice(2, 34) : linkSecret.slice(0, 32);
+    return raw.length === 32 ? { secret: raw } : null;
+  }
+
+  // Xray: восстановление идёт по одному peer_id (uuid), больше ничего не нужно.
+  if (protocolType === 'xray') return {};
+
+  return null;
+}

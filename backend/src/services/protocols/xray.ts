@@ -219,6 +219,41 @@ export async function addXrayClient(server: Server, protocol: Protocol, clientNa
   return { config: vlessUrl, configJson: clientJson, type: 'xray' };
 }
 
+// Возвращает ранее отозванного клиента в server.json с тем же uuid — снятие
+// приостановки по суточному лимиту. Выданная клиенту vless://-ссылка остаётся
+// рабочей, потому что uuid не меняется.
+export async function restoreXrayClient(server: Server, protocol: Protocol, peerId: string): Promise<void> {
+  assertContainerName(protocol.container_name);
+  const c: any = typeof protocol.config === 'string' ? JSON.parse(protocol.config) : protocol.config;
+  const cn = protocol.container_name;
+
+  const confRaw = await readContainerFile(server, cn, '/opt/amnezia/xray/server.json');
+  if (!confRaw) throw new UserError('Xray server.json not found on VPS.');
+  let serverJson: any;
+  try { serverJson = JSON.parse(confRaw); } catch (e) {
+    throw new UserError(`Failed to parse Xray server.json: ${(e as Error).message}`);
+  }
+  const vlessInbound = serverJson.inbounds?.find((i: any) => i.protocol === 'vless');
+  if (!vlessInbound?.settings?.clients) {
+    throw new UserError('Unexpected structure in Xray server.json (no vless inbound).');
+  }
+  // Уже на месте — значит приостановка не доехала до сервера. Рестарт ради
+  // ничего не делаем: он рвёт соединения всем остальным клиентам.
+  if (vlessInbound.settings.clients.some((x: any) => x.id === peerId)) return;
+
+  const tvars = transportFromConfig(c, c.sni);
+  const restored: any = { id: peerId, email: peerId, level: 0 };
+  if (tvars.transport === 'tcp') restored.flow = 'xtls-rprx-vision';
+  vlessInbound.settings.clients.push(restored);
+
+  const jsonB64 = Buffer.from(JSON.stringify(serverJson, null, 4)).toString('base64');
+  await execSudo(server, `echo '${jsonB64}' | base64 -d | docker exec -i ${cn} sh -c 'cat > /opt/amnezia/xray/server.json'`);
+  const restartRes = await execSudo(server, `docker restart ${cn}`);
+  if (restartRes.code !== 0) {
+    throw new UserError(`Failed to restart Xray container after client restore: ${restartRes.stderr}`);
+  }
+}
+
 // Отзыв клиента: убираем VLESS-клиента (по uuid) из server.json и рестартим (peerId = uuid).
 export async function removeXrayClient(server: Server, protocol: Protocol, peerId: string): Promise<void> {
   assertContainerName(protocol.container_name);

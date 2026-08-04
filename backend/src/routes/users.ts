@@ -21,6 +21,9 @@ const createSchema = z.object({
   password: z.string().min(8).max(256),
   role: z.enum(['admin', 'user']).optional().default('user'),
   clientLimit: z.coerce.number().int().min(0).max(1000).optional().default(5),
+  // Лимиты, которые получат клиенты этого пользователя. 0 = без ограничения.
+  defaultExpiryDays: z.coerce.number().int().min(0).max(3650).optional().default(0),
+  defaultDailyLimitMb: z.coerce.number().int().min(0).max(1024 * 1024).optional().default(0),
   protocolIds: z.array(z.string()).optional().default([]),
 });
 
@@ -29,6 +32,8 @@ const updateSchema = z.object({
   password: z.string().min(8).max(256).optional(),
   role: z.enum(['admin', 'user']).optional(),
   clientLimit: z.coerce.number().int().min(0).max(1000).optional(),
+  defaultExpiryDays: z.coerce.number().int().min(0).max(3650).optional(),
+  defaultDailyLimitMb: z.coerce.number().int().min(0).max(1024 * 1024).optional(),
   protocolIds: z.array(z.string()).optional(),
 });
 
@@ -37,6 +42,8 @@ interface UserRow {
   username: string;
   role: UserRole;
   client_limit: number;
+  default_expiry_days: number;
+  default_daily_limit_mb: number;
   created_at: string;
   clients_count: number;
 }
@@ -44,6 +51,7 @@ interface UserRow {
 function listUsers(): Array<UserRow & { protocolIds: string[] }> {
   const rows = query<UserRow>(`
     SELECT u.id, u.username, u.role, u.client_limit, u.created_at,
+           u.default_expiry_days, u.default_daily_limit_mb,
            (SELECT COUNT(*) FROM clients c WHERE c.user_id = u.id) AS clients_count
     FROM users u
     ORDER BY u.created_at ASC
@@ -60,7 +68,9 @@ router.get('/', (_req, res) => res.json(listUsers()));
 
 // POST /api/users — завести пользователя
 router.post('/', validateBody(createSchema), async (req: Request, res: Response) => {
-  const { username, password, role, clientLimit, protocolIds } = req.body as z.infer<typeof createSchema>;
+  const {
+    username, password, role, clientLimit, defaultExpiryDays, defaultDailyLimitMb, protocolIds,
+  } = req.body as z.infer<typeof createSchema>;
 
   if (queryOne('SELECT id FROM users WHERE username = ?', [username])) {
     return res.status(409).json({ error: 'Пользователь с таким именем уже существует' });
@@ -68,8 +78,9 @@ router.post('/', validateBody(createSchema), async (req: Request, res: Response)
 
   const id = uuidv4();
   const hash = await bcrypt.hash(password, 10);
-  run('INSERT INTO users (id, username, password_hash, role, client_limit) VALUES (?, ?, ?, ?, ?)',
-    [id, username, hash, role, clientLimit]);
+  run(`INSERT INTO users (id, username, password_hash, role, client_limit, default_expiry_days, default_daily_limit_mb)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    [id, username, hash, role, clientLimit, defaultExpiryDays, defaultDailyLimitMb]);
   setUserProtocols(id, protocolIds);
 
   const created = listUsers().find(u => u.id === id);
@@ -81,7 +92,9 @@ router.put('/:id', validateBody(updateSchema), async (req: Request, res: Respons
   const target = queryOne<AppUser>('SELECT * FROM users WHERE id = ?', [req.params.id]);
   if (!target) return res.status(404).json({ error: 'Пользователь не найден' });
 
-  const { password, role, clientLimit, protocolIds } = req.body as z.infer<typeof updateSchema>;
+  const {
+    password, role, clientLimit, defaultExpiryDays, defaultDailyLimitMb, protocolIds,
+  } = req.body as z.infer<typeof updateSchema>;
 
   // Последний админ не должен уметь разжаловать сам себя: панель осталась бы
   // без администратора, и вернуть права было бы уже нечем.
@@ -95,6 +108,15 @@ router.put('/:id', validateBody(updateSchema), async (req: Request, res: Respons
   if (role !== undefined)        run('UPDATE users SET role = ? WHERE id = ?', [role, target.id]);
   if (clientLimit !== undefined) run('UPDATE users SET client_limit = ? WHERE id = ?', [clientLimit, target.id]);
   if (protocolIds !== undefined) setUserProtocols(target.id, protocolIds);
+  // Дефолты действуют на клиентов, которые пользователь заведёт ПОСЛЕ правки.
+  // Уже выпущенные не трогаем: менять их задним числом — это молча обрезать
+  // человеку работающий доступ. Для них есть PUT /api/clients/:id/limits.
+  if (defaultExpiryDays !== undefined) {
+    run('UPDATE users SET default_expiry_days = ? WHERE id = ?', [defaultExpiryDays, target.id]);
+  }
+  if (defaultDailyLimitMb !== undefined) {
+    run('UPDATE users SET default_daily_limit_mb = ? WHERE id = ?', [defaultDailyLimitMb, target.id]);
+  }
 
   res.json(listUsers().find(u => u.id === target.id));
 });

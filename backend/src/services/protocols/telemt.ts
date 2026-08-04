@@ -98,6 +98,33 @@ export async function addTelemtClient(server: Server, protocol: Protocol, _clien
   return { config: link, type: 'telemt' };
 }
 
+// Возвращает ранее отозванного пользователя в файл users с тем же secret —
+// снятие приостановки по суточному лимиту. Выданная ссылка tg://proxy
+// продолжает работать, потому что secret не меняется.
+export async function restoreTelemtClient(
+  server: Server, protocol: Protocol, peerId: string, secret: string,
+): Promise<void> {
+  assertContainerName(protocol.container_name);
+  const cn = protocol.container_name;
+  const f = '/opt/amnezia/telemt/users';
+
+  // Оба значения идут в shell-команду, поэтому проверяем форму, а не доверяем
+  // тому, что они «наши»: peer_id и secret восстановлены разбором конфига.
+  if (!/^c_[0-9a-f]{12}$/i.test(peerId) || !/^[0-9a-f]{32}$/i.test(secret)) {
+    throw new UserError('Invalid Telemt peer id or secret — cannot restore client');
+  }
+
+  // Уже на месте — повторный рестарт контейнера ради ничего не делаем.
+  const present = await execSudo(server, `grep -cE ${sh('^' + peerId + ' ')} ${f} 2>/dev/null || true`);
+  if (parseInt(present.stdout.trim() || '0', 10) > 0) return;
+
+  await execSudo(server, `printf '%s = "%s"\\n' '${peerId}' '${secret}' >> ${f}`);
+  const restartRes = await execSudo(server, `docker restart ${cn}`);
+  if (restartRes.code !== 0) {
+    throw new UserError(`Failed to restart Telemt container after client restore: ${restartRes.stderr}`);
+  }
+}
+
 // Отзыв клиента: удаляем строку пользователя из users и рестартим (peerId = c_<12hex> username).
 export async function removeTelemtClient(server: Server, protocol: Protocol, peerId: string): Promise<void> {
   assertContainerName(protocol.container_name);

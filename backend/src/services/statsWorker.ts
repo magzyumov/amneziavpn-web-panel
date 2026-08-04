@@ -18,6 +18,7 @@
 
 import { query, queryOne, run } from './db.js';
 import { readAwgWgPeerStats, readXrayPeerStats, readTelemtPeerStats, type PeerStats } from './protocols/index.js';
+import { enforceLimits } from './limits.js';
 import { logger } from './logger.js';
 import type { Server, Protocol } from '../types.js';
 
@@ -48,11 +49,23 @@ interface ClientRow {
 
 const tickerHandle: { poll: NodeJS.Timeout | null; purge: NodeJS.Timeout | null } = { poll: null, purge: null };
 
+// Снимки статистики и проверка лимитов идут одним тиком и именно в этом
+// порядке: решение «исчерпан ли суточный трафик» принимается по только что
+// снятым цифрам, а не по данным минутной давности.
+async function tick(): Promise<void> {
+  await pollOnce();
+  try {
+    await enforceLimits();
+  } catch (e) {
+    logger.error({ err: e }, 'limit enforcement pass failed');
+  }
+}
+
 export function startStatsWorker(): void {
   // Первый snapshot — не сразу, дать backend'у прожить пару секунд после listen
-  setTimeout(() => { void pollOnce(); }, 5_000);
+  setTimeout(() => { void tick(); }, 5_000);
 
-  tickerHandle.poll = setInterval(() => { void pollOnce(); }, POLL_INTERVAL_MS);
+  tickerHandle.poll = setInterval(() => { void tick(); }, POLL_INTERVAL_MS);
   tickerHandle.purge = setInterval(purgeOldStats, PURGE_INTERVAL_MS);
   // Сразу подчистим старые
   setTimeout(purgeOldStats, 10_000);
