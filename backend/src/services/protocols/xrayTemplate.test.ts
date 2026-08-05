@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { CONFIGURE_SCRIPTS } from './dockerfiles.js';
-import { normalizeXraySettings, settingsFromConfig, buildVlessUrl } from './xray.js';
+import { normalizeXraySettings, settingsFromConfig, buildVlessUrl, renderXrayClient } from './xray.js';
 
 // Рендерит server.json из heredoc'а configure-скрипта Xray с подставленными
 // переменными — так же, как это делает bash внутри контейнера.
@@ -21,7 +21,7 @@ const TCP_VARS = {
   XRAY_SITE_NAME: 'www.googletagmanager.com',
   XRAY_NETWORK: 'tcp',
   XRAY_SECURITY: 'reality',
-  XRAY_SECURITY_SETTINGS: REALITY_BLOCK,
+  XRAY_REALITY_BLOCK: REALITY_BLOCK,
   XRAY_FLOW_SUFFIX: ', "flow": "xtls-rprx-vision"',
   XRAY_XHTTP_BLOCK: '',
 };
@@ -53,7 +53,7 @@ describe('xray server.json template', () => {
   });
 
   it('при security=none не пишет realitySettings', () => {
-    const json = renderServerJson({ ...TCP_VARS, XRAY_SECURITY: 'none', XRAY_SECURITY_SETTINGS: '', XRAY_FLOW_SUFFIX: '' });
+    const json = renderServerJson({ ...TCP_VARS, XRAY_SECURITY: 'none', XRAY_REALITY_BLOCK: '', XRAY_FLOW_SUFFIX: '' });
     const stream = json.inbounds[0].streamSettings;
     expect(stream.security).toBe('none');
     expect(stream.realitySettings).toBeUndefined();
@@ -130,6 +130,48 @@ describe('settingsFromConfig', () => {
   it('читает новый конфиг как есть', () => {
     const s = settingsFromConfig({ port: 443, sni: 'swdist.apple.com', security: 'none', flow: '', transport: 'tcp' });
     expect(s).toMatchObject({ security: 'none', flow: '', sni: 'swdist.apple.com' });
+  });
+});
+
+// Клиентский конфиг едет внутрь vpn://-ссылки, и приложение ничего не сообщит,
+// если он невалиден — просто не поднимет xray. Проверяем, что JSON парсится
+// во всех режимах: на этом уже ловились битые подстановки в шаблоне.
+describe('renderXrayClient', () => {
+  const server = { host: '10.0.0.1' } as any;
+  const baseConfig = { port: 443, publicKey: 'PUB', shortId: 'SID', firstUuid: 'u0' };
+
+  const parse = (cfg: Record<string, unknown>) => {
+    const r = renderXrayClient(server, { ...baseConfig, ...cfg }, 'uuid-1', 'Client');
+    return JSON.parse(r.configJson!);
+  };
+
+  it('reality: валидный JSON с realitySettings и flow', () => {
+    const json = parse({ sni: 'swdist.apple.com', security: 'reality', fingerprint: 'firefox', flow: 'xtls-rprx-vision' });
+    const stream = json.outbounds[0].streamSettings;
+    expect(stream.security).toBe('reality');
+    expect(stream.realitySettings).toMatchObject({ fingerprint: 'firefox', serverName: 'swdist.apple.com', publicKey: 'PUB', shortId: 'SID' });
+    expect(json.outbounds[0].settings.vnext[0].users[0].flow).toBe('xtls-rprx-vision');
+  });
+
+  it('none: валидный JSON без realitySettings и без flow', () => {
+    const json = parse({ security: 'none', flow: '' });
+    const stream = json.outbounds[0].streamSettings;
+    expect(stream.security).toBe('none');
+    expect(stream.realitySettings).toBeUndefined();
+    expect(json.outbounds[0].settings.vnext[0].users[0].flow).toBeUndefined();
+  });
+
+  it('xhttp: валидный JSON с xhttpSettings', () => {
+    const json = parse({ security: 'reality', transport: 'xhttp', xhttpHost: 'h.example.com', xhttpPath: '/x', xhttpMode: 'auto' });
+    const stream = json.outbounds[0].streamSettings;
+    expect(stream.network).toBe('xhttp');
+    expect(stream.xhttpSettings).toEqual({ host: 'h.example.com', path: '/x', mode: 'auto' });
+  });
+
+  it('socks-inbound на месте — по нему приложение находит локальный порт', () => {
+    const json = parse({ security: 'none' });
+    expect(json.inbounds[0].protocol).toBe('socks');
+    expect(json.inbounds[0].port).toBe(10808);
   });
 });
 

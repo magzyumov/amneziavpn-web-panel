@@ -109,7 +109,7 @@ function clientStreamVars(s: XraySettings, publicKey: string, shortId: string): 
   return {
     XRAY_NETWORK: s.transport === 'xhttp' ? 'xhttp' : 'tcp',
     XRAY_SECURITY: s.security,
-    XRAY_SECURITY_SETTINGS: realityBlock,
+    XRAY_REALITY_BLOCK: realityBlock,
     XRAY_FLOW_SUFFIX: s.flow ? `, "flow": "${s.flow}"` : '',
     XRAY_XHTTP_BLOCK: xhttpBlock(s),
   };

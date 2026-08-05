@@ -111,8 +111,12 @@ export async function runContainer(server: Server, args: readonly string[]) {
 }
 
 export function renderTemplate(template: string, vars: Record<string, string | number>): string {
-  return Object.entries(vars).reduce((str, [k, v]) =>
-    str.replaceAll(`$${k}`, String(v)), template);
+  // Длинные имена подставляем первыми: иначе переменная, чьё имя является
+  // префиксом другой ($XRAY_SECURITY и $XRAY_SECURITY_SETTINGS), съедает её
+  // начало и оставляет в результате хвост вида "none_SETTINGS".
+  return Object.entries(vars)
+    .sort(([a], [b]) => b.length - a.length)
+    .reduce((str, [k, v]) => str.replaceAll(`$${k}`, String(v)), template);
 }
 
 // Удаляет [Peer]-блок с указанным PublicKey из WG/AWG .conf.

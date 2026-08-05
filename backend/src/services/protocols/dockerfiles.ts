@@ -350,9 +350,9 @@ echo $XRAY_PRIVATE_KEY > /opt/amnezia/xray/xray_private.key
 # Блок realitySettings собираем printf'ом, а не внутри heredoc: значения
 # подставляются через %s и не зависят от экранирования в шаблоне.
 if [ "$XRAY_SECURITY" = "reality" ]; then
-    XRAY_SECURITY_SETTINGS=$(printf ',\n                "realitySettings": { "dest": "%s:443", "serverNames": ["%s"], "privateKey": "%s", "shortIds": ["%s"] }' "$XRAY_SITE_NAME" "$XRAY_SITE_NAME" "$XRAY_PRIVATE_KEY" "$XRAY_SHORT_ID")
+    XRAY_REALITY_BLOCK=$(printf ',\n                "realitySettings": { "dest": "%s:443", "serverNames": ["%s"], "privateKey": "%s", "shortIds": ["%s"] }' "$XRAY_SITE_NAME" "$XRAY_SITE_NAME" "$XRAY_PRIVATE_KEY" "$XRAY_SHORT_ID")
 else
-    XRAY_SECURITY_SETTINGS=""
+    XRAY_REALITY_BLOCK=""
 fi
 
 cat > /opt/amnezia/xray/server.json <<EOF
@@ -378,7 +378,7 @@ cat > /opt/amnezia/xray/server.json <<EOF
             },
             "streamSettings": {
                 "network": "$XRAY_NETWORK",
-                "security": "$XRAY_SECURITY"$XRAY_SECURITY_SETTINGS$XRAY_XHTTP_BLOCK
+                "security": "$XRAY_SECURITY"$XRAY_REALITY_BLOCK$XRAY_XHTTP_BLOCK
             }
         },
         {
@@ -464,7 +464,7 @@ export const XRAY_CLIENT_TEMPLATE = `{
         },
         "streamSettings": {
             "network": "$XRAY_NETWORK",
-            "security": "$XRAY_SECURITY"$XRAY_SECURITY_SETTINGS$XRAY_XHTTP_BLOCK
+            "security": "$XRAY_SECURITY"$XRAY_REALITY_BLOCK$XRAY_XHTTP_BLOCK
         }
     }]
 }`;
