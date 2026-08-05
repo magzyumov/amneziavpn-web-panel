@@ -245,6 +245,11 @@ router.post('/', validateBody(createClientSchema), async (req: Request, res: Res
     id, name: safeName, config: result.config, type: result.type, subscriptionSlug,
     has_config: 1, created_at: created?.created_at,
     expires_at: expiresAt, daily_limit_bytes: dailyLimitBytes, suspended_at: null, used_today: 0,
+    // Владелец — тот, кто сейчас создаёт клиента. Форма ответа должна совпадать
+    // с GET /protocol/:protocolId: фронт кладёт созданного клиента прямо в
+    // список, и без этого поля колонка «Created by» показывала прочерк до
+    // перезагрузки страницы.
+    owner_username: req.user!.username,
   });
 });
 
