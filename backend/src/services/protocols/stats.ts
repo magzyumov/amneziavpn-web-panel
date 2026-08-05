@@ -184,8 +184,13 @@ export async function enableXrayStats(server: Server, containerName: string): Pr
   assertContainerName(containerName);
 
   // jq-скрипт, обновляющий конфиг: добавляет stats/api/policy/routing,
-  // вставляет api inbound в начало, выставляет vless-in tag + email/level для
+  // дописывает api inbound В КОНЕЦ, выставляет vless-in tag + email/level для
   // существующих клиентов. Идемпотентен — переписывает поля целиком.
+  // Порядок inbound'ов критичен: vless обязан остаться inbounds[0], иначе
+  // приложение AmneziaVPN (оно правит именно inbounds[0]) перенастроит служебный
+  // api-inbound на порт протокола и трафик перестанет ходить. См. комментарий
+  // к CONFIGURE_SCRIPTS.xray в dockerfiles.ts.
+  // Blackhole тегируем "block": тег "api" принадлежит API-хендлеру Xray.
   const jqScript = `
     .stats = {} |
     .api = { tag: "api", services: ["StatsService"] } |
@@ -195,17 +200,17 @@ export async function enableXrayStats(server: Server, containerName: string): Pr
     .routing = (.routing // {}) |
       .routing.rules = (((.routing.rules // []) | map(select(.inboundTag != ["api"]))) + [{ type: "field", inboundTag: ["api"], outboundTag: "api" }]) |
     .inbounds = (
-      [{ tag: "api", port: 10085, listen: "127.0.0.1", protocol: "dokodemo-door", settings: { address: "127.0.0.1" } }]
-      + ((.inbounds // []) | map(
+      ((.inbounds // []) | map(
           if .protocol == "vless" then
             (.tag = (.tag // "vless-in")) |
             (.settings.clients |= map(. + { email: (.email // .id), level: (.level // 0) }))
           else . end
         ) | map(select(.tag != "api")))
+      + [{ tag: "api", port: 10085, listen: "127.0.0.1", protocol: "dokodemo-door", settings: { address: "127.0.0.1" } }]
     ) |
     .outbounds = (
-      ((.outbounds // []) | map(select(.tag != "api")))
-      + [{ protocol: "blackhole", tag: "api" }]
+      ((.outbounds // []) | map(select(.tag != "api" and .tag != "block")))
+      + [{ protocol: "blackhole", tag: "block" }]
     )
   `.trim().replace(/\s+/g, ' ');
 

@@ -318,6 +318,14 @@ Address = $WIREGUARD_SUBNET_IP/$WIREGUARD_SUBNET_CIDR
 ListenPort = $WIREGUARD_SERVER_PORT
 EOF`,
 
+  // ВАЖНО: vless-inbound обязан быть inbounds[0]. Клиент AmneziaVPN (и 4.8.x, и
+  // 5.0.x) при работе с сервером по SSH правит именно inbounds[0]:
+  // ставит туда свой port/streamSettings и дописывает клиента (XrayConfigurator::
+  // applyServerSettingsToRemote). Если первым лежит api dokodemo-door, приложение
+  // перенастроит служебный inbound на 443 — контейнер стартует, TCP-коннект
+  // проходит, а VLESS-трафик уходит в никуда.
+  // Служебный api-inbound для stats держим последним, blackhole тегируем "block"
+  // (тег "api" занят самим API-хендлером Xray).
   xray: `cd /opt/amnezia/xray
 
 XRAY_CLIENT_ID=$(xray uuid) && echo $XRAY_CLIENT_ID > /opt/amnezia/xray/xray_uuid.key
@@ -336,6 +344,17 @@ XRAY_PRIVATE_KEY=$(echo $XRAY_PRIVATE_KEY | tr -d ' ')
 XRAY_PUBLIC_KEY=$(echo $XRAY_PUBLIC_KEY | tr -d ' ')
 echo $XRAY_PUBLIC_KEY > /opt/amnezia/xray/xray_public.key
 echo $XRAY_PRIVATE_KEY > /opt/amnezia/xray/xray_private.key
+
+# Ключи Reality генерим всегда — даже при security=none. Так переключение
+# security туда-обратно не требует переустановки: ключи уже лежат на сервере.
+# Блок realitySettings собираем printf'ом, а не внутри heredoc: значения
+# подставляются через %s и не зависят от экранирования в шаблоне.
+if [ "$XRAY_SECURITY" = "reality" ]; then
+    XRAY_REALITY_BLOCK=$(printf ',\n                "realitySettings": { "dest": "%s:443", "serverNames": ["%s"], "privateKey": "%s", "shortIds": ["%s"] }' "$XRAY_SITE_NAME" "$XRAY_SITE_NAME" "$XRAY_PRIVATE_KEY" "$XRAY_SHORT_ID")
+else
+    XRAY_REALITY_BLOCK=""
+fi
+
 cat > /opt/amnezia/xray/server.json <<EOF
 {
     "log": { "loglevel": "error" },
@@ -350,13 +369,6 @@ cat > /opt/amnezia/xray/server.json <<EOF
     },
     "inbounds": [
         {
-            "tag": "api",
-            "port": 10085,
-            "listen": "127.0.0.1",
-            "protocol": "dokodemo-door",
-            "settings": { "address": "127.0.0.1" }
-        },
-        {
             "tag": "vless-in",
             "port": $XRAY_SERVER_PORT,
             "protocol": "vless",
@@ -366,19 +378,20 @@ cat > /opt/amnezia/xray/server.json <<EOF
             },
             "streamSettings": {
                 "network": "$XRAY_NETWORK",
-                "security": "reality",
-                "realitySettings": {
-                    "dest": "$XRAY_SITE_NAME:443",
-                    "serverNames": ["$XRAY_SITE_NAME"],
-                    "privateKey": "$XRAY_PRIVATE_KEY",
-                    "shortIds": ["$XRAY_SHORT_ID"]
-                }$XRAY_XHTTP_BLOCK
+                "security": "$XRAY_SECURITY"$XRAY_REALITY_BLOCK$XRAY_XHTTP_BLOCK
             }
+        },
+        {
+            "tag": "api",
+            "port": 10085,
+            "listen": "127.0.0.1",
+            "protocol": "dokodemo-door",
+            "settings": { "address": "127.0.0.1" }
         }
     ],
     "outbounds": [
         { "protocol": "freedom", "tag": "direct" },
-        { "protocol": "blackhole", "tag": "api" }
+        { "protocol": "blackhole", "tag": "block" }
     ]
 }
 EOF`,
@@ -451,14 +464,7 @@ export const XRAY_CLIENT_TEMPLATE = `{
         },
         "streamSettings": {
             "network": "$XRAY_NETWORK",
-            "security": "reality",
-            "realitySettings": {
-                "fingerprint": "chrome",
-                "serverName": "$XRAY_SITE_NAME",
-                "publicKey": "$XRAY_PUBLIC_KEY",
-                "shortId": "$XRAY_SHORT_ID",
-                "spiderX": ""
-            }$XRAY_XHTTP_BLOCK
+            "security": "$XRAY_SECURITY"$XRAY_REALITY_BLOCK$XRAY_XHTTP_BLOCK
         }
     }]
 }`;

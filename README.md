@@ -67,7 +67,7 @@ docker compose up -d --build
 | Протокол | Что это | Особенности |
 |---|---|---|
 | **AmneziaWG 3.0** | WireGuard с обфускацией под DPI | Junk-пакеты (`Jc/Jmin/Jmax`), паддинг `S1-S4`, диапазонные заголовки `H1-H4`, сигнатурные пакеты `I1-I5` и **защита заголовков** (`HeaderProtectionKey`) |
-| **Xray VLESS Reality** | Маскировка под TLS чужого сайта | Транспорт `tcp` (с `xtls-rprx-vision`) или `xhttp`, произвольный SNI, per-client UUID |
+| **Xray VLESS** | Маскировка под TLS чужого сайта (Reality) либо без TLS | `security` = `reality`/`none`, транспорт `tcp`/`xhttp`, произвольные SNI, fingerprint и `flow`, per-client UUID. Всё, кроме порта, меняется на живом протоколе |
 | **WireGuard** | Классический WG | Без обфускации — быстрый, но узнаваемый для DPI |
 | **Telemt** | Telegram-прокси MTProto | Обязательная FakeTLS-маскировка, per-client секреты и `tg://`-ссылки |
 | **AmneziaDNS** | Резолвер на стороне сервера | unbound с DNS-over-TLS наружу; клиентам WG/AWG прописывается автоматически |
@@ -384,13 +384,17 @@ GET    /api/protocols/:id/status               — статус
 GET    /api/protocols/:id/logs?lines=100       — логи контейнера
 GET    /api/protocols/:id/stats-status         — { statsEnabled }
 POST   /api/protocols/:id/enable-stats         — включить stats-API у Xray
+POST   /api/protocols/:id/settings             — сменить параметры Xray (security, sni,
+                                                 fingerprint, flow, transport); порт
+                                                 неизменяем, конфиги клиентов
+                                                 перевыпускаются → { protocol, reissued }
 ```
 
 ### Clients
 ```
 GET    /api/clients/available-protocols             — на чём текущий юзер может завести клиента
 GET    /api/clients/mine                            — свои клиенты (страница «Мои клиенты»)
-GET    /api/clients/protocol/:protocolId           — список (обычный юзер видит только своих)
+GET    /api/clients/protocol/:protocolId           — список (обычный юзер видит только своих; админу дополнительно owner_username)
 POST   /api/clients                                 — создать { protocolId, name, expiresInDays?, dailyLimitMb? }
 PUT    /api/clients/:id/limits                      — срок и суточный лимит (только admin)
 DELETE /api/clients/:id                             — удалить и отозвать peer на сервере

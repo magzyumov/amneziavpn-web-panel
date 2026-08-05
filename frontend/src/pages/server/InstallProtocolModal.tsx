@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { protocolsApi } from '../../api';
 import { PROTOCOL_ICONS, PROTOCOL_NAMES, type ProtocolType } from '../../protocols';
+import XrayOptionFields from './XrayOptionFields';
 
 interface Props {
   serverId: string;
@@ -16,7 +17,7 @@ const S_KEYS = ['s1', 's2', 's3', 's4'];
 
 const DEFAULTS: Record<ProtocolType, Record<string, any>> = {
   awg2:      { port: '', jc: 6, jmin: 10, jmax: 50, s1: 143, s2: 122, s3: 59, s4: 17 },
-  xray:      { port: 443, sni: 'www.googletagmanager.com', transport: 'tcp' },
+  xray:      { port: 443, sni: 'www.googletagmanager.com', transport: 'tcp', security: 'reality', fingerprint: 'chrome', flow: 'xtls-rprx-vision' },
   wireguard: { port: '' },
   telemt:    { port: '', tlsDomain: 'www.google.com' },
 };
@@ -120,45 +121,11 @@ export default function InstallProtocolModal({ serverId, onClose, onInstalled }:
               <input className="input input-mono" type="number" value={opts.port ?? 443}
                 onChange={e => set('port', +e.target.value)} />
             </div>
-            <div className="input-group">
-              <label className="input-label">SNI — Reality target domain</label>
-              <input className="input input-mono" value={opts.sni ?? ''}
-                onChange={e => set('sni', e.target.value)} />
-            </div>
-            <div className="input-group">
-              <label className="input-label">Transport (поверх Reality)</label>
-              <select className="input" value={opts.transport ?? 'tcp'}
-                onChange={e => set('transport', e.target.value)}>
-                <option value="tcp">TCP / raw (flow xtls-rprx-vision)</option>
-                <option value="xhttp">XHTTP / SplitHTTP (без flow)</option>
-              </select>
-            </div>
-            {opts.transport === 'xhttp' && (
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-                <div className="input-group">
-                  <label className="input-label">XHTTP Host (пусто = SNI)</label>
-                  <input className="input input-mono" placeholder={opts.sni ?? 'www.googletagmanager.com'}
-                    value={opts.xhttpHost ?? ''} onChange={e => set('xhttpHost', e.target.value)} />
-                </div>
-                <div className="input-group">
-                  <label className="input-label">XHTTP Path</label>
-                  <input className="input input-mono" placeholder="/"
-                    value={opts.xhttpPath ?? ''} onChange={e => set('xhttpPath', e.target.value)} />
-                </div>
-                <div className="input-group">
-                  <label className="input-label">XHTTP Mode</label>
-                  <select className="input" value={opts.xhttpMode ?? 'auto'}
-                    onChange={e => set('xhttpMode', e.target.value)}>
-                    <option value="auto">auto</option>
-                    <option value="packet-up">packet-up</option>
-                    <option value="stream-up">stream-up</option>
-                    <option value="stream-one">stream-one</option>
-                  </select>
-                </div>
-              </div>
-            )}
+            <XrayOptionFields opts={opts} set={set} />
             <div className="notice notice-info" style={{ fontSize: 11 }}>
-              Reality ключи генерируются автоматически через xray x25519
+              Ключи Reality генерируются автоматически через xray x25519 — в том числе
+              при security=none, чтобы переключить обратно можно было без переустановки.
+              Всё, кроме порта, потом меняется в настройках протокола.
             </div>
           </div>
         )}

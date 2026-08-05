@@ -9,9 +9,11 @@ import AddClientModal from './AddClientModal';
 import ClientModal from './ClientModal';
 import ClientLimitsModal from './ClientLimitsModal';
 import StatsModal from './StatsModal';
+import XraySettingsModal from './XraySettingsModal';
 import CopySubButton from './CopySubButton';
 import LimitBadges from './LimitBadges';
 import { PROTOCOL_ICONS, protocolTitle } from '../../protocols';
+import { useCurrentUser } from '../../auth';
 
 interface ProtocolCardProps {
   protocol: ProtocolRecord;
@@ -32,12 +34,20 @@ function ProtocolCard({ protocol, server: _server, onDelete, drift, dragHandlePr
   const [limitsClient, setLimitsClient] = useState<ClientRecord | null>(null);
   const [status, setStatus] = useState(protocol.status);
   const [toggling, setToggling] = useState(false);
+  // Колонка «Created by» — только админу: у обычного пользователя в списке
+  // и так одни его клиенты, а бэкенд владельца ему не отдаёт.
+  const isAdminView = useCurrentUser().role === 'admin';
 
   useEffect(() => { setStatus(protocol.status); }, [protocol.status]);
 
   const title = protocolTitle(protocol);
 
   const [showLogs, setShowLogs] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
+  // Локальная копия протокола: после смены настроек карточка должна показывать
+  // новые значения, не дожидаясь перезагрузки списка протоколов.
+  const [current, setCurrent] = useState(protocol);
+  useEffect(() => { setCurrent(protocol); }, [protocol]);
   const [logs, setLogs] = useState('');
   const [showClients, setShowClients] = useState(false);
   const [showConfig, setShowConfig] = useState(false);
@@ -104,9 +114,9 @@ function ProtocolCard({ protocol, server: _server, onDelete, drift, dragHandlePr
     drift.runArgs ? 'Контейнер запущен со старыми аргументами docker run.' : '',
   ].filter(Boolean).join(' ');
 
-  const cfg: Record<string, unknown> | null = typeof protocol.config === 'string'
-    ? JSON.parse(protocol.config)
-    : (protocol.config as Record<string, unknown> | null);
+  const cfg: Record<string, unknown> | null = typeof current.config === 'string'
+    ? JSON.parse(current.config)
+    : (current.config as Record<string, unknown> | null);
 
   return (
     <div className="card" style={{ minWidth: 0, overflow: 'hidden' }}>
@@ -157,6 +167,13 @@ function ProtocolCard({ protocol, server: _server, onDelete, drift, dragHandlePr
             >
               {enablingStats ? <span className="spinner" style={{ width: 12, height: 12 }} /> : '📊 Enable stats'}
             </button>
+          )}
+          {protocol.type === 'xray' && (
+            <button
+              className="btn btn-ghost btn-sm"
+              onClick={() => setShowSettings(true)}
+              title="Security, SNI, fingerprint, flow, транспорт. Порт меняется только переустановкой"
+            >⚙</button>
           )}
           <button className="btn btn-ghost btn-sm" onClick={toggle} disabled={toggling}>
             {toggling ? <span className="spinner" style={{ width: 12, height: 12 }} /> : status === 'running' ? '⏸' : '▶'}
@@ -268,7 +285,10 @@ function ProtocolCard({ protocol, server: _server, onDelete, drift, dragHandlePr
                     <div style={{ display: 'flex', alignItems: 'center', padding: '0 0 6px 0', borderBottom: '1px solid var(--border)' }}>
                       <span className="col-name" style={{ fontSize: 11, color: 'var(--text-dim)', fontFamily: 'var(--font-mono)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Name</span>
                       <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                        <span className="col-date-hdr">Created</span>
+                        <div style={{ display: 'flex', alignItems: 'center' }}>
+                          <span className="col-date-hdr">Created</span>
+                          {isAdminView && <span className="col-owner-hdr">Created by</span>}
+                        </div>
                         <div className="col-actions-hdr" style={{ display: 'grid', gridTemplateColumns: gridTemplate, gap: 8, width: actionsWidth }}>
                           <span style={hdrCell}>Share</span>
                           <span style={hdrCell}>Statistic</span>
@@ -292,8 +312,15 @@ function ProtocolCard({ protocol, server: _server, onDelete, drift, dragHandlePr
                           <LimitBadges compact {...c} />
                         </div>
                         <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                          <div className="col-date mono text-muted">
-                            {c.created_at ? new Date(c.created_at.replace(' ', 'T')).toLocaleDateString() : '—'}
+                          <div style={{ display: 'flex', alignItems: 'center' }}>
+                            <div className="col-date mono text-muted">
+                              {c.created_at ? new Date(c.created_at.replace(' ', 'T')).toLocaleDateString() : '—'}
+                            </div>
+                            {isAdminView && (
+                              <div className="col-owner mono text-muted" title={c.owner_username || 'Владелец не определён'}>
+                                {c.owner_username || '—'}
+                              </div>
+                            )}
                           </div>
                           <div className="col-actions" style={{ display: 'grid', gridTemplateColumns: gridTemplate, gap: 8, width: actionsWidth }}>
                             <button
@@ -328,6 +355,18 @@ function ProtocolCard({ protocol, server: _server, onDelete, drift, dragHandlePr
           protocolId={protocol.id}
           onClose={() => setShowAddClient(false)}
           onAdded={c => { setClients(p => [...p, c]); setShowAddClient(false); }}
+        />
+      )}
+      {showSettings && (
+        <XraySettingsModal
+          protocol={current}
+          onClose={() => setShowSettings(false)}
+          // Конфиги клиентов перевыпущены на сервере — перечитываем список,
+          // иначе кнопки экспорта отдадут старые ссылки из кэша страницы.
+          onSaved={updated => {
+            setCurrent(updated);
+            clientsApi.byProtocol(protocol.id).then(r => setClients(r.data)).catch(() => {});
+          }}
         />
       )}
       {selectedClient && <ClientModal client={selectedClient} protocolType={protocol.type} onClose={() => setSelectedClient(null)} />}

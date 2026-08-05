@@ -128,12 +128,20 @@ export interface XrayConfig {
   publicKey: string;
   shortId: string;
   firstUuid: string;
-  // Транспорт поверх Reality: 'tcp' (raw, flow xtls-rprx-vision) или 'xhttp'
-  // (SplitHTTP, без flow). Старые конфиги без поля трактуем как 'tcp'.
+  // Транспорт: 'tcp' (raw) или 'xhttp' (SplitHTTP, Vision там неприменим).
+  // Старые конфиги без поля трактуем как 'tcp'.
   transport?: 'tcp' | 'xhttp';
   xhttpHost?: string;
   xhttpPath?: string;
   xhttpMode?: string;
+  // Слой безопасности. Отсутствие поля = 'reality' (так ставили до появления выбора).
+  // 'none' — VLESS без TLS: трафик не шифруется, но и SNI, по которому работают
+  // фильтры, в пакетах не появляется.
+  security?: 'reality' | 'none';
+  // uTLS-отпечаток клиента; имеет смысл только при security=reality.
+  fingerprint?: string;
+  // '' или 'xtls-rprx-vision'. Отсутствие поля = vision (прежнее поведение).
+  flow?: string;
 }
 
 // Telegram MTProto-прокси (telemt). Это не VPN: проксирует только трафик

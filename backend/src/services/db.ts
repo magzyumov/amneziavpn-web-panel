@@ -7,7 +7,14 @@ import { logger } from './logger.js';
 import { extractPeerId } from './peerId.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const DB_PATH = process.env.DB_PATH || path.join(__dirname, '../../data/panel.db');
+
+// Путь читаем в момент открытия базы, а не при загрузке модуля. Статические
+// import'ы ESM поднимаются выше любых присваиваний в файле, поэтому строчка
+// вида `process.env.DB_PATH = ':memory:'` в начале теста выполнялась ПОЗЖЕ,
+// чем этот модуль успевал прочитать переменную, и тест открывал боевую базу.
+function dbPath(): string {
+  return process.env.DB_PATH || path.join(__dirname, '../../data/panel.db');
+}
 
 type Db = Database.Database;
 
@@ -30,10 +37,11 @@ function assertDb(): Db {
 export async function getDb(): Promise<Db> {
   if (db) return db;
 
-  const dir = path.dirname(DB_PATH);
-  if (DB_PATH !== ':memory:' && !fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  const file = dbPath();
+  const dir = path.dirname(file);
+  if (file !== ':memory:' && !fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 
-  db = new Database(DB_PATH);
+  db = new Database(file);
   // WAL: читатели не блокируют писателя. NORMAL — обычный компромисс для WAL,
   // потеря возможна только при отказе питания, не при падении процесса.
   db.pragma('journal_mode = WAL');
