@@ -1,6 +1,7 @@
 import { exec, execSudo } from '../ssh.js';
 import { assertContainerName, shInt } from '../shell.js';
 import { readContainerFile } from './common.js';
+import { XRAY_DEFAULT_SNI } from './xray.js';
 import type { Server, ProtocolType, ExecResult } from '../../types.js';
 import { UserError } from '../errors.js';
 
@@ -168,11 +169,31 @@ export async function scanExistingProtocols(server: Server): Promise<ScannedProt
       const pubKey  = await readContainerFile(server, c.containerName, `${c.confDir}/xray_public.key`);
       const shortId = await readContainerFile(server, c.containerName, `${c.confDir}/xray_short_id.key`);
       const uuid    = await readContainerFile(server, c.containerName, `${c.confDir}/xray_uuid.key`);
-      // Со stats-конфигом inbounds[0] — это api на localhost; vless ищем по протоколу.
+      // Со stats-конфигом рядом лежит служебный api-inbound; vless ищем по протоколу.
       const vlessInbound = serverJson?.inbounds?.find((i: any) => i?.protocol === 'vless') || serverJson?.inbounds?.[0];
       port = vlessInbound?.port || null;
-      const sni = vlessInbound?.streamSettings?.realitySettings?.dest?.replace(/:443$/, '') || '';
-      config = { port, sni, publicKey: pubKey, shortId, firstUuid: uuid };
+      const stream = vlessInbound?.streamSettings ?? {};
+      // Параметры читаем из самого server.json, а не подставляем свои дефолты:
+      // приложение AmneziaVPN, например, ставит Xray вообще без TLS
+      // (security: ""), и клиентские конфиги для такого протокола не должны
+      // содержать Reality.
+      const security = stream.security === 'reality' ? 'reality' : 'none';
+      const sni = stream.realitySettings?.serverNames?.[0]
+        || stream.realitySettings?.dest?.replace(/:443$/, '')
+        || '';
+      const transport = stream.network === 'xhttp' ? 'xhttp' : 'tcp';
+      const flow = vlessInbound?.settings?.clients?.[0]?.flow || '';
+      config = {
+        port, publicKey: pubKey, shortId, firstUuid: uuid,
+        security, transport, flow,
+        sni: sni || XRAY_DEFAULT_SNI,
+        fingerprint: security === 'reality' ? 'chrome' : '',
+        ...(transport === 'xhttp' ? {
+          xhttpHost: stream.xhttpSettings?.host || '',
+          xhttpPath: stream.xhttpSettings?.path || '/',
+          xhttpMode: stream.xhttpSettings?.mode || 'auto',
+        } : {}),
+      };
     }
 
     let clients: ScannedClient[] = [];

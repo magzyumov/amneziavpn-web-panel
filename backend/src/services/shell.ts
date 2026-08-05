@@ -73,6 +73,36 @@ export function assertXhttpMode(value: unknown, label = 'xhttp mode'): string {
   return s;
 }
 
+// Слой безопасности inbound'а Xray. 'tls' сознательно не поддержан: он требует
+// настоящего сертификата (ACME + автопродление) — отдельная задача.
+export function assertXraySecurity(value: unknown, label = 'xray security'): 'reality' | 'none' {
+  const s = String(value).toLowerCase();
+  if (s !== 'reality' && s !== 'none') {
+    throw new UserError(`Invalid ${label}: expected reality/none, got ${value}`);
+  }
+  return s;
+}
+
+// uTLS-отпечаток клиента (realitySettings.fingerprint). Список — из Xray-core.
+export function assertXrayFingerprint(value: unknown, label = 'xray fingerprint'): string {
+  const s = String(value).toLowerCase();
+  const allowed = ['chrome', 'firefox', 'safari', 'ios', 'android', 'edge', '360', 'qq', 'random', 'randomized'];
+  if (!allowed.includes(s)) {
+    throw new UserError(`Invalid ${label}: expected one of ${allowed.join('/')}, got ${value}`);
+  }
+  return s;
+}
+
+// flow VLESS. Пустая строка = без XTLS Vision (единственный вариант, если
+// security=none или транспорт xhttp — Vision там неприменим).
+export function assertXrayFlow(value: unknown, label = 'xray flow'): string {
+  const s = value == null ? '' : String(value);
+  if (s !== '' && s !== 'xtls-rprx-vision') {
+    throw new UserError(`Invalid ${label}: expected empty or xtls-rprx-vision, got ${value}`);
+  }
+  return s;
+}
+
 // Base64-ключ WireGuard/AmneziaWG (32 байта): 43 символа base64 + '='.
 // Используется для HeaderProtectionKey (AWG 3.0), который генерится через `awg genkey`.
 export function assertWgKey(value: unknown, label = 'key'): string {

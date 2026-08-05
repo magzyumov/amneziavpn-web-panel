@@ -12,6 +12,7 @@ import {
   getContainerStatus, getContainersHealth, startContainer, stopContainer,
   removeContainer, getContainerLogs, PROTOCOLS,
   isXrayStatsEnabled, enableXrayStats,
+  applyXraySettings, renderXrayClient,
 } from '../services/protocols/index.js';
 import { prepareHost } from '../services/protocols/common.js';
 import { getProtocolsDrift, type ProtocolDrift } from '../services/protocols/drift.js';
@@ -104,6 +105,53 @@ router.post('/server/:serverId', validateBody(installSchema), async (req: Reques
   // container_name, status) карточка оставалась пустой до перезагрузки страницы.
   const row = queryOne<Protocol>('SELECT * FROM protocols WHERE id = ?', [id]);
   res.json({ ...row, config: row?.config ? JSON.parse(row.config) : {} });
+});
+
+const xraySettingsSchema = z.object({
+  sni: z.string().optional(),
+  security: z.enum(['reality', 'none']).optional(),
+  fingerprint: z.string().optional(),
+  flow: z.string().optional(),
+  transport: z.enum(['tcp', 'xhttp']).optional(),
+  xhttpHost: z.string().optional(),
+  xhttpPath: z.string().optional(),
+  xhttpMode: z.string().optional(),
+});
+
+// Смена параметров inbound'а на живом протоколе. Порт сюда не входит: он зашит
+// в проброс контейнера, его смена — это переустановка.
+// Клиентские uuid сохраняются, но их конфиги содержат streamSettings, поэтому
+// каждый перерисовывается заново — иначе выданные ссылки перестанут работать.
+router.post('/:id/settings', validateBody(xraySettingsSchema), async (req: Request, res: Response) => {
+  const p = queryOne<Protocol>('SELECT * FROM protocols WHERE id = ?', [req.params.id]);
+  if (!p) return res.status(404).json({ error: 'Not found' });
+  if (p.type !== 'xray') return res.status(400).json({ error: 'Settings are editable for xray only' });
+  const server = queryOne<Server>('SELECT * FROM servers WHERE id = ?', [p.server_id]);
+  if (!server) return res.status(404).json({ error: 'Server not found' });
+
+  const config = await applyXraySettings(server, p, req.body as Record<string, unknown>);
+  run('UPDATE protocols SET config = ? WHERE id = ?', [JSON.stringify(config), p.id]);
+
+  // Перевыпуск конфигов. Клиенты без peer_id (не должно быть — есть бэкфилл)
+  // пропускаем: без uuid ссылку не собрать.
+  const clients = query<{ id: string; name: string; peer_id: string | null; config: string | null }>(
+    'SELECT id, name, peer_id, config FROM clients WHERE protocol_id = ?', [p.id]);
+  let reissued = 0;
+  for (const c of clients) {
+    if (!c.peer_id) continue;
+    const rendered = renderXrayClient(server, config, c.peer_id, c.name);
+    const stored = rendered.configJson
+      ? `${rendered.config}\n---AMNEZIA_JSON---\n${rendered.configJson}`
+      : rendered.config;
+    run('UPDATE clients SET config = ? WHERE id = ?', [stored, c.id]);
+    reissued++;
+  }
+
+  auditTarget(req, { id: p.id, name: `xray на ${server.name}` });
+  auditDetails(req, { security: config.security, sni: config.sni, flow: config.flow, transport: config.transport, reissued });
+
+  const row = queryOne<Protocol>('SELECT * FROM protocols WHERE id = ?', [p.id]);
+  res.json({ protocol: { ...row, config: row?.config ? JSON.parse(row.config) : {} }, reissued });
 });
 
 router.delete('/:id', async (req, res) => {

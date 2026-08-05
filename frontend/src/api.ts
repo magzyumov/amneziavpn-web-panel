@@ -295,7 +295,23 @@ export const protocolsApi = {
   logs: (id: string, lines: number) => api.get<{ logs: string }>(`/protocols/${id}/logs`, { params: { lines } }),
   statsStatus: (id: string) => api.get<{ statsEnabled: boolean }>(`/protocols/${id}/stats-status`),
   enableStats: (id: string) => api.post(`/protocols/${id}/enable-stats`),
+  // Смена параметров inbound'а Xray на живом протоколе. Порт сюда не входит —
+  // он зашит в проброс контейнера. reissued = сколько клиентских конфигов
+  // перевыпущено (uuid сохраняются, ссылки надо раздать заново).
+  updateSettings: (id: string, options: XraySettingsPayload) =>
+    api.post<{ protocol: ProtocolRecord; reissued: number }>(`/protocols/${id}/settings`, options),
 };
+
+export interface XraySettingsPayload {
+  sni?: string;
+  security?: 'reality' | 'none';
+  fingerprint?: string;
+  flow?: string;
+  transport?: 'tcp' | 'xhttp';
+  xhttpHost?: string;
+  xhttpPath?: string;
+  xhttpMode?: string;
+}
 
 export type StatsRange = '1h' | '24h' | '7d' | '30d';
 export interface ClientStatsResponse {

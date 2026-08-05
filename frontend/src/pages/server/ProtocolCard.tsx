@@ -9,6 +9,7 @@ import AddClientModal from './AddClientModal';
 import ClientModal from './ClientModal';
 import ClientLimitsModal from './ClientLimitsModal';
 import StatsModal from './StatsModal';
+import XraySettingsModal from './XraySettingsModal';
 import CopySubButton from './CopySubButton';
 import LimitBadges from './LimitBadges';
 import { PROTOCOL_ICONS, protocolTitle } from '../../protocols';
@@ -42,6 +43,11 @@ function ProtocolCard({ protocol, server: _server, onDelete, drift, dragHandlePr
   const title = protocolTitle(protocol);
 
   const [showLogs, setShowLogs] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
+  // Локальная копия протокола: после смены настроек карточка должна показывать
+  // новые значения, не дожидаясь перезагрузки списка протоколов.
+  const [current, setCurrent] = useState(protocol);
+  useEffect(() => { setCurrent(protocol); }, [protocol]);
   const [logs, setLogs] = useState('');
   const [showClients, setShowClients] = useState(false);
   const [showConfig, setShowConfig] = useState(false);
@@ -108,9 +114,9 @@ function ProtocolCard({ protocol, server: _server, onDelete, drift, dragHandlePr
     drift.runArgs ? 'Контейнер запущен со старыми аргументами docker run.' : '',
   ].filter(Boolean).join(' ');
 
-  const cfg: Record<string, unknown> | null = typeof protocol.config === 'string'
-    ? JSON.parse(protocol.config)
-    : (protocol.config as Record<string, unknown> | null);
+  const cfg: Record<string, unknown> | null = typeof current.config === 'string'
+    ? JSON.parse(current.config)
+    : (current.config as Record<string, unknown> | null);
 
   return (
     <div className="card" style={{ minWidth: 0, overflow: 'hidden' }}>
@@ -161,6 +167,13 @@ function ProtocolCard({ protocol, server: _server, onDelete, drift, dragHandlePr
             >
               {enablingStats ? <span className="spinner" style={{ width: 12, height: 12 }} /> : '📊 Enable stats'}
             </button>
+          )}
+          {protocol.type === 'xray' && (
+            <button
+              className="btn btn-ghost btn-sm"
+              onClick={() => setShowSettings(true)}
+              title="Security, SNI, fingerprint, flow, транспорт. Порт меняется только переустановкой"
+            >⚙</button>
           )}
           <button className="btn btn-ghost btn-sm" onClick={toggle} disabled={toggling}>
             {toggling ? <span className="spinner" style={{ width: 12, height: 12 }} /> : status === 'running' ? '⏸' : '▶'}
@@ -342,6 +355,18 @@ function ProtocolCard({ protocol, server: _server, onDelete, drift, dragHandlePr
           protocolId={protocol.id}
           onClose={() => setShowAddClient(false)}
           onAdded={c => { setClients(p => [...p, c]); setShowAddClient(false); }}
+        />
+      )}
+      {showSettings && (
+        <XraySettingsModal
+          protocol={current}
+          onClose={() => setShowSettings(false)}
+          // Конфиги клиентов перевыпущены на сервере — перечитываем список,
+          // иначе кнопки экспорта отдадут старые ссылки из кэша страницы.
+          onSaved={updated => {
+            setCurrent(updated);
+            clientsApi.byProtocol(protocol.id).then(r => setClients(r.data)).catch(() => {});
+          }}
         />
       )}
       {selectedClient && <ClientModal client={selectedClient} protocolType={protocol.type} onClose={() => setSelectedClient(null)} />}

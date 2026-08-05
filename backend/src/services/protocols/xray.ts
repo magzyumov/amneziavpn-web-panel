@@ -1,5 +1,8 @@
 import { exec, execSudo } from '../ssh.js';
-import { assertContainerName, assertDomain, assertPort, assertXrayPath, assertXhttpMode, sh } from '../shell.js';
+import {
+  assertContainerName, assertDomain, assertPort, assertXrayPath, assertXhttpMode,
+  assertXraySecurity, assertXrayFingerprint, assertXrayFlow, sh,
+} from '../shell.js';
 import {
   writeRemoteFile, readRemoteFile, readContainerFile, buildImage, renderTemplate,
   assertPortFree, runContainer,
@@ -8,48 +11,153 @@ import { DOCKERFILES, START_SCRIPTS, CONFIGURE_SCRIPTS, XRAY_CLIENT_TEMPLATE } f
 import type { Server, Protocol, AddClientResult, InstallResult, XrayConfig } from '../../types.js';
 import { UserError } from '../errors.js';
 
-interface XrayInstallOptions {
-  port?: number;
-  sni?: string;
-  transport?: 'tcp' | 'xhttp';
-  xhttpHost?: string;
-  xhttpPath?: string;
-  xhttpMode?: string;
-}
-
-interface XrayTransport {
+// Полный набор параметров inbound'а. Всё, кроме порта, меняется на живом
+// протоколе через applyXraySettings; порт — только переустановкой, потому что
+// он зашит в проброс контейнера (docker run -p).
+export interface XraySettings {
+  sni: string;
+  security: 'reality' | 'none';
+  fingerprint: string;
+  flow: string;                    // '' | 'xtls-rprx-vision'
   transport: 'tcp' | 'xhttp';
   xhttpHost: string;
   xhttpPath: string;
   xhttpMode: string;
 }
 
-// Шаблонные переменные streamSettings для server.json / client config.
-// tcp (raw): flow=xtls-rprx-vision, без xhttpSettings.
-// xhttp (SplitHTTP): без flow (vision несовместим), + xhttpSettings {host,path,mode}.
-// Блок 'headers' НЕ добавляем — Xray 25.8.3 запрещает "host" внутри headers.
-function xrayStreamVars(t: XrayTransport): { XRAY_NETWORK: string; XRAY_FLOW_SUFFIX: string; XRAY_XHTTP_BLOCK: string } {
-  if (t.transport === 'xhttp') {
-    return {
-      XRAY_NETWORK: 'xhttp',
-      XRAY_FLOW_SUFFIX: '',
-      XRAY_XHTTP_BLOCK: `,\n                "xhttpSettings": { "host": "${t.xhttpHost}", "path": "${t.xhttpPath}", "mode": "${t.xhttpMode}" }`,
-    };
+export const XRAY_DEFAULT_SNI = 'www.googletagmanager.com';
+
+const LEGACY_DEFAULTS: XraySettings = {
+  sni: XRAY_DEFAULT_SNI,
+  security: 'reality',
+  fingerprint: 'chrome',
+  flow: 'xtls-rprx-vision',
+  transport: 'tcp',
+  xhttpHost: '',
+  xhttpPath: '',
+  xhttpMode: '',
+};
+
+/**
+ * Приводит сырые опции к валидному набору и снимает несовместимые комбинации.
+ * Правила Xray-core:
+ *  - flow=xtls-rprx-vision живёт только в паре security=reality + transport=tcp:
+ *    без TLS шифровать нечего, а в xhttp Vision неприменим;
+ *  - realitySettings и fingerprint не нужны при security=none;
+ *  - xhttpSettings появляются только при transport=xhttp.
+ * Чистая функция — вся валидация значений здесь, до похода на сервер.
+ */
+export function normalizeXraySettings(raw: Record<string, unknown> = {}, base: XraySettings = LEGACY_DEFAULTS): XraySettings {
+  const pick = <K extends keyof XraySettings>(key: K): unknown => (raw[key] === undefined || raw[key] === '' ? base[key] : raw[key]);
+
+  const security  = assertXraySecurity(pick('security'));
+  const transport = String(pick('transport')) === 'xhttp' ? 'xhttp' : 'tcp';
+  const sni       = assertDomain(pick('sni'));
+
+  // Vision несовместим с security=none и с xhttp — молча гасим, а не падаем:
+  // пользователь мог переключить транспорт, не трогая flow.
+  const flowRaw = assertXrayFlow(pick('flow'));
+  const flow = security === 'reality' && transport === 'tcp' ? flowRaw : '';
+
+  const fingerprint = security === 'reality' ? assertXrayFingerprint(pick('fingerprint')) : '';
+
+  if (transport !== 'xhttp') {
+    return { sni, security, fingerprint, flow, transport, xhttpHost: '', xhttpPath: '', xhttpMode: '' };
   }
-  return { XRAY_NETWORK: 'tcp', XRAY_FLOW_SUFFIX: ', "flow": "xtls-rprx-vision"', XRAY_XHTTP_BLOCK: '' };
+  return {
+    sni, security, fingerprint, flow, transport,
+    xhttpHost: assertDomain(raw.xhttpHost || base.xhttpHost || sni),
+    xhttpPath: assertXrayPath(raw.xhttpPath || base.xhttpPath || '/'),
+    xhttpMode: assertXhttpMode(raw.xhttpMode || base.xhttpMode || 'auto'),
+  };
 }
 
-// Достаёт и валидирует параметры транспорта из сохранённого конфига протокола.
-function transportFromConfig(c: any, sni: string): XrayTransport {
-  if (c.transport === 'xhttp') {
-    return {
-      transport: 'xhttp',
-      xhttpHost: assertDomain(c.xhttpHost || sni),
-      xhttpPath: assertXrayPath(c.xhttpPath || '/'),
-      xhttpMode: assertXhttpMode(c.xhttpMode || 'auto'),
-    };
+// Читает настройки из сохранённого конфига протокола. Конфиги, созданные до
+// появления выбора, полей security/flow/fingerprint не имеют — для них
+// подставляются прежние значения (reality + vision + chrome).
+export function settingsFromConfig(config: unknown): XraySettings {
+  const c = (typeof config === 'string' ? JSON.parse(config) : config) as Record<string, unknown> | null;
+  if (!c) return { ...LEGACY_DEFAULTS };
+  return normalizeXraySettings({
+    sni: c.sni, security: c.security, fingerprint: c.fingerprint, flow: c.flow,
+    transport: c.transport, xhttpHost: c.xhttpHost, xhttpPath: c.xhttpPath, xhttpMode: c.xhttpMode,
+  }, LEGACY_DEFAULTS);
+}
+
+function xhttpBlock(s: XraySettings): string {
+  if (s.transport !== 'xhttp') return '';
+  // Блок 'headers' НЕ добавляем — Xray 25.8.3 запрещает "host" внутри headers.
+  return `,\n                "xhttpSettings": { "host": "${s.xhttpHost}", "path": "${s.xhttpPath}", "mode": "${s.xhttpMode}" }`;
+}
+
+// Переменные для configure-скрипта (server.json). Блок realitySettings серверной
+// стороны собирается в самом скрипте — там лежит приватный ключ.
+function serverStreamVars(s: XraySettings): Record<string, string> {
+  return {
+    XRAY_NETWORK: s.transport === 'xhttp' ? 'xhttp' : 'tcp',
+    XRAY_SECURITY: s.security,
+    XRAY_FLOW_SUFFIX: s.flow ? `, "flow": "${s.flow}"` : '',
+    XRAY_XHTTP_BLOCK: xhttpBlock(s),
+  };
+}
+
+// Переменные для клиентского шаблона.
+function clientStreamVars(s: XraySettings, publicKey: string, shortId: string): Record<string, string> {
+  const realityBlock = s.security === 'reality'
+    ? `,\n            "realitySettings": {\n                "fingerprint": "${s.fingerprint}",\n                "serverName": "${s.sni}",\n                "publicKey": "${publicKey}",\n                "shortId": "${shortId}",\n                "spiderX": ""\n            }`
+    : '';
+  return {
+    XRAY_NETWORK: s.transport === 'xhttp' ? 'xhttp' : 'tcp',
+    XRAY_SECURITY: s.security,
+    XRAY_SECURITY_SETTINGS: realityBlock,
+    XRAY_FLOW_SUFFIX: s.flow ? `, "flow": "${s.flow}"` : '',
+    XRAY_XHTTP_BLOCK: xhttpBlock(s),
+  };
+}
+
+// vless://-ссылка. Параметры Reality (pbk/sid/fp) добавляются только когда
+// security=reality, иначе клиент попытается сделать TLS там, где его нет.
+export function buildVlessUrl(
+  s: XraySettings, host: string, port: number, clientId: string, name: string,
+  publicKey: string, shortId: string,
+): string {
+  const q: string[] = [`type=${s.transport === 'xhttp' ? 'xhttp' : 'tcp'}`, `security=${s.security}`];
+  if (s.security === 'reality') {
+    q.push(`pbk=${publicKey}`, `fp=${s.fingerprint}`, `sni=${s.sni}`, `sid=${shortId}`);
   }
-  return { transport: 'tcp', xhttpHost: '', xhttpPath: '', xhttpMode: '' };
+  if (s.transport === 'xhttp') {
+    q.push(`host=${s.xhttpHost}`, `path=${encodeURIComponent(s.xhttpPath)}`, `mode=${s.xhttpMode}`);
+  }
+  if (s.flow) q.push(`flow=${s.flow}`);
+  return `vless://${clientId}@${host}:${port}?${q.join('&')}#${name}`;
+}
+
+// Собирает пару «ссылка + нативный JSON» для клиента. Вынесено отдельно, потому
+// что то же самое нужно при смене настроек протокола: uuid клиентов сохраняются,
+// перерисовываются только их конфиги.
+export function renderXrayClient(server: Server, config: unknown, clientId: string, clientName: string): AddClientResult {
+  const c = (typeof config === 'string' ? JSON.parse(config) : config) as any;
+  const s = settingsFromConfig(c);
+  const port = c?.port;
+  const publicKey = c?.publicKey ?? '';
+  const shortId = c?.shortId ?? '';
+
+  if (!port) throw new UserError('Xray protocol config is incomplete (missing port). Reinstall the protocol.');
+  if (s.security === 'reality' && (!publicKey || !shortId)) {
+    throw new UserError('Xray protocol config is incomplete (missing Reality publicKey/shortId). Reinstall the protocol.');
+  }
+
+  const safeName = clientName.replace(/[^a-zA-Z0-9_\-]/g, '_');
+  return {
+    config: buildVlessUrl(s, server.host, port, clientId, safeName, publicKey, shortId),
+    configJson: renderTemplate(XRAY_CLIENT_TEMPLATE, {
+      SERVER_IP_ADDRESS: server.host,
+      XRAY_SERVER_PORT: port,
+      XRAY_CLIENT_ID: clientId,
+      ...clientStreamVars(s, publicKey, shortId),
+    }),
+    type: 'xray',
+  };
 }
 
 export const XRAY_CONTAINER = 'amnezia-xray';
@@ -70,21 +178,9 @@ export function xrayRunArgs(port: number): string[] {
   ];
 }
 
-export async function installXray(server: Server, options: XrayInstallOptions = {}): Promise<InstallResult> {
+export async function installXray(server: Server, options: Record<string, unknown> = {}): Promise<InstallResult> {
   const port = assertPort(options.port ?? 443);
-  const sni  = assertDomain(options.sni ?? 'www.googletagmanager.com');
-
-  // Транспорт поверх Reality. По умолчанию tcp (как в оригинальном AmneziaVPN).
-  const transport: 'tcp' | 'xhttp' = options.transport === 'xhttp' ? 'xhttp' : 'tcp';
-  const tvars: XrayTransport = transport === 'xhttp'
-    ? {
-        transport,
-        xhttpHost: assertDomain(options.xhttpHost ?? sni),
-        xhttpPath: assertXrayPath(options.xhttpPath ?? '/'),
-        xhttpMode: assertXhttpMode(options.xhttpMode ?? 'auto'),
-      }
-    : { transport, xhttpHost: '', xhttpPath: '', xhttpMode: '' };
-  const streamVars = xrayStreamVars(tvars);
+  const s = normalizeXraySettings(options);
   const containerName = XRAY_CONTAINER;
   const imageName = XRAY_IMAGE;
   const buildDir = '/opt/amnezia/amnezia-xray';
@@ -104,12 +200,14 @@ export async function installXray(server: Server, options: XrayInstallOptions = 
   await execSudo(server, `docker network connect amnezia-dns-net ${containerName}`);
   await execSudo(server, `docker exec -i ${containerName} bash -c 'mkdir -p /dev/net; if [ ! -c /dev/net/tun ]; then mknod /dev/net/tun c 10 200; fi'`);
 
+  const vars = serverStreamVars(s);
   const xrayConfigureScript = [
     `export XRAY_SERVER_PORT=${port}`,
-    `export XRAY_SITE_NAME=${sni}`,
-    `export XRAY_NETWORK=${streamVars.XRAY_NETWORK}`,
-    `export XRAY_FLOW_SUFFIX=${sh(streamVars.XRAY_FLOW_SUFFIX)}`,
-    `export XRAY_XHTTP_BLOCK=${sh(streamVars.XRAY_XHTTP_BLOCK)}`,
+    `export XRAY_SITE_NAME=${s.sni}`,
+    `export XRAY_NETWORK=${vars.XRAY_NETWORK}`,
+    `export XRAY_SECURITY=${vars.XRAY_SECURITY}`,
+    `export XRAY_FLOW_SUFFIX=${sh(vars.XRAY_FLOW_SUFFIX)}`,
+    `export XRAY_XHTTP_BLOCK=${sh(vars.XRAY_XHTTP_BLOCK)}`,
     '',
     CONFIGURE_SCRIPTS.xray,
   ].join('\n');
@@ -124,17 +222,108 @@ export async function installXray(server: Server, options: XrayInstallOptions = 
   const publicKey = await readRemoteFile(server, '/opt/amnezia/xray/xray_public.key');
   const shortId   = await readRemoteFile(server, '/opt/amnezia/xray/xray_short_id.key');
   const firstUuid = await readRemoteFile(server, '/opt/amnezia/xray/xray_uuid.key');
+  // Ключи Reality генерятся всегда, даже при security=none — чтобы переключение
+  // на reality потом не требовало переустановки.
   if (!publicKey) throw new UserError('Xray configure script did not generate public key');
   if (!shortId)   throw new UserError('Xray configure script did not generate short ID');
   if (!firstUuid) throw new UserError('Xray configure script did not generate UUID');
 
-  const config: XrayConfig = { port, sni, publicKey, shortId, firstUuid, transport };
-  if (transport === 'xhttp') {
-    config.xhttpHost = tvars.xhttpHost;
-    config.xhttpPath = tvars.xhttpPath;
-    config.xhttpMode = tvars.xhttpMode;
+  const config: XrayConfig = {
+    port, publicKey, shortId, firstUuid,
+    sni: s.sni, security: s.security, fingerprint: s.fingerprint, flow: s.flow, transport: s.transport,
+  };
+  if (s.transport === 'xhttp') {
+    config.xhttpHost = s.xhttpHost;
+    config.xhttpPath = s.xhttpPath;
+    config.xhttpMode = s.xhttpMode;
   }
   return { containerName, port, config };
+}
+
+// Читает и парсит server.json из контейнера.
+async function readServerJson(server: Server, containerName: string): Promise<any> {
+  const raw = await readContainerFile(server, containerName, '/opt/amnezia/xray/server.json');
+  if (!raw) {
+    throw new UserError('Xray server.json not found on VPS. The protocol may not have been configured correctly. Reinstall the protocol.');
+  }
+  try {
+    return JSON.parse(raw);
+  } catch (e) {
+    throw new UserError(`Failed to parse Xray server.json: ${(e as Error).message}. File content may be corrupted. Reinstall the protocol.`);
+  }
+}
+
+function vlessInboundOf(serverJson: any): any {
+  const inbound = serverJson.inbounds?.find((i: any) => i.protocol === 'vless');
+  if (!inbound?.settings?.clients) {
+    throw new UserError('Unexpected structure in Xray server.json (no vless inbound). Reinstall the protocol.');
+  }
+  return inbound;
+}
+
+async function writeServerJsonAndRestart(server: Server, containerName: string, serverJson: any): Promise<void> {
+  const jsonB64 = Buffer.from(JSON.stringify(serverJson, null, 4)).toString('base64');
+  await execSudo(server, `echo '${jsonB64}' | base64 -d | docker exec -i ${containerName} sh -c 'cat > /opt/amnezia/xray/server.json'`);
+  const restartRes = await execSudo(server, `docker restart ${containerName}`);
+  if (restartRes.code !== 0) {
+    throw new UserError(`Failed to restart Xray container: ${restartRes.stderr}`);
+  }
+}
+
+/**
+ * Меняет параметры inbound'а на уже установленном протоколе: security, sni,
+ * fingerprint, flow, транспорт. Порт не трогаем — он зашит в проброс контейнера.
+ * Клиентские uuid сохраняются, поэтому вызывающему остаётся перерисовать их
+ * конфиги через renderXrayClient.
+ */
+export async function applyXraySettings(server: Server, protocol: Protocol, options: Record<string, unknown>): Promise<XrayConfig> {
+  assertContainerName(protocol.container_name);
+  const cn = protocol.container_name;
+  const c: any = typeof protocol.config === 'string' ? JSON.parse(protocol.config) : protocol.config;
+  const s = normalizeXraySettings(options, settingsFromConfig(c));
+
+  const serverJson = await readServerJson(server, cn);
+  const inbound = vlessInboundOf(serverJson);
+
+  const stream: any = { network: s.transport === 'xhttp' ? 'xhttp' : 'tcp', security: s.security };
+  if (s.security === 'reality') {
+    // Приватный ключ живёт только на сервере и в конфиг панели не попадает.
+    const privateKey = (await readContainerFile(server, cn, '/opt/amnezia/xray/xray_private.key'))?.trim();
+    if (!privateKey) {
+      throw new UserError('Reality private key not found on the server. Reinstall the protocol to switch security back to reality.');
+    }
+    stream.realitySettings = {
+      dest: `${s.sni}:443`,
+      serverNames: [s.sni],
+      privateKey,
+      shortIds: [c?.shortId ?? ''],
+    };
+  }
+  if (s.transport === 'xhttp') {
+    stream.xhttpSettings = { host: s.xhttpHost, path: s.xhttpPath, mode: s.xhttpMode };
+  }
+  inbound.streamSettings = stream;
+
+  // flow задаётся на каждом клиенте, а не на inbound'е: при переходе на
+  // security=none/xhttp его нужно снять со всех, иначе Xray отвергнет конфиг.
+  inbound.settings.clients = inbound.settings.clients.map((client: any) => {
+    const next = { ...client };
+    if (s.flow) next.flow = s.flow; else delete next.flow;
+    return next;
+  });
+
+  await writeServerJsonAndRestart(server, cn, serverJson);
+
+  const config: XrayConfig = {
+    port: c.port, publicKey: c.publicKey, shortId: c.shortId, firstUuid: c.firstUuid,
+    sni: s.sni, security: s.security, fingerprint: s.fingerprint, flow: s.flow, transport: s.transport,
+  };
+  if (s.transport === 'xhttp') {
+    config.xhttpHost = s.xhttpHost;
+    config.xhttpPath = s.xhttpPath;
+    config.xhttpMode = s.xhttpMode;
+  }
+  return config;
 }
 
 export async function addXrayClient(server: Server, protocol: Protocol, clientName: string): Promise<AddClientResult> {
@@ -153,70 +342,17 @@ export async function addXrayClient(server: Server, protocol: Protocol, clientNa
   }
   const clientId = uuidRes.stdout.trim();
 
-  const confRaw = await readContainerFile(server, cn, '/opt/amnezia/xray/server.json');
-  if (!confRaw) {
-    throw new UserError('Xray server.json not found on VPS. The protocol may not have been configured correctly. Reinstall the protocol.');
-  }
+  const serverJson = await readServerJson(server, cn);
+  const vlessInbound = vlessInboundOf(serverJson);
 
-  let serverJson: any;
-  try {
-    serverJson = JSON.parse(confRaw);
-  } catch (e) {
-    throw new UserError(`Failed to parse Xray server.json: ${(e as Error).message}. File content may be corrupted. Reinstall the protocol.`);
-  }
-
-  // Со включёнными stats в server.json два inbound'а (api на 127.0.0.1:10085 +
-  // vless), без stats — один (vless). Ищем нужный по protocol.
-  const vlessInbound = serverJson.inbounds?.find((i: any) => i.protocol === 'vless');
-  if (!vlessInbound?.settings?.clients) {
-    throw new UserError('Unexpected structure in Xray server.json (no vless inbound). Reinstall the protocol.');
-  }
-
-  // Транспорт из сохранённого конфига определяет наличие flow:
-  // tcp → xtls-rprx-vision, xhttp → без flow (vision несовместим с xhttp).
-  const tvars = transportFromConfig(c, c.sni);
-
+  const s = settingsFromConfig(c);
   // email == clientId — это то, по чему Xray мапит per-user stats counters.
   const newClient: any = { id: clientId, email: clientId, level: 0 };
-  if (tvars.transport === 'tcp') newClient.flow = 'xtls-rprx-vision';
+  if (s.flow) newClient.flow = s.flow;
   vlessInbound.settings.clients.push(newClient);
 
-  const jsonB64 = Buffer.from(JSON.stringify(serverJson, null, 4)).toString('base64');
-  await execSudo(server, `echo '${jsonB64}' | base64 -d | docker exec -i ${cn} sh -c 'cat > /opt/amnezia/xray/server.json'`);
-
-  const restartRes = await execSudo(server, `docker restart ${cn}`);
-  if (restartRes.code !== 0) {
-    throw new UserError(`Failed to restart Xray container: ${restartRes.stderr}`);
-  }
-
-  const safeName = clientName.replace(/[^a-zA-Z0-9_\-]/g, '_');
-  const port    = c.port;
-  const sni     = c.sni;
-  const pubKey  = c.publicKey;
-  const shortId = c.shortId;
-
-  if (!port || !sni || !pubKey || !shortId) {
-    throw new UserError('Xray protocol config is incomplete (missing port/sni/publicKey/shortId). Reinstall the protocol.');
-  }
-
-  const streamVars = xrayStreamVars(tvars);
-  const vlessUrl = tvars.transport === 'xhttp'
-    ? `vless://${clientId}@${server.host}:${port}?type=xhttp&security=reality&pbk=${pubKey}&fp=chrome&sni=${sni}&sid=${shortId}&host=${tvars.xhttpHost}&path=${encodeURIComponent(tvars.xhttpPath)}&mode=${tvars.xhttpMode}#${safeName}`
-    : `vless://${clientId}@${server.host}:${port}?type=tcp&security=reality&pbk=${pubKey}&fp=chrome&sni=${sni}&sid=${shortId}&flow=xtls-rprx-vision#${safeName}`;
-
-  const clientJson = renderTemplate(XRAY_CLIENT_TEMPLATE, {
-    SERVER_IP_ADDRESS: server.host,
-    XRAY_SERVER_PORT: port,
-    XRAY_CLIENT_ID: clientId,
-    XRAY_SITE_NAME: sni,
-    XRAY_PUBLIC_KEY: pubKey,
-    XRAY_SHORT_ID: shortId,
-    XRAY_NETWORK: streamVars.XRAY_NETWORK,
-    XRAY_FLOW_SUFFIX: streamVars.XRAY_FLOW_SUFFIX,
-    XRAY_XHTTP_BLOCK: streamVars.XRAY_XHTTP_BLOCK,
-  });
-
-  return { config: vlessUrl, configJson: clientJson, type: 'xray' };
+  await writeServerJsonAndRestart(server, cn, serverJson);
+  return renderXrayClient(server, c, clientId, clientName);
 }
 
 // Возвращает ранее отозванного клиента в server.json с тем же uuid — снятие
@@ -227,31 +363,18 @@ export async function restoreXrayClient(server: Server, protocol: Protocol, peer
   const c: any = typeof protocol.config === 'string' ? JSON.parse(protocol.config) : protocol.config;
   const cn = protocol.container_name;
 
-  const confRaw = await readContainerFile(server, cn, '/opt/amnezia/xray/server.json');
-  if (!confRaw) throw new UserError('Xray server.json not found on VPS.');
-  let serverJson: any;
-  try { serverJson = JSON.parse(confRaw); } catch (e) {
-    throw new UserError(`Failed to parse Xray server.json: ${(e as Error).message}`);
-  }
-  const vlessInbound = serverJson.inbounds?.find((i: any) => i.protocol === 'vless');
-  if (!vlessInbound?.settings?.clients) {
-    throw new UserError('Unexpected structure in Xray server.json (no vless inbound).');
-  }
+  const serverJson = await readServerJson(server, cn);
+  const vlessInbound = vlessInboundOf(serverJson);
   // Уже на месте — значит приостановка не доехала до сервера. Рестарт ради
   // ничего не делаем: он рвёт соединения всем остальным клиентам.
   if (vlessInbound.settings.clients.some((x: any) => x.id === peerId)) return;
 
-  const tvars = transportFromConfig(c, c.sni);
+  const s = settingsFromConfig(c);
   const restored: any = { id: peerId, email: peerId, level: 0 };
-  if (tvars.transport === 'tcp') restored.flow = 'xtls-rprx-vision';
+  if (s.flow) restored.flow = s.flow;
   vlessInbound.settings.clients.push(restored);
 
-  const jsonB64 = Buffer.from(JSON.stringify(serverJson, null, 4)).toString('base64');
-  await execSudo(server, `echo '${jsonB64}' | base64 -d | docker exec -i ${cn} sh -c 'cat > /opt/amnezia/xray/server.json'`);
-  const restartRes = await execSudo(server, `docker restart ${cn}`);
-  if (restartRes.code !== 0) {
-    throw new UserError(`Failed to restart Xray container after client restore: ${restartRes.stderr}`);
-  }
+  await writeServerJsonAndRestart(server, cn, serverJson);
 }
 
 // Отзыв клиента: убираем VLESS-клиента (по uuid) из server.json и рестартим (peerId = uuid).
@@ -268,10 +391,5 @@ export async function removeXrayClient(server: Server, protocol: Protocol, peerI
   vlessInbound.settings.clients = vlessInbound.settings.clients.filter((c: any) => c.id !== peerId);
   if (vlessInbound.settings.clients.length === before) return; // нечего удалять
 
-  const jsonB64 = Buffer.from(JSON.stringify(serverJson, null, 4)).toString('base64');
-  await execSudo(server, `echo '${jsonB64}' | base64 -d | docker exec -i ${cn} sh -c 'cat > /opt/amnezia/xray/server.json'`);
-  const restartRes = await execSudo(server, `docker restart ${cn}`);
-  if (restartRes.code !== 0) {
-    throw new UserError(`Failed to restart Xray container after client removal: ${restartRes.stderr}`);
-  }
+  await writeServerJsonAndRestart(server, cn, serverJson);
 }
