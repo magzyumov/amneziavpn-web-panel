@@ -269,12 +269,15 @@ amneziavpn-web-panel/
 │       │   ├── servers.ts          — CRUD + scan + import + AmneziaDNS
 │       │   ├── protocols.ts        — install / start / stop / health / logs
 │       │   ├── clients.ts          — create / qr / config / stats
-│       │   └── subscriptions.ts    — Clash-подписки + публичный /sub/:slug
+│       │   ├── subscriptions.ts    — Clash-подписки + публичный /sub/:slug
+│       │   └── disk.ts             — место на диске VPS: отчёт и очистка (admin)
+│       ├── templates/clash.yaml    — дефолтный шаблон Clash-подписки
 │       └── services/
 │           ├── db.ts               — better-sqlite3 (WAL), схема и миграции
 │           ├── access.ts           — роли, владение клиентами, выданные протоколы
 │           ├── audit.ts            — журнал действий: запись, разбор, чистка
 │           ├── dashboard.ts        — агрегация сводки главной страницы
+│           ├── disk.ts             — что занимает место на VPS: размеры и команды очистки
 │           ├── serverProbe.ts      — опрос VPS по кнопке + кэш дрейфа и DNS
 │           ├── limits.ts           — срок действия и суточный лимит трафика
 │           ├── clientLifecycle.ts  — отзыв, возврат и удаление клиента на сервере
@@ -308,8 +311,7 @@ amneziavpn-web-panel/
 │       ├── api.ts                  — axios + CSRF + типы API
 │       ├── protocols.ts            — названия и иконки протоколов
 │       ├── auth.ts                 — контекст текущего пользователя и его роли
-│       └── pages/                  — Dashboard (сводка), Servers, Server, Subscriptions, MyClients, Users, Audit
-│   └── templates/clash.yaml        — дефолтный шаблон Clash-подписки
+│       └── pages/                  — Dashboard (сводка), Servers, Server, Subscriptions, MyClients, Users, Disk, Audit
 ├── data/                           — база и ключ шифрования (создаются сами)
 └── docker-compose.yml
 ```
@@ -329,14 +331,17 @@ GET  /api/auth/status      — нужна ли первичная настрой
 POST /api/auth/setup       — создать администратора (только если база пустая)
 POST /api/auth/login       — httpOnly cookie + CSRF cookie
 POST /api/auth/logout      — очистить cookies
-GET  /api/auth/me          — { username, role, clientLimit }
+GET  /api/auth/me          — { username, role, clientLimit, defaultExpiryDays, defaultDailyLimitMb }
 ```
 
 ### Users (только admin)
 ```
-GET    /api/users          — список { id, username, role, client_limit, clients_count, protocolIds }
-POST   /api/users          — завести { username, password, role, clientLimit, protocolIds }
-PUT    /api/users/:id      — пароль / роль / лимит / выданные протоколы
+GET    /api/users          — список { id, username, role, client_limit, clients_count, protocolIds,
+                             default_expiry_days, default_daily_limit_mb, created_at }
+POST   /api/users          — завести { username, password, role, clientLimit, protocolIds,
+                             defaultExpiryDays, defaultDailyLimitMb }
+PUT    /api/users/:id      — пароль / роль / лимит / выданные протоколы /
+                             дефолтные лимиты выпускаемых им клиентов
 DELETE /api/users/:id      — удалить; клиенты не удаляются, а становятся «ничьими»
 ```
 
