@@ -110,6 +110,8 @@ export function describeAction(method: string, path: string): ActionInfo | null 
     'DELETE /subscriptions/:id':          { action: 'subscription.delete',         targetType: 'subscription' },
 
     'POST /dashboard/probe': { action: 'server.probe', targetType: null },
+
+    'POST /disk/:id/clean': { action: 'disk.clean', targetType: 'server' },
   };
 
   if (map[key]) return map[key];

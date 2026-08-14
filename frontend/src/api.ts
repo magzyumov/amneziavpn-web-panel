@@ -251,6 +251,27 @@ export interface AuditQuery {
   offset?: number;
 }
 
+// Место на диске VPS: фиксированный список того, что растёт, + кнопка очистки.
+export interface DiskReportItem {
+  id: string;
+  label: string;
+  hint: string;
+  /** Команда, которая выполнится на VPS под sudo при нажатии «Очистить». */
+  cleanCmd: string;
+  bytes: number;
+}
+
+export interface DiskReport {
+  usage: { total: number; used: number; avail: number };
+  items: DiskReportItem[];
+}
+
+export const diskApi = {
+  report: (serverId: string) => api.get<DiskReport>(`/disk/${serverId}`),
+  clean: (serverId: string, item: string) =>
+    api.post<DiskReport & { output: string }>(`/disk/${serverId}/clean`, { item }),
+};
+
 export const auditApi = {
   list: (params: AuditQuery = {}) => api.get<AuditResponse>('/audit', { params }),
 };

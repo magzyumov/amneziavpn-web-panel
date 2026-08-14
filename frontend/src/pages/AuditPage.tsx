@@ -36,6 +36,8 @@ const ACTION_LABELS: Record<string, string> = {
   'server.scan':          'просканировал сервер',
   'server.probe':         'опросил серверы',
 
+  'disk.clean': 'очистил место на диске',
+
   'subscription.template':       'изменил шаблон подписок',
   'subscription.template_reset': 'сбросил шаблон подписок',
   'subscription.regenerate':     'перевыпустил подписки',
