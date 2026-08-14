@@ -21,6 +21,7 @@ import serverRoutes from './routes/servers.js';
 import protocolRoutes from './routes/protocols.js';
 import clientRoutes from './routes/clients.js';
 import subscriptionRoutes from './routes/subscriptions.js';
+import diskRoutes from './routes/disk.js';
 
 // Логируем необработанные ошибки, но процесс не убиваем — единичный rejection
 // в SSH-вызове не должен класть весь backend (другие сессии продолжают работать).
@@ -94,6 +95,7 @@ app.use('/api/servers',       serverRoutes);
 app.use('/api/protocols',     protocolRoutes);
 app.use('/api/clients',       clientRoutes);
 app.use('/api/subscriptions', subscriptionRoutes);
+app.use('/api/disk',          diskRoutes);
 
 // Публичный endpoint для подписок (без /api префикса)
 app.use('/', subscriptionRoutes);
