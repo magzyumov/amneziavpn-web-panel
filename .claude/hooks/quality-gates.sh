@@ -37,7 +37,10 @@ trap 'rm -rf "$TMP"' EXIT
 # typecheck <package-dir> <out-log> <out-rc>
 typecheck() {
   local dir="$1" log="$2" rc="$3"
-  if command -v npx >/dev/null 2>&1; then
+  # Проверяем именно установленный tsc, а не наличие npx: npx на хосте есть
+  # всегда, но без node_modules он уходит ставить пакет из сети и падает
+  # «npm ERR! canceled» — гейт валился на пустом месте, минуя фолбэк в контейнер.
+  if [ -x "$dir/node_modules/.bin/tsc" ]; then
     # backend имеет тесты (vitest) — гоняем их вместе с проверкой типов.
     if [ "$dir" = "backend" ]; then
       ( cd "$dir" && npx --no-install tsc --noEmit && npm test --silent ) > "$log" 2>&1
