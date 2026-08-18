@@ -83,15 +83,17 @@ export async function readAwgWgPeerStats(
 interface XrayStatRow { name: string; value: string }
 interface XrayStatsResponse { stat?: XrayStatRow[] }
 
-export async function readXrayPeerStats(server: Server, containerName: string): Promise<PeerStats[]> {
+// null = stats API не ответил (выключен в конфиге / контейнер не поднялся);
+// [] = ответил, но счётчиков нет — так бывает штатно, см. withIdleXrayPeers.
+export async function readXrayPeerStats(server: Server, containerName: string): Promise<PeerStats[] | null> {
   assertContainerName(containerName);
   const cmd = `docker exec ${containerName} xray api statsquery --server=127.0.0.1:10085 -pattern "user>>>" 2>/dev/null`;
   const res = await exec(server, cmd);
-  if (res.code !== 0 || !res.stdout.trim()) return [];
+  if (res.code !== 0 || !res.stdout.trim()) return null;
 
   let parsed: XrayStatsResponse;
   try { parsed = JSON.parse(res.stdout); }
-  catch { return []; }
+  catch { return null; }
   if (!parsed.stat?.length) return [];
 
   // Группируем uplink/downlink по email (= UUID).
@@ -117,6 +119,19 @@ export async function readXrayPeerStats(server: Server, containerName: string): 
     peers.push({ pubkey: email, rxBytes: e.rx, txBytes: e.tx, lastHandshake: 0, endpoint: null });
   }
   return peers;
+}
+
+// Xray заводит счётчик пользователя только когда через него пошёл трафик, и
+// теряет его при рестарте контейнера. Молчащий клиент просто исчезает из ответа
+// — а для нас «нет снимков» означает поломку сбора (дашборд ругается) и ломает
+// счёт трафика: прошлый накопительный счётчик остаётся базой, и после рестарта
+// трафик не считается, пока не перевалит за неё. Поэтому дописываем нули.
+export function withIdleXrayPeers(peers: PeerStats[], peerIds: readonly string[]): PeerStats[] {
+  const seen = new Set(peers.map(p => p.pubkey));
+  return peers.concat(
+    peerIds.filter(id => !seen.has(id))
+      .map(id => ({ pubkey: id, rxBytes: 0, txBytes: 0, lastHandshake: 0, endpoint: null })),
+  );
 }
 
 // ─── Telemt ──────────────────────────────────────────────────────────────────

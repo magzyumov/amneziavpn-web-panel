@@ -17,7 +17,7 @@
  */
 
 import { query, queryOne, run } from './db.js';
-import { readAwgWgPeerStats, readXrayPeerStats, readTelemtPeerStats, type PeerStats } from './protocols/index.js';
+import { readAwgWgPeerStats, readXrayPeerStats, readTelemtPeerStats, withIdleXrayPeers, type PeerStats } from './protocols/index.js';
 import { enforceLimits } from './limits.js';
 import { purgeOldAudit } from './audit.js';
 import { logger } from './logger.js';
@@ -98,7 +98,7 @@ async function pollOnce(): Promise<void> {
       auth_type: row.s_auth_type, password: row.s_password, private_key: row.s_private_key,
     };
 
-    let peers: PeerStats[];
+    let peers: PeerStats[] | null;
     try {
       if (row.type === 'awg2') {
         peers = await readAwgWgPeerStats(server, row.container_name, 'awg', 'awg0');
@@ -107,7 +107,7 @@ async function pollOnce(): Promise<void> {
       } else if (row.type === 'telemt') {
         peers = await readTelemtPeerStats(server, row.container_name);
       } else {
-        // xray
+        // xray: null — stats API не отвечает
         peers = await readXrayPeerStats(server, row.container_name);
       }
     } catch (e) {
@@ -119,13 +119,17 @@ async function pollOnce(): Promise<void> {
     // Этой отметкой дашборд показывает живость сервера, не гоняя свой SSH.
     run('UPDATE protocols SET last_poll_at = ? WHERE id = ?', [now, row.id]);
 
-    if (!peers.length) continue;
+    // Опрос дошёл до контейнера, но stats API молчит — снимать нечего.
+    if (!peers) continue;
 
     const clients = query<ClientRow>(
       "SELECT id, peer_id FROM clients WHERE protocol_id = ? AND peer_id IS NOT NULL",
       [row.id],
     );
     if (!clients.length) continue;
+
+    if (row.type === 'xray') peers = withIdleXrayPeers(peers, clients.map(c => c.peer_id));
+    if (!peers.length) continue;
 
     const pkToId = new Map<string, string>();
     for (const c of clients) pkToId.set(c.peer_id, c.id);

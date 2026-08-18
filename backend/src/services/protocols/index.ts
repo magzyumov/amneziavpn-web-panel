@@ -15,6 +15,6 @@ export {
   scanExistingProtocols, PROTOCOLS,
 } from './containers.js';
 export type { AmneziaContainerListing, ScannedProtocol, ScannedClient } from './containers.js';
-export { readAwgWgPeerStats, readXrayPeerStats, readTelemtPeerStats, isXrayStatsEnabled, enableXrayStats } from './stats.js';
+export { readAwgWgPeerStats, readXrayPeerStats, readTelemtPeerStats, withIdleXrayPeers, isXrayStatsEnabled, enableXrayStats } from './stats.js';
 export type { PeerStats } from './stats.js';
 export { installDns, removeDns, isDnsRunning, resolveClientDns, AMNEZIA_DNS_IP } from './dns.js';
