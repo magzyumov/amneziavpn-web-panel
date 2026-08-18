@@ -95,7 +95,8 @@ function AddServerModal({ onClose, onAdded }: AddServerModalProps) {
         </div>
         <div className="modal-actions">
           <button className="btn btn-outline" onClick={onClose}>Cancel</button>
-          <button className="btn btn-primary" onClick={submit} disabled={loading}>
+          <button className="btn btn-primary" onClick={submit} disabled={loading}
+            title="Подключиться по SSH и сразу поискать на сервере уже стоящие контейнеры Amnezia">
             {loading ? <><span className="spinner" /> Adding…</> : 'Add & Scan Server'}
           </button>
         </div>
@@ -130,17 +131,20 @@ function ServerCard({ server, onDelete }: ServerCardProps) {
   };
 
   return (
-    <div className="card" style={{ cursor: 'pointer' }} onClick={() => navigate(`/server/${server.id}`)}>
+    <div className="card" style={{ cursor: 'pointer' }} onClick={() => navigate(`/server/${server.id}`)}
+      title="Открыть сервер: протоколы, клиенты и статистика">
       <div className="flex items-center justify-between page-header-row" style={{ gap: 8 }}>
         <div style={{ minWidth: 0 }}>
           <div style={{ fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{server.name}</div>
           <div className="mono text-dim mt-4" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{server.username}@{server.host}:{server.port}</div>
         </div>
         <div className="flex gap-8" style={{ flexShrink: 0 }} onClick={e => e.stopPropagation()}>
-          <button className="btn btn-ghost btn-sm" onClick={test} disabled={testing}>
+          <button className="btn btn-ghost btn-sm" onClick={test} disabled={testing}
+            title="Проверить SSH-подключение к серверу прямо сейчас">
             {testing ? <span className="spinner" style={{ width: 12, height: 12 }} /> : '⚡ Test'}
           </button>
-          <button className="btn btn-danger btn-sm" onClick={() => onDelete(server.id)}>✕</button>
+          <button className="btn btn-danger btn-sm" onClick={() => onDelete(server.id)}
+            title="Убрать сервер из панели вместе с его протоколами и клиентами. Контейнеры на самом VPS остаются">✕</button>
         </div>
       </div>
       {testResult && (
@@ -175,7 +179,8 @@ export default function ServersPage() {
             <div className="page-title">Servers</div>
             <div className="page-sub">// manage vpn infrastructure</div>
           </div>
-          <button className="btn btn-primary" onClick={() => setShowAdd(true)}>+ Add Server</button>
+          <button className="btn btn-primary" onClick={() => setShowAdd(true)}
+            title="Добавить VPS по SSH: панель проверит доступ и просканирует его">+ Add Server</button>
         </div>
       </div>
       <div className="page-body">
@@ -185,7 +190,8 @@ export default function ServersPage() {
           <div className="empty-state">
             <div className="empty-icon">⬡</div>
             <div className="empty-text">No servers yet. Add your VPS to get started.</div>
-            <button className="btn btn-primary" style={{ marginTop: 16 }} onClick={() => setShowAdd(true)}>+ Add Server</button>
+            <button className="btn btn-primary" style={{ marginTop: 16 }} onClick={() => setShowAdd(true)}
+              title="Добавить VPS по SSH: панель проверит доступ и просканирует его">+ Add Server</button>
           </div>
         ) : (
           <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))' }}>

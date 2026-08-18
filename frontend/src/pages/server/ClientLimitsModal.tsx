@@ -64,7 +64,8 @@ export default function ClientLimitsModal({ client, onClose, onSaved }: Props) {
 
         <div className="modal-actions">
           <button className="btn btn-outline" onClick={onClose}>Отмена</button>
-          <button className="btn btn-primary" onClick={submit} disabled={loading}>
+          <button className="btn btn-primary" onClick={submit} disabled={loading}
+            title="Применить лимиты сразу: если клиент приостановлен, а лимит поднят — он вернётся немедленно">
             {loading ? <span className="spinner" /> : 'Сохранить'}
           </button>
         </div>

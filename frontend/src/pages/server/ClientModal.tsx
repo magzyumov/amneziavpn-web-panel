@@ -38,6 +38,7 @@ function CopyBox({ text, placeholder, style, onCopy }: {
         className="btn btn-outline btn-sm"
         style={{ marginTop: 8 }}
         disabled={!ready}
+        title="Скопировать содержимое в буфер обмена"
         onClick={() => copyToClipboard(text).then(onCopy)}
       >📋 Скопировать</button>
     </>
@@ -128,7 +129,7 @@ export default function ClientModal({ client, protocolType, onClose }: Props) {
               {protocolType?.toUpperCase()}
             </div>
           </div>
-          <button className="btn btn-ghost btn-sm" onClick={onClose} style={{ fontSize: 18, lineHeight: 1 }}>×</button>
+          <button className="btn btn-ghost btn-sm" onClick={onClose} title="Закрыть" style={{ fontSize: 18, lineHeight: 1 }}>×</button>
         </div>
 
         {!client.has_config && (
@@ -150,6 +151,7 @@ export default function ClientModal({ client, protocolType, onClose }: Props) {
                 color: format === 'amnezia' ? '#fff' : 'var(--text-muted)',
                 border: 'none', cursor: 'pointer', transition: 'all .15s',
               }}
+              title="Формат для официального приложения AmneziaVPN: импорт одним QR или файлом .vpn"
               onClick={() => setFormat('amnezia')}
             >
               📱 Для приложения Amnezia
@@ -161,6 +163,9 @@ export default function ClientModal({ client, protocolType, onClose }: Props) {
                 color: format === 'original' ? '#fff' : 'var(--text-muted)',
                 border: 'none', cursor: 'pointer', borderLeft: '1px solid var(--border)', transition: 'all .15s',
               }}
+              title={isXray
+                ? 'Ссылка vless:// для любого клиента с поддержкой VLESS (v2rayNG, FLClash, Hiddify)'
+                : 'Обычный .conf для WireGuard/AmneziaWG-клиентов'}
               onClick={() => setFormat('original')}
             >
               {isXray ? '📡 VLESS URI' : '📄 Оригинальный формат'}
@@ -173,6 +178,7 @@ export default function ClientModal({ client, protocolType, onClose }: Props) {
             {tabs.map(t => (
               <button key={t.id}
                 className={`btn btn-sm ${tab === t.id ? 'btn-primary' : 'btn-outline'}`}
+                title={`Показать: ${t.label}`}
                 onClick={() => setTab(t.id)}>{t.label}</button>
             ))}
           </div>
@@ -192,6 +198,7 @@ export default function ClientModal({ client, protocolType, onClose }: Props) {
                       <div style={{ display: 'flex', justifyContent: 'center', gap: 6, marginBottom: 8 }}>
                         {Array.from({ length: totalParts }).map((_, i) => (
                           <button key={i}
+                            title={`Часть QR-кода ${i + 1} — конфиг не влез в один код, сканируйте части по очереди`}
                             onClick={() => setQrPartIdx(i)}
                             style={{
                               width: 10, height: 10, borderRadius: '50%', border: 'none', cursor: 'pointer',
@@ -210,12 +217,14 @@ export default function ClientModal({ client, protocolType, onClose }: Props) {
                       </div>
                       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10, marginTop: 8 }}>
                         <button className="btn btn-outline btn-sm"
+                          title="Предыдущая часть QR-кода"
                           onClick={() => setQrPartIdx(i => Math.max(0, i - 1))}
                           disabled={qrPartIdx === 0}>‹</button>
                         <span className="mono text-dim" style={{ fontSize: 11, minWidth: 48 }}>
                           {qrPartIdx + 1} / {totalParts}
                         </span>
                         <button className="btn btn-outline btn-sm"
+                          title="Следующая часть QR-кода"
                           onClick={() => setQrPartIdx(i => Math.min(totalParts - 1, i + 1))}
                           disabled={qrPartIdx === totalParts - 1}>›</button>
                       </div>
@@ -270,7 +279,8 @@ export default function ClientModal({ client, protocolType, onClose }: Props) {
         <div className="modal-actions" style={{ marginTop: 16 }}>
           <button className="btn btn-outline" onClick={onClose}>Закрыть</button>
           {!!client.has_config && (
-            <button className="btn btn-primary" onClick={() => downloadWithAuth(activeDownloadUrl, activeDownloadFilename)}>
+            <button className="btn btn-primary" title={`Скачать файл ${activeDownloadFilename} на это устройство`}
+              onClick={() => downloadWithAuth(activeDownloadUrl, activeDownloadFilename)}>
               {activeDownloadLabel}
             </button>
           )}

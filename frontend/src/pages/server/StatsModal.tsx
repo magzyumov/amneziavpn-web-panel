@@ -19,7 +19,7 @@ export default function StatsModal({ client, protocolType, onClose }: Props) {
               {protocolType?.toUpperCase()} · статистика
             </div>
           </div>
-          <button className="btn btn-ghost btn-sm" onClick={onClose} style={{ fontSize: 18, lineHeight: 1 }}>×</button>
+          <button className="btn btn-ghost btn-sm" onClick={onClose} title="Закрыть" style={{ fontSize: 18, lineHeight: 1 }}>×</button>
         </div>
 
         <StatsTab clientId={client.id} protocolType={protocolType} />

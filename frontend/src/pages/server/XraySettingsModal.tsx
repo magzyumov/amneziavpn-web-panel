@@ -77,7 +77,8 @@ export default function XraySettingsModal({ protocol, onClose, onSaved }: Props)
           <button className="btn btn-ghost" onClick={onClose} disabled={saving}>
             {result !== null ? 'Закрыть' : 'Отмена'}
           </button>
-          <button className="btn btn-primary" onClick={save} disabled={saving}>
+          <button className="btn btn-primary" onClick={save} disabled={saving}
+            title="Записать настройки в server.json и перезапустить контейнер — подключённые клиенты на секунду отвалятся">
             {saving ? <span className="spinner" style={{ width: 12, height: 12 }} /> : 'Сохранить и перезапустить'}
           </button>
         </div>

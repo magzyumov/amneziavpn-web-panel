@@ -140,6 +140,7 @@ export default function ScanProtocolsModal({ serverId, existingProtocols, onClos
                       ) : (
                         <button
                           className="btn btn-primary btn-sm"
+                          title="Взять этот контейнер под управление панели: протокол и его клиенты появятся в списке"
                           onClick={() => doImport(proto)}
                           disabled={isImporting}
                         >
@@ -155,7 +156,8 @@ export default function ScanProtocolsModal({ serverId, existingProtocols, onClos
         )}
 
         <div className="modal-actions" style={{ marginTop: 20 }}>
-          <button className="btn btn-outline" onClick={scan} disabled={scanning}>
+          <button className="btn btn-outline" onClick={scan} disabled={scanning}
+            title="Ещё раз опросить сервер по SSH и обновить список найденных контейнеров">
             {scanning ? <><span className="spinner" /> Scanning…</> : '↻ Re-scan'}
           </button>
           <button className="btn btn-primary" onClick={onClose}>Close</button>

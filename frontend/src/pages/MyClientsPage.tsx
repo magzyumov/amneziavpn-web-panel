@@ -74,7 +74,8 @@ export default function MyClientsPage() {
               title={
                 protocols.length === 0
                   ? 'Администратор ещё не выдал вам ни одного протокола'
-                  : atLimit ? `Достигнут лимит в ${limit} клиентов` : undefined
+                  : atLimit ? `Достигнут лимит в ${limit} клиентов`
+                  : 'Создать клиента: панель сгенерирует ключи и выдаст конфиг с QR-кодом'
               }
             >+ Новый клиент</button>
           </div>
@@ -114,7 +115,8 @@ export default function MyClientsPage() {
                 : 'Пока нет ни одного клиента. Создайте первый — получите конфиг и QR.'}
             </div>
             {canAdd && (
-              <button className="btn btn-primary" style={{ marginTop: 16 }} onClick={() => setShowAdd(true)}>
+              <button className="btn btn-primary" style={{ marginTop: 16 }} onClick={() => setShowAdd(true)}
+                title="Создать клиента: панель сгенерирует ключи и выдаст конфиг с QR-кодом">
                 + Создать клиента
               </button>
             )}
@@ -153,11 +155,15 @@ export default function MyClientsPage() {
                       className="btn btn-outline btn-sm"
                       onClick={() => setSelected(c)}
                       disabled={!c.has_config}
-                      title={c.has_config ? undefined : 'Конфиг этого клиента не сохранён'}
+                      title={c.has_config
+                        ? 'Конфиг, QR-код и файл для импорта в приложение'
+                        : 'Конфиг этого клиента не сохранён'}
                     >⬡ Конфиг</button>
-                    <button className="btn btn-outline btn-sm" onClick={() => setStatsFor(c)}>📊 Статистика</button>
+                    <button className="btn btn-outline btn-sm" onClick={() => setStatsFor(c)}
+                      title="Принято и отправлено за период, онлайн-статус, график скорости">📊 Статистика</button>
                     {c.protocol_type === 'xray' && !!c.has_config && <CopySubButton clientId={c.id} />}
-                    <button className="btn btn-danger btn-sm" onClick={() => del(c)}>✕</button>
+                    <button className="btn btn-danger btn-sm" onClick={() => del(c)}
+                      title="Удалить клиента: пир снимается с сервера, конфиг перестаёт работать">✕</button>
                   </div>
                 </div>
               </div>
@@ -292,7 +298,8 @@ function AddMyClientModal({ protocols, expiryDays, dailyLimitMb, onClose, onAdde
 
         <div className="modal-actions">
           <button className="btn btn-outline" onClick={onClose}>Отмена</button>
-          <button className="btn btn-primary" onClick={submit} disabled={loading || !name || !protocolId}>
+          <button className="btn btn-primary" onClick={submit} disabled={loading || !name || !protocolId}
+            title="Создать клиента на выбранном протоколе">
             {loading ? <span className="spinner" /> : '+ Создать'}
           </button>
         </div>

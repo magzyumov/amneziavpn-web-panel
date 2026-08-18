@@ -42,27 +42,34 @@ function Sidebar({ isOpen, onClose, user }: SidebarProps) {
           <div className="nav-section-label">navigation</div>
           {isAdmin ? (
             <>
-              <Link to="/" className={`nav-link ${location.pathname === '/' ? 'active' : ''}`} onClick={onClose}>
+              <Link to="/" className={`nav-link ${location.pathname === '/' ? 'active' : ''}`} onClick={onClose}
+                title="Общая картина: серверы, клиенты, трафик и предупреждения">
                 <span className="icon">⬡</span> Сводка
               </Link>
-              <Link to="/servers" className={`nav-link ${location.pathname.startsWith('/server') ? 'active' : ''}`} onClick={onClose}>
+              <Link to="/servers" className={`nav-link ${location.pathname.startsWith('/server') ? 'active' : ''}`} onClick={onClose}
+                title="Список VPS: добавить сервер, поставить протоколы, завести клиентов">
                 <span className="icon">⊡</span> Серверы
               </Link>
-              <Link to="/subscriptions" className={`nav-link ${location.pathname === '/subscriptions' ? 'active' : ''}`} onClick={onClose}>
+              <Link to="/subscriptions" className={`nav-link ${location.pathname === '/subscriptions' ? 'active' : ''}`} onClick={onClose}
+                title="Ссылки-подписки для клиентских приложений и шаблон их содержимого">
                 <span className="icon">📡</span> Подписки
               </Link>
-              <Link to="/users" className={`nav-link ${location.pathname === '/users' ? 'active' : ''}`} onClick={onClose}>
+              <Link to="/users" className={`nav-link ${location.pathname === '/users' ? 'active' : ''}`} onClick={onClose}
+                title="Пользователи панели: роли, пароли, доступ к протоколам">
                 <span className="icon">👤</span> Пользователи
               </Link>
-              <Link to="/disk" className={`nav-link ${location.pathname === '/disk' ? 'active' : ''}`} onClick={onClose}>
+              <Link to="/disk" className={`nav-link ${location.pathname === '/disk' ? 'active' : ''}`} onClick={onClose}
+                title="Что занимает место на VPS и очистка по пунктам">
                 <span className="icon">💾</span> Диск
               </Link>
-              <Link to="/audit" className={`nav-link ${location.pathname === '/audit' ? 'active' : ''}`} onClick={onClose}>
+              <Link to="/audit" className={`nav-link ${location.pathname === '/audit' ? 'active' : ''}`} onClick={onClose}
+                title="Журнал действий: кто что менял, включая неудачные попытки входа">
                 <span className="icon">📋</span> Журнал
               </Link>
             </>
           ) : (
-            <Link to="/" className={`nav-link ${location.pathname === '/' ? 'active' : ''}`} onClick={onClose}>
+            <Link to="/" className={`nav-link ${location.pathname === '/' ? 'active' : ''}`} onClick={onClose}
+              title="Ваши VPN-клиенты: конфиги, QR-коды и статистика">
               <span className="icon">⬡</span> Мои клиенты
             </Link>
           )}
@@ -72,7 +79,7 @@ function Sidebar({ isOpen, onClose, user }: SidebarProps) {
         <div className="mono text-muted" style={{ fontSize: 11, marginBottom: 8, padding: '0 4px' }}>
           {user.username} · {isAdmin ? 'admin' : 'user'}
         </div>
-        <button className="logout-btn" onClick={logout}>⎋ Sign out</button>
+        <button className="logout-btn" onClick={logout} title="Выйти из панели — сессия закроется, потребуется вход заново">⎋ Sign out</button>
       </div>
     </aside>
   );
@@ -108,7 +115,7 @@ function PrivateLayout({ children, adminOnly }: PrivateLayoutProps) {
         <Sidebar isOpen={sidebarOpen} onClose={() => setSidebarOpen(false)} user={user} />
         <main className="main">
           <div className="mobile-topbar">
-            <button className="hamburger" onClick={() => setSidebarOpen(true)}>☰</button>
+            <button className="hamburger" onClick={() => setSidebarOpen(true)} title="Открыть меню">☰</button>
             <span style={{ fontFamily: 'var(--font-mono)', fontSize: 13, fontWeight: 700, color: 'var(--accent)' }}>◈ AMNEZIA</span>
           </div>
           {children}

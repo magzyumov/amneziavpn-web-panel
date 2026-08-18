@@ -55,7 +55,8 @@ export default function AddClientModal({ protocolId, onClose, onAdded }: Props) 
 
         <div className="modal-actions">
           <button className="btn btn-outline" onClick={onClose}>Cancel</button>
-          <button className="btn btn-primary" onClick={submit} disabled={loading || !name}>
+          <button className="btn btn-primary" onClick={submit} disabled={loading || !name}
+            title="Сгенерировать ключи, добавить пира на сервер и выдать конфиг">
             {loading ? <span className="spinner" /> : '+ Create'}
           </button>
         </div>

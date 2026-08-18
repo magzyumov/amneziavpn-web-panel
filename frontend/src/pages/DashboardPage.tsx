@@ -68,19 +68,22 @@ export default function DashboardPage() {
 
         {/* Плитки: то, на что смотрят первым делом. Ведут туда, где этим управляют. */}
         <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: 12, alignItems: 'start' }}>
-          <Tile label="Серверы" value={servers.length} to="/servers"
+          <Tile label="Серверы" title="Перейти к списку серверов" value={servers.length} to="/servers"
             sub={servers.some(s => s.stale) ? '⚠ есть не отвечающие' : 'все отвечают'}
             warn={servers.some(s => s.stale)} />
-          <Tile label="Протоколы" value={`${protocols.running} / ${protocols.total}`} to="/servers"
+          <Tile label="Протоколы" title="Запущенные и всего установленные VPN-протоколы. Открыть список серверов"
+            value={`${protocols.running} / ${protocols.total}`} to="/servers"
             sub="запущено / всего" warn={protocols.running < protocols.total} />
           <Tile label="Клиенты" value={clients.total}
             sub={`${clients.online} онлайн · ${clients.activeToday} за сутки`}
             accent={clients.online > 0} />
-          <Tile label="Пользователи" value={users.total} to="/users"
+          <Tile label="Пользователи" title="Учётные записи панели. Открыть управление пользователями"
+            value={users.total} to="/users"
             sub={`${users.admins} admin · ${users.regular} user`} />
           <Tile label="Трафик сегодня" value={formatBytes(todayTotal)}
             sub={`за неделю ${formatBytes(weekTotal)}`} />
-          <Tile label="Подписки" value={subscriptions} to="/subscriptions" sub="Clash / FLClash" />
+          <Tile label="Подписки" value={subscriptions} to="/subscriptions" sub="Clash / FLClash"
+            title="Выданные ссылки-подписки. Открыть управление подписками" />
           {/* Хранилище — тоже показатель состояния, и в общем ряду оно перестаёт
               висеть отдельной строкой в подвале. Дата первого снимка убрана в
               подсказку: в плитке важна не она, а что ретеншен работает. */}
@@ -196,6 +199,7 @@ function ServerRow({ server: s }: { server: ServerSummary }) {
   return (
     <div>
       <Link to={`/server/${s.id}`} className="flex items-center justify-between"
+        title={`Открыть ${s.name}: протоколы, клиенты и статистика`}
         style={{ gap: 8, textDecoration: 'none', color: 'inherit' }}>
         <div style={{ minWidth: 0 }}>
           <div style={{ fontSize: 13, fontWeight: 500 }}>{s.name}</div>
