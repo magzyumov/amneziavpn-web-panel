@@ -1,6 +1,6 @@
 # Project Context — amneziavpn-web-panel
 _Generated: 2026-08-14_
-_Git commit: b2e79f7_
+_Git commit: 569a7c0_
 _Scan: .claude/agents/project-scanner_
 
 ## Overview
@@ -46,7 +46,7 @@ Frontend — React SPA; nginx отдаёт статику и проксируе�
 - `GET /api/health` — без auth и CSRF (docker healthcheck).
 
 ### Routes (mounted под /api; subscriptions дополнительно с `/`)
-Итого **59** обработчиков + `/api/health`. Все роутеры кроме `auth` требуют
+Итого **60** обработчиков + `/api/health`. Все роутеры кроме `auth` требуют
 `authMiddleware`; все кроме `auth` и `clients` — ещё и `requireAdmin`
 (в `clients` админ-only только `PUT /:id/limits`).
 
@@ -112,6 +112,10 @@ Frontend — React SPA; nginx отдаёт статику и проксируе�
 - `subscription.ts` — Clash YAML подписки (шаблон в `settings.clash_template`), slug'и.
 - `statsWorker.ts` — периодический опрос протоколов (одно SSH-соединение на
   сервер), накопительные снимки в `client_stats`, purge + `enforceLimits`.
+  Пропускает тик только при `peers === null` (опрос не удался); для xray перед
+  записью прогоняет снимки через `withIdleXrayPeers`, иначе молчащий клиент
+  выпадает из выборки и после рестарта контейнера его трафик не считается,
+  пока не перевалит за старый накопительный счётчик.
 - `statsAggregate.ts` — чистые функции над снимками: сумма положительных
   приращений (не последний снимок), downsample, rate-серии.
 
@@ -137,9 +141,9 @@ Frontend — React SPA; nginx отдаёт статику и проксируе�
 | telemt | telemt.ts | Telegram MTProto-прокси с FakeTLS; клиент = отдельный secret → `tg://proxy`. |
 | — | wgCommon.ts | общая механика WG/AWG: `WgFlavor` (tool/iface/confDir/container/image/buildDir), `wgRunArgs`, `installWgLike`, `genPeerKeys`, `nextClientIp`, `addPeer`, `removePeer`, `assertContainerRunning`. |
 | — | common.ts | `prepareHost` (ip_forward + сеть `amnezia-dns-net`), `assertPortFree`, `buildImage` (по sha Dockerfile), `runContainer` + `RUN_ARGS_LABEL`/`runArgsSha`, `writeRemoteFile`/`readRemoteFile`/`readContainerFile` (base64), `renderTemplate`, `removePeerBlock`, rand*. |
-| — | containers.ts | статусы контейнеров (`getContainersHealth` — один SSH-вызов), start/stop/remove/logs, `listAmneziaContainers`, `ensureDocker`, `scanExistingProtocols`, каталог `PROTOCOLS`. |
+| — | containers.ts | статусы контейнеров (`getContainersHealth` — один SSH-вызов), start/stop/remove/logs, `listAmneziaContainers`, `ensureDocker`, **`updateAndRebootHost`** (apt-get update+upgrade под `DEBIAN_FRONTEND=noninteractive` и `--force-confold/confdef`, затем `shutdown -r +1` и `disconnect(server.id)` — соединение умрёт вместе с сервером), `scanExistingProtocols`, каталог `PROTOCOLS`. `getContainerLogs` подменяет ошибку демона «does not support reading» человеческим текстом: так отвечают контейнеры, поднятые до 18.08.2026 с `--log-driver none`. |
 | — | dockerfiles.ts | JS template literals: Dockerfile'ы + start/configure-скрипты + шаблоны клиентских конфигов (следить за экранированием). |
-| — | stats.ts | per-peer трафик: `readAwgWgPeerStats`, `readXrayPeerStats`, `readTelemtPeerStats`, `isXrayStatsEnabled`, `enableXrayStats`. |
+| — | stats.ts | per-peer трафик: `readAwgWgPeerStats`, `readXrayPeerStats`, `readTelemtPeerStats`, `withIdleXrayPeers`, `isXrayStatsEnabled`, `enableXrayStats`. **`readXrayPeerStats` различает `null` (stats API не ответил — снимать нечего) и `[]` (ответил, но счётчиков ещё нет)**; `withIdleXrayPeers` дописывает нулевые снимки для клиентов, которых Xray не вернул (счётчик заводится только при трафике и теряется при рестарте). |
 | — | dns.ts | AmneziaDNS (unbound, DoT наружу), фиксированный IP `172.29.172.254`. |
 | — | drift.ts | сравнивает метки образа (`panel.dockerfile-sha`) и контейнера (`panel.run-sha`) с тем, что панель поставила бы сейчас; отдаёт `{ image, runArgs }` на протокол. Один SSH-вызов на все контейнеры; падение не роняет health. |
 
@@ -172,10 +176,10 @@ telemt по той же причине переведён с `releases/latest` �
 - Секреты (SSH-пароли/ключи) шифруются `PANEL_ENCRYPTION_KEY` в `services/crypto.ts`.
 
 ### Тесты
-vitest, 13 файлов `*.test.ts` рядом с модулями: `shell`, `peerId`,
+vitest, 14 файлов `*.test.ts` рядом с модулями: `shell`, `peerId`,
 `amneziaExport`, `statsAggregate`, `db`, `access`, `audit`, `dashboard`,
 `limits`, **`disk`**, `protocols/common`, `protocols/awg2`,
-`protocols/xrayTemplate`. Плюс `src/test-setup.ts` — изолирует тесты от боевой
+`protocols/xrayTemplate`, **`protocols/stats`** (`withIdleXrayPeers`). Плюс `src/test-setup.ts` — изолирует тесты от боевой
 базы. Покрывают чистые функции (валидаторы, рендер шаблонов, агрегация,
 run-args, парсинг размеров диска) — там и случались баги.
 
@@ -197,6 +201,10 @@ run-args, парсинг размеров диска) — там и случал
   `AvailableProtocol`, `PanelUser`, `CurrentUser`, `DashboardSummary`,
   `AuditRecord`/`AuditResponse`, **`DiskReport`/`DiskReportItem`**,
   `ProtocolDrift`, `HealthResponse`, `XraySettingsPayload`.
+- **Подсказки:** у кнопок, ссылок сайдбара и иконок-статусов проставлен нативный
+  `title=` с объяснением на русском (что произойдёт, а не как называется кнопка).
+  Покрыты все страницы и модалки — добавляя новый интерактивный элемент, ставь
+  `title` тем же изменением, иначе интерфейс расслаивается.
 - `src/protocols.ts` — единственный источник отображаемых названий и иконок
   (`PROTOCOL_ICONS`, `PROTOCOL_NAMES`, `protocolTitle`). Заголовок карточки
   выводится из `type + config` (awg2 → «AmneziaWG 3.0» / «2.0» по
@@ -205,6 +213,10 @@ run-args, парсинг размеров диска) — там и случал
   `MyClientsPage`, `ServersPage`, `ServerPage`, `SubscriptionsPage`,
   `UsersPage`, `AuditPage`, **`DiskPage`** (выбор сервера → таблица пунктов с
   размером, подсказкой, показом sudo-команды и кнопкой очистки у каждого).
+  В шапке `ServerPage` — Edit Server / Ensure Docker / AmneziaDNS / **⬆ Update
+  Server** (`serversApi.updateSystem` → `POST /servers/:id/update-system`,
+  `{ ok, output }`; спрашивает подтверждение, держит спиннер минуты и честно
+  предупреждает про ребут) / Scan Server / Install Protocol.
 - `pages/server/`: ProtocolCard, InstallProtocolModal, AddClientModal,
   ClientModal, ClientLimitsModal, LimitBadges, LimitFields, EditServerModal,
   ScanProtocolsModal, XraySettingsModal, XrayOptionFields, StatsModal, StatsTab,
@@ -241,6 +253,13 @@ run-args, парсинг размеров диска) — там и случал
   `docker exec`. Клиенты добавляются правкой конфига внутри контейнера
   (`wg/awg set` + дозапись `[Peer]`, правка `server.json` у Xray, secret у telemt);
   удаление клиента отзывает peer на сервере и удаляет подписку.
+- **Логи контейнеров:** все run-args протоколов (`wgRunArgs`, `xrayRunArgs`,
+  `telemtRunArgs`, `dnsRunArgs`) с 18.08.2026 задают `--log-driver json-file`
+  + `max-size=10m --max-file=3` вместо прежнего `--log-driver none` (тот глотал
+  логи, и `GET /protocols/:id/logs` возвращал ошибку демона). Это меняет
+  `runArgsSha` → **все контейнеры, поднятые раньше, покажут runArgs-drift, пока
+  их не переустановят**; на старых `getContainerLogs` отдаёт объяснение вместо
+  ошибки. Ротация обязательна: журнал без лимита забивает и без того тесный диск VPS.
 - **Drift:** health-запрос попутно сверяет метки образа/контейнера с текущим кодом
   и показывает расхождение в UI — сигнал «переустанови протокол», не ошибка.
 - **Лимиты клиентов:** срок (`expires_at`) — удаление клиента вместе с пиром;
@@ -260,5 +279,15 @@ run-args, парсинг размеров диска) — там и случал
 - **Статистика:** `statsWorker` снимает накопительные счётчики per-peer в
   `client_stats`; отображаемый трафик за период считается `statsAggregate.ts` как
   сумма положительных приращений между снимками (контейнер при рестарте обнуляет счётчики).
+  У Xray счётчик пользователя появляется только после первого трафика и исчезает
+  при рестарте, поэтому молчащим клиентам дописываются нулевые снимки
+  (`withIdleXrayPeers`) — иначе «нет снимков» читается как поломка сбора, а
+  старый счётчик остаётся базой и съедает последующий трафик.
+- **Обновление ОС сервера:** `POST /servers/:id/update-system` гоняет
+  `apt-get update && apt-get upgrade` неинтерактивно (`--force-confold/confdef`,
+  иначе диалог про конфиги вешает SSH-сессию) и планирует `shutdown -r +1` —
+  «+1», потому что `shutdown -r now` рвёт SSH раньше, чем команда вернёт код, и
+  успешный вызов выглядит как ошибка. SSH-соединение выбрасывается из пула
+  (`disconnect`). Запрос висит минуты — фронт держит спиннер, а не ждёт быстрый ответ.
 - **AmneziaDNS:** серверный unbound-резолвер (DoT наружу), фиксированный IP
   `172.29.172.254`; WG/AWG-клиенты автоматически получают его в `DNS =`.

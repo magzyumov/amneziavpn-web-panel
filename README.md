@@ -37,6 +37,7 @@ VPN-протоколы на ваших VPS по SSH, выпускает клие
 - **Статистика по клиентам** — принято/отправлено за период, онлайн-статус, графики скорости. Без логирования того, куда ходит пользователь.
 - **Лимиты клиента** — срок действия и суточный лимит трафика на любом протоколе: по истечении срока клиент удаляется, при исчерпании трафика доступ приостанавливается до новых суток и возвращается сам, тем же ключом.
 - **Отзыв доступа**: удаление клиента снимает peer на сервере, а не только строку в базе.
+- **Обновление пакетов ОС** на VPS одной кнопкой. ⚠️ Завершается перезагрузкой сервера: VPN ляжет на время ребута, а если панель стоит на том же VPS — ляжет и она.
 
 ---
 
@@ -67,7 +68,7 @@ docker compose up -d --build
 
 | Протокол | Что это | Особенности |
 |---|---|---|
-| **AmneziaWG 3.0** | WireGuard с обфускацией под DPI | Junk-пакеты (`Jc/Jmin/Jmax`), паддинг `S1-S4`, диапазонные заголовки `H1-H4`, сигнатурные пакеты `I1-I5` и **защита заголовков** (`HeaderProtectionKey`) |
+| **AmneziaWG 3.0** | WireGuard с обфускацией под DPI | Junk-пакеты (`Jc/Jmin/Jmax`), паддинг `S1-S4`, диапазонные заголовки `H1-H4`, сигнатурный пакет `I1` (`I2-I5` зарезервированы, пустые) и **защита заголовков** (`HeaderProtectionKey`) |
 | **Xray VLESS** | Маскировка под TLS чужого сайта (Reality) либо без TLS | `security` = `reality`/`none`, транспорт `tcp`/`xhttp`, произвольные SNI, fingerprint и `flow`, per-client UUID. Всё, кроме порта, меняется на живом протоколе |
 | **WireGuard** | Классический WG | Без обфускации — быстрый, но узнаваемый для DPI |
 | **Telemt** | Telegram-прокси MTProto | Обязательная FakeTLS-маскировка, per-client секреты и `tg://`-ссылки |
@@ -218,8 +219,8 @@ header protection) новые параметры не пишутся — их к
 | `PANEL_PORT` | `80` | Внешний порт панели. |
 | `PORT` | `3001` | Порт backend внутри контейнера; compose задаёт его явно. |
 | `DB_PATH` | `/data/panel.db` в Docker | Путь к базе. Дефолт в коде — `backend/data/panel.db`, он и действует при локальном `npm start`. |
-| `NODE_ENV` | `development` | В `production` включает HSTS и JSON-логи. |
-| `LOG_LEVEL` | `info` / `debug` | Уровень логирования (pino). |
+| `NODE_ENV` | `development` | В `production` включает HSTS, JSON-логи и флаг `secure` у cookie сессии. Compose его не пробрасывает намеренно: без TLS `secure`-cookie ломает вход. Включать вместе с HTTPS. |
+| `LOG_LEVEL` | `info` | Уровень логирования (pino). Без `NODE_ENV=production` дефолт — `debug`. |
 | `TZ` | `UTC` | Часовой пояс backend'а. Определяет, когда начинаются «сутки» для суточного лимита трафика. |
 | `STATS_POLL_INTERVAL_MS` | `60000` | Как часто снимать статистику. Тем же тиком проверяются лимиты клиентов. |
 | `STATS_RETENTION_DAYS` | `30` | Сколько дней хранить снимки; старые чистятся раз в 6 часов. |
@@ -396,11 +397,15 @@ DELETE /api/protocols/:id                      — удалить протоко
 POST   /api/protocols/:id/start                — запустить
 POST   /api/protocols/:id/stop                 — остановить
 GET    /api/protocols/:id/status               — статус
-GET    /api/protocols/:id/logs?lines=100       — логи контейнера
+GET    /api/protocols/:id/logs?lines=100       — логи контейнера (json-file, ротация 3×10 МБ;
+                                                 контейнеры, созданные до 18.08.2026, поднимались
+                                                 с --log-driver none и логов не отдают — нужна
+                                                 переустановка протокола, она же снимет «⟳ устарел»)
 GET    /api/protocols/:id/stats-status         — { statsEnabled }
 POST   /api/protocols/:id/enable-stats         — включить stats-API у Xray
 POST   /api/protocols/:id/settings             — сменить параметры Xray (security, sni,
-                                                 fingerprint, flow, transport); порт
+                                                 fingerprint, flow, transport,
+                                                 xhttpHost, xhttpPath, xhttpMode); порт
                                                  неизменяем, конфиги клиентов
                                                  перевыпускаются → { protocol, reissued }
 ```
