@@ -54,7 +54,9 @@ export async function resolveClientDns(server: Server): Promise<string> {
 
 export function dnsRunArgs(): string[] {
   return [
-    `--log-driver none`,
+    `--log-driver json-file`,
+    `--log-opt max-size=10m`,
+    `--log-opt max-file=3`,
     `--restart always`,
     `--network ${NET}`,
     `--ip=${AMNEZIA_DNS_IP}`,

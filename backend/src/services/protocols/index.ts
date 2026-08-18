@@ -12,7 +12,7 @@ export { installTelemt, addTelemtClient, removeTelemtClient, restoreTelemtClient
 export {
   getContainerStatus, getContainersHealth, startContainer, stopContainer,
   removeContainer, getContainerLogs, listAmneziaContainers, ensureDocker,
-  scanExistingProtocols, PROTOCOLS,
+  updateAndRebootHost, scanExistingProtocols, PROTOCOLS,
 } from './containers.js';
 export type { AmneziaContainerListing, ScannedProtocol, ScannedClient } from './containers.js';
 export { readAwgWgPeerStats, readXrayPeerStats, readTelemtPeerStats, withIdleXrayPeers, isXrayStatsEnabled, enableXrayStats } from './stats.js';

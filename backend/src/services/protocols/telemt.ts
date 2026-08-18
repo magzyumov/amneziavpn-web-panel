@@ -26,7 +26,9 @@ export function telemtRunArgs(port: number): string[] {
   return [
     `--name ${TELEMT_CONTAINER}`,
     `--restart always`,
-    `--log-driver none`,
+    `--log-driver json-file`,
+    `--log-opt max-size=10m`,
+    `--log-opt max-file=3`,
     `-v /opt/amnezia:/opt/amnezia`,
     `-p ${port}:${port}/tcp`,
     TELEMT_IMAGE,
