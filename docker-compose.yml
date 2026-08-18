@@ -12,6 +12,10 @@ services:
       # Определяет, когда начинаются «сутки» для суточного лимита трафика.
       # По умолчанию UTC — для Москвы это 03:00, поэтому TZ стоит задать явно.
       TZ: ${TZ:-UTC}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      STATS_POLL_INTERVAL_MS: ${STATS_POLL_INTERVAL_MS:-60000}
+      STATS_RETENTION_DAYS: ${STATS_RETENTION_DAYS:-30}
+      AUDIT_RETENTION_DAYS: ${AUDIT_RETENTION_DAYS:-90}
     volumes:
       - ./data:/data
     healthcheck:
