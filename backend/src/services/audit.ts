@@ -98,6 +98,7 @@ export function describeAction(method: string, path: string): ActionInfo | null 
     'DELETE /servers/:id':              { action: 'server.delete',        targetType: 'server' },
     'POST /servers/:id/test':           { action: 'server.test',          targetType: 'server' },
     'POST /servers/:id/ensure-docker':  { action: 'server.ensure_docker', targetType: 'server' },
+    'POST /servers/:id/update-system':  { action: 'server.update_system', targetType: 'server' },
     'POST /servers/:id/dns':            { action: 'server.dns_install',   targetType: 'server' },
     'DELETE /servers/:id/dns':          { action: 'server.dns_remove',    targetType: 'server' },
     'POST /servers/:id/scan-protocols': { action: 'server.scan',          targetType: 'server' },

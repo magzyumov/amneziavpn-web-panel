@@ -121,7 +121,8 @@ export default function AuditPage() {
           </select>
 
           {(filter.username || filter.action || filter.status) && (
-            <button className="btn btn-ghost btn-sm" onClick={() => { setPage(0); setFilter({ username: '', action: '', status: '' }); }}>
+            <button className="btn btn-ghost btn-sm" title="Сбросить фильтры и вернуться к началу журнала"
+              onClick={() => { setPage(0); setFilter({ username: '', action: '', status: '' }); }}>
               ✕ сбросить
             </button>
           )}
@@ -159,13 +160,15 @@ export default function AuditPage() {
 
         {pages > 1 && (
           <div className="flex items-center justify-between" style={{ marginTop: 16 }}>
-            <button className="btn btn-outline btn-sm" disabled={page === 0} onClick={() => setPage(p => p - 1)}>
+            <button className="btn btn-outline btn-sm" disabled={page === 0} onClick={() => setPage(p => p - 1)}
+              title="Предыдущая страница журнала">
               ← Назад
             </button>
             <span className="mono text-muted" style={{ fontSize: 11 }}>
               стр. {page + 1} из {pages}
             </span>
-            <button className="btn btn-outline btn-sm" disabled={page >= pages - 1} onClick={() => setPage(p => p + 1)}>
+            <button className="btn btn-outline btn-sm" disabled={page >= pages - 1} onClick={() => setPage(p => p + 1)}
+              title="Следующая страница журнала">
               Вперёд →
             </button>
           </div>

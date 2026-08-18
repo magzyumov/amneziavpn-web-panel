@@ -38,7 +38,9 @@ export const confPath = (f: WgFlavor): string => `${f.confDir}/${f.iface}.conf`;
 // пересчитать ожидаемый отпечаток для уже запущенного контейнера.
 export function wgRunArgs(f: WgFlavor, port: number): string[] {
   return [
-    `--log-driver none`,
+    `--log-driver json-file`,
+    `--log-opt max-size=10m`,
+    `--log-opt max-file=3`,
     `--restart always`,
     `--privileged`,
     `--cap-add=NET_ADMIN`,

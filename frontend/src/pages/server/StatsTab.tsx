@@ -93,6 +93,7 @@ export default function StatsTab({ clientId, protocolType }: Props) {
         {RANGES.map(r => (
           <button key={r.id}
             className={`btn btn-sm ${range === r.id ? 'btn-primary' : 'btn-outline'}`}
+            title={`Показать статистику за период: ${r.label}`}
             onClick={() => setRange(r.id)}>{r.label}</button>
         ))}
       </div>

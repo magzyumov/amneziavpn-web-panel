@@ -41,6 +41,7 @@ export default function ServerPage() {
   const [showEdit, setShowEdit] = useState(false);
   const [loading, setLoading] = useState(true);
   const [installingDocker, setInstallingDocker] = useState(false);
+  const [updating, setUpdating] = useState(false);
   const [dockerMsg, setDockerMsg] = useState('');
   const [dnsInstalled, setDnsInstalled] = useState<boolean | null>(null);
   const [dnsBusy, setDnsBusy] = useState(false);
@@ -114,6 +115,29 @@ export default function ServerPage() {
     }
   };
 
+  // Обновление ОС: apt-get upgrade идёт минутами, а в конце сервер уходит в
+  // ребут. Если панель живёт на этом же VPS — она уедет вместе с ним, поэтому
+  // спрашиваем подтверждение и честно пишем, что будет.
+  const updateSystem = async () => {
+    if (!id || updating) return;
+    if (!confirm(
+      `Обновить пакеты на «${server?.name}» и перезагрузить сервер?\n\n` +
+      'Выполнится: apt-get update && apt-get upgrade && shutdown -r +1\n' +
+      'Займёт несколько минут, в конце VPN отвалится на время перезагрузки.',
+    )) return;
+
+    setUpdating(true);
+    setDockerMsg('Обновляю пакеты… это несколько минут, не закрывайте страницу.');
+    try {
+      await serversApi.updateSystem(id);
+      setDockerMsg('Пакеты обновлены. Сервер перезагрузится через минуту — панель ненадолго потеряет с ним связь.');
+    } catch (e: any) {
+      setDockerMsg('Error: ' + (e.response?.data?.error || e.message));
+    } finally {
+      setUpdating(false);
+    }
+  };
+
   const toggleDns = async () => {
     if (!id || dnsBusy) return;
     setDnsBusy(true);
@@ -150,14 +174,16 @@ export default function ServerPage() {
         <div className="flex items-center justify-between page-header-row">
           <div>
             <div className="flex items-center gap-8">
-              <button className="btn btn-ghost btn-sm" onClick={() => navigate('/')}>← Back</button>
+              <button className="btn btn-ghost btn-sm" onClick={() => navigate('/')} title="Вернуться к сводке">← Back</button>
               <div className="page-title">{server.name}</div>
             </div>
             <div className="page-sub mono">// {server.username}@{server.host}:{server.port}</div>
           </div>
           <div className="flex gap-8 page-header-actions">
-            <button className="btn btn-outline" onClick={() => setShowEdit(true)}>✎ Edit Server</button>
-            <button className="btn btn-outline" onClick={ensureDocker} disabled={installingDocker}>
+            <button className="btn btn-outline" onClick={() => setShowEdit(true)}
+              title="Изменить имя, адрес и SSH-доступ к этому VPS">✎ Edit Server</button>
+            <button className="btn btn-outline" onClick={ensureDocker} disabled={installingDocker}
+              title="Проверить, что на сервере есть Docker, и установить его, если нет">
               {installingDocker ? <><span className="spinner" /> Installing Docker…</> : '🐳 Ensure Docker'}
             </button>
             <button className="btn btn-outline" onClick={toggleDns} disabled={dnsBusy || dnsInstalled === null}
@@ -166,8 +192,14 @@ export default function ServerPage() {
                 ? <><span className="spinner" /> AmneziaDNS…</>
                 : `🛡️ AmneziaDNS: ${dnsInstalled === null ? '—' : dnsInstalled ? 'On' : 'Off'}`}
             </button>
-            <button className="btn btn-outline" onClick={() => setShowScan(true)}>🔍 Scan Server</button>
-            <button className="btn btn-primary" onClick={() => setShowInstall(true)}>+ Install Protocol</button>
+            <button className="btn btn-outline" onClick={updateSystem} disabled={updating}
+              title="apt-get update && upgrade на сервере, затем перезагрузка через минуту. Занимает несколько минут, VPN на время ребута отвалится">
+              {updating ? <><span className="spinner" /> Обновляю…</> : '⬆ Update Server'}
+            </button>
+            <button className="btn btn-outline" onClick={() => setShowScan(true)}
+              title="Найти на сервере уже стоящие контейнеры Amnezia и импортировать их в панель">🔍 Scan Server</button>
+            <button className="btn btn-primary" onClick={() => setShowInstall(true)}
+              title="Поставить новый VPN-протокол: панель соберёт образ и запустит контейнер на этом сервере">+ Install Protocol</button>
           </div>
         </div>
       </div>
@@ -183,7 +215,8 @@ export default function ServerPage() {
           <div className="empty-state">
             <div className="empty-icon">◈</div>
             <div className="empty-text">No protocols installed yet.</div>
-            <button className="btn btn-primary" style={{ marginTop: 16 }} onClick={() => setShowInstall(true)}>
+            <button className="btn btn-primary" style={{ marginTop: 16 }} onClick={() => setShowInstall(true)}
+              title="Поставить первый VPN-протокол: панель соберёт образ и запустит контейнер">
               + Install First Protocol
             </button>
           </div>

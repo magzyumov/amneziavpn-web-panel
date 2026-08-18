@@ -133,7 +133,9 @@ function ProtocolCard({ protocol, server: _server, onDelete, drift, dragHandlePr
             <div className="mono text-muted" style={{ fontSize: 11, display: 'flex', alignItems: 'center', gap: 6 }}>
               :{protocol.port} · {protocol.container_name}
               {cfg && (
-                <button onClick={() => setShowConfig(s => !s)} style={{
+                <button onClick={() => setShowConfig(s => !s)}
+                  title="Показать параметры протокола: порт, ключи, SNI — то, из чего собираются клиентские конфиги"
+                  style={{
                   background: 'none', border: 'none', cursor: 'pointer', padding: 0,
                   color: showConfig ? 'var(--accent)' : 'var(--text-muted)',
                   fontFamily: 'var(--font-mono)', fontSize: 10,
@@ -175,11 +177,16 @@ function ProtocolCard({ protocol, server: _server, onDelete, drift, dragHandlePr
               title="Security, SNI, fingerprint, flow, транспорт. Порт меняется только переустановкой"
             >⚙</button>
           )}
-          <button className="btn btn-ghost btn-sm" onClick={toggle} disabled={toggling}>
+          <button className="btn btn-ghost btn-sm" onClick={toggle} disabled={toggling}
+            title={status === 'running'
+              ? 'Остановить контейнер: протокол перестанет принимать подключения'
+              : 'Запустить контейнер протокола'}>
             {toggling ? <span className="spinner" style={{ width: 12, height: 12 }} /> : status === 'running' ? '⏸' : '▶'}
           </button>
-          <button className="btn btn-ghost btn-sm" onClick={fetchLogs}>📋</button>
-          <button className="btn btn-danger btn-sm" onClick={() => onDelete(protocol.id)}>✕</button>
+          <button className="btn btn-ghost btn-sm" onClick={fetchLogs}
+            title="Логи контейнера — последние строки вывода демона (docker logs)">📋</button>
+          <button className="btn btn-danger btn-sm" onClick={() => onDelete(protocol.id)}
+            title="Удалить протокол: контейнер сносится с сервера вместе со всеми его клиентами">✕</button>
         </div>
       </div>
 
@@ -206,7 +213,7 @@ function ProtocolCard({ protocol, server: _server, onDelete, drift, dragHandlePr
         <div style={{ marginBottom: 12 }}>
           <div className="flex justify-between items-center" style={{ marginBottom: 6 }}>
             <span className="input-label">Container Logs</span>
-            <button className="btn btn-ghost btn-sm" onClick={() => setShowLogs(false)}>✕</button>
+            <button className="btn btn-ghost btn-sm" onClick={() => setShowLogs(false)} title="Скрыть логи">✕</button>
           </div>
           <div className="terminal">{logs || 'No logs'}</div>
         </div>
@@ -215,6 +222,7 @@ function ProtocolCard({ protocol, server: _server, onDelete, drift, dragHandlePr
       <div style={{ borderTop: '1px solid var(--border)', paddingTop: 12 }}>
         <div className="flex justify-between items-center" style={{ marginBottom: showClients ? 10 : 0 }}>
           <button
+            title="Показать или скрыть список клиентов протокола"
             onClick={() => { setShowClients(s => !s); setSearch(''); }}
             style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}
           >
@@ -226,7 +234,8 @@ function ProtocolCard({ protocol, server: _server, onDelete, drift, dragHandlePr
               Clients ({loadingClients ? '…' : clients.length})
             </span>
           </button>
-          <button className="btn btn-outline btn-sm" onClick={() => { setShowClients(true); setShowAddClient(true); }}>+ Add</button>
+          <button className="btn btn-outline btn-sm" onClick={() => { setShowClients(true); setShowAddClient(true); }}
+            title="Создать клиента: панель сгенерирует ключи, добавит пира на сервер и выдаст конфиг">+ Add</button>
         </div>
 
         {showClients && (
@@ -249,7 +258,7 @@ function ProtocolCard({ protocol, server: _server, onDelete, drift, dragHandlePr
                     onChange={e => setSearch(e.target.value)}
                   />
                   {search && (
-                    <button onClick={() => setSearch('')} style={{
+                    <button onClick={() => setSearch('')} title="Очистить поиск" style={{
                       position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)',
                       background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: 14, lineHeight: 1, padding: 0,
                     }}>×</button>
@@ -327,16 +336,21 @@ function ProtocolCard({ protocol, server: _server, onDelete, drift, dragHandlePr
                               className="btn btn-outline btn-sm"
                               onClick={() => setSelectedClient(c)}
                               disabled={!c.has_config}
-                              title={c.has_config ? undefined : 'Импортированный клиент — конфиг недоступен'}
+                              title={c.has_config
+                                ? 'Конфиг, QR-код и файл для импорта в приложение'
+                                : 'Импортированный клиент — конфиг недоступен'}
                             >⬡ View</button>
-                            <button className="btn btn-outline btn-sm" onClick={() => setStatsClient(c)} title="Статистика клиента">📊 Stats</button>
-                            <button className="btn btn-outline btn-sm" onClick={() => setLimitsClient(c)} title="Срок действия и суточный лимит трафика">⏳ Лимиты</button>
+                            <button className="btn btn-outline btn-sm" onClick={() => setStatsClient(c)}
+                              title="Статистика клиента: принято/отправлено за период и когда был онлайн">📊 Stats</button>
+                            <button className="btn btn-outline btn-sm" onClick={() => setLimitsClient(c)}
+                              title="Срок действия и суточный лимит трафика: по сроку клиент удаляется, по лимиту — приостанавливается до новых суток">⏳ Лимиты</button>
                             {isXray && (
                               c.has_config
                                 ? <CopySubButton clientId={c.id} />
                                 : <span />
                             )}
-                            <button className="btn btn-danger btn-sm" onClick={() => delClient(c.id)}>✕</button>
+                            <button className="btn btn-danger btn-sm" onClick={() => delClient(c.id)}
+                              title="Удалить клиента: пир снимается с сервера, выданный конфиг перестаёт работать">✕</button>
                           </div>
                         </div>
                       </div>

@@ -20,7 +20,8 @@ function CopyButton({ text, label = 'Copy' }: CopyButtonProps) {
     setTimeout(() => setCopied(false), 2000);
   };
   return (
-    <button className={`btn btn-sm ${copied ? 'btn-primary' : 'btn-outline'}`} onClick={copy}>
+    <button className={`btn btn-sm ${copied ? 'btn-primary' : 'btn-outline'}`} onClick={copy}
+      title="Скопировать в буфер обмена">
       {copied ? '✓ Copied' : label}
     </button>
   );
@@ -133,6 +134,11 @@ export default function SubscriptionsPage() {
             <button
               key={t.id}
               className={`btn btn-sm ${activeTab === t.id ? 'btn-primary' : 'btn-outline'}`}
+              title={{
+                subs: 'Выданные подписки и ссылки на них',
+                template: 'Шаблон, по которому собирается содержимое подписок',
+                settings: 'Базовый URL подписок и прочие общие настройки',
+              }[t.id]}
               onClick={() => setActiveTab(t.id)}
             >
               {t.label}
@@ -191,7 +197,8 @@ export default function SubscriptionsPage() {
                           {new Date(sub.created_at).toLocaleDateString('ru-RU')}
                         </td>
                         <td>
-                          <button className="btn btn-danger btn-sm" onClick={() => deleteSub(sub.id)}>✕</button>
+                          <button className="btn btn-danger btn-sm" onClick={() => deleteSub(sub.id)}
+                            title="Удалить подписку: её ссылка перестанет отдавать конфиги">✕</button>
                         </td>
                       </tr>
                     );
@@ -216,11 +223,14 @@ export default function SubscriptionsPage() {
                   {isTemplateChanged && (
                     <span className="mono" style={{ fontSize: 11, color: 'var(--yellow)', alignSelf: 'center' }}>● Несохранённые изменения</span>
                   )}
-                  <button className="btn btn-ghost btn-sm" onClick={resetTemplate}>↺ Сбросить</button>
-                  <button className="btn btn-outline btn-sm" onClick={regenerate} disabled={regenerating}>
+                  <button className="btn btn-ghost btn-sm" onClick={resetTemplate}
+                    title="Вернуть шаблон к сохранённому значению — несохранённые правки пропадут">↺ Сбросить</button>
+                  <button className="btn btn-outline btn-sm" onClick={regenerate} disabled={regenerating}
+                    title="Пересобрать содержимое всех выданных подписок по текущему шаблону">
                     {regenerating ? <span className="spinner" style={{ width: 12, height: 12 }} /> : '⟳ Обновить все подписки'}
                   </button>
-                  <button className="btn btn-primary btn-sm" onClick={saveTemplate} disabled={saving || !isTemplateChanged}>
+                  <button className="btn btn-primary btn-sm" onClick={saveTemplate} disabled={saving || !isTemplateChanged}
+                    title="Сохранить шаблон. На уже выданные подписки применится при следующем обращении к ним">
                     {saving ? <span className="spinner" style={{ width: 12, height: 12 }} /> : '💾 Сохранить'}
                   </button>
                 </div>
@@ -248,11 +258,14 @@ export default function SubscriptionsPage() {
                   {template.split('\n').length} строк · {template.length} символов
                 </span>
                 <div className="flex gap-8">
-                  <button className="btn btn-ghost btn-sm" onClick={resetTemplate}>↺ Сбросить</button>
-                  <button className="btn btn-outline btn-sm" onClick={regenerate} disabled={regenerating}>
+                  <button className="btn btn-ghost btn-sm" onClick={resetTemplate}
+                    title="Вернуть шаблон к сохранённому значению — несохранённые правки пропадут">↺ Сбросить</button>
+                  <button className="btn btn-outline btn-sm" onClick={regenerate} disabled={regenerating}
+                    title="Пересобрать содержимое всех выданных подписок по текущему шаблону">
                     {regenerating ? <span className="spinner" style={{ width: 12, height: 12 }} /> : '⟳ Обновить все подписки'}
                   </button>
-                  <button className="btn btn-primary btn-sm" onClick={saveTemplate} disabled={saving || !isTemplateChanged}>
+                  <button className="btn btn-primary btn-sm" onClick={saveTemplate} disabled={saving || !isTemplateChanged}
+                    title="Сохранить шаблон. На уже выданные подписки применится при следующем обращении к ним">
                     {saving ? <span className="spinner" style={{ width: 12, height: 12 }} /> : '💾 Сохранить шаблон'}
                   </button>
                 </div>
@@ -292,7 +305,8 @@ export default function SubscriptionsPage() {
               </div>
 
               <div style={{ marginTop: 16 }}>
-                <button className="btn btn-primary" onClick={saveSettings}>💾 Сохранить</button>
+                <button className="btn btn-primary" onClick={saveSettings}
+                  title="Сохранить настройки подписок">💾 Сохранить</button>
               </div>
             </div>
 

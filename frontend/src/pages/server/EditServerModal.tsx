@@ -90,7 +90,8 @@ export default function EditServerModal({ server, onClose, onSaved }: Props) {
         </div>
         <div className="modal-actions">
           <button className="btn btn-outline" onClick={onClose}>Cancel</button>
-          <button className="btn btn-primary" onClick={submit} disabled={loading}>
+          <button className="btn btn-primary" onClick={submit} disabled={loading}
+            title="Сохранить доступ к серверу. Панель проверит SSH перед записью">
             {loading ? <><span className="spinner" /> Saving…</> : '✓ Save'}
           </button>
         </div>

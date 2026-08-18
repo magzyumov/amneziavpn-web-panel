@@ -50,7 +50,8 @@ export default function UsersPage() {
             <div className="page-sub mono">// {users.length} аккаунтов</div>
           </div>
           <div className="flex gap-8 page-header-actions">
-            <button className="btn btn-primary" onClick={() => setCreating(true)}>+ Добавить</button>
+            <button className="btn btn-primary" onClick={() => setCreating(true)}
+              title="Создать пользователя панели и выдать ему доступ к выбранным протоколам">+ Добавить</button>
           </div>
         </div>
       </div>
@@ -81,12 +82,15 @@ export default function UsersPage() {
                   </div>
                 </div>
                 <div className="flex gap-8 items-center">
-                  <button className="btn btn-outline btn-sm" onClick={() => setEditing(u)}>✎ Изменить</button>
+                  <button className="btn btn-outline btn-sm" onClick={() => setEditing(u)}
+                    title="Сменить пароль, роль и список протоколов, доступных этому пользователю">✎ Изменить</button>
                   <button
                     className="btn btn-danger btn-sm"
                     onClick={() => del(u)}
                     disabled={u.username === me.username}
-                    title={u.username === me.username ? 'Нельзя удалить самого себя' : undefined}
+                    title={u.username === me.username
+                      ? 'Нельзя удалить самого себя'
+                      : 'Удалить пользователя вместе со всеми его клиентами'}
                   >✕</button>
                 </div>
               </div>
@@ -268,7 +272,8 @@ function UserModal({ user, protocols, onClose, onSaved }: ModalProps) {
 
         <div className="modal-actions">
           <button className="btn btn-outline" onClick={onClose}>Отмена</button>
-          <button className="btn btn-primary" onClick={submit} disabled={loading || !canSubmit}>
+          <button className="btn btn-primary" onClick={submit} disabled={loading || !canSubmit}
+            title="Сохранить пользователя и выданные ему протоколы">
             {loading ? <span className="spinner" /> : isEdit ? 'Сохранить' : '+ Создать'}
           </button>
         </div>

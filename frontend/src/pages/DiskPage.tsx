@@ -128,7 +128,8 @@ export default function DiskPage() {
                       {formatBytes(item.bytes)}
                     </span>
                     <button className="btn btn-outline btn-sm" disabled={!!busy || item.bytes === 0}
-                      onClick={() => clean(item)}>
+                      onClick={() => clean(item)}
+                      title={`Выполнить по SSH под sudo: ${item.cleanCmd}`}>
                       {busy === item.id ? <><span className="spinner" /> Чищу…</> : 'Очистить'}
                     </button>
                   </div>

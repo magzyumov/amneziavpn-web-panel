@@ -166,7 +166,8 @@ export default function InstallProtocolModal({ serverId, onClose, onInstalled }:
 
         <div className="modal-actions">
           <button className="btn btn-outline" onClick={onClose} disabled={loading}>Cancel</button>
-          <button className="btn btn-primary" onClick={install} disabled={loading || sTooSmall.length > 0}>
+          <button className="btn btn-primary" onClick={install} disabled={loading || sTooSmall.length > 0}
+            title="Собрать образ и запустить контейнер на сервере. Занимает пару минут">
             {loading ? <><span className="spinner" /> Installing…</> : '▶ Install'}
           </button>
         </div>

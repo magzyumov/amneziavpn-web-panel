@@ -1,4 +1,4 @@
-import { exec, execSudo } from '../ssh.js';
+import { exec, execSudo, disconnect } from '../ssh.js';
 import { assertContainerName, shInt } from '../shell.js';
 import { readContainerFile } from './common.js';
 import { XRAY_DEFAULT_SNI } from './xray.js';
@@ -47,6 +47,13 @@ export async function getContainerLogs(server: Server, containerName: string, li
   assertContainerName(containerName);
   const safeLines = shInt(lines, { min: 1, max: 10000, label: 'lines' });
   const res = await execSudo(server, `docker logs --tail ${safeLines} ${containerName} 2>&1`);
+  // Контейнеры, запущенные панелью до 18.08.2026, создавались с --log-driver none:
+  // демон ничего не писал и на запрос логов отвечает ошибкой. Отдаём объяснение,
+  // а не сырой текст демона — иначе непонятно, что чинить.
+  if (res.stdout.includes('does not support reading')) {
+    return 'Логи этого контейнера не сохранялись: он запущен с --log-driver none.\n'
+      + 'Переустановите протокол — новые контейнеры пишут логи (json-file, до 3×10 МБ).';
+  }
   return res.stdout;
 }
 
@@ -59,6 +66,31 @@ export async function listAmneziaContainers(server: Server): Promise<AmneziaCont
     const [name, status, image] = line.split('\t');
     return { name: (name || '').trim(), status: (status || '').trim(), image: (image || '').trim() };
   });
+}
+
+// Обновление пакетов ОС на сервере с последующей перезагрузкой.
+//
+// apt-get, а не apt: у apt нет стабильного CLI и он ругается при неинтерактивном
+// вызове. DEBIAN_FRONTEND + force-confold обязательны — иначе диалог «оставить
+// ваш конфиг или взять новый?» повиснет на SSH-сессии навсегда.
+//
+// Перезагрузку планируем на +1 минуту: `shutdown -r now` рвёт SSH до того, как
+// команда вернёт код, и вызов выглядит как ошибка. За минуту ответ успевает
+// дойти до панели.
+export async function updateAndRebootHost(server: Server): Promise<string> {
+  const res = await execSudo(server, [
+    'export DEBIAN_FRONTEND=noninteractive',
+    'apt-get update',
+    'apt-get -y -o Dpkg::Options::=--force-confold -o Dpkg::Options::=--force-confdef upgrade',
+  ].join(' && '));
+  if (res.code !== 0) {
+    throw new UserError(`apt-get не отработал (код ${res.code}): ${(res.stderr || res.stdout).slice(-500)}`);
+  }
+  await execSudo(server, 'shutdown -r +1');
+  // Соединение всё равно умрёт вместе с сервером — не оставляем его в пуле,
+  // иначе следующий запрос уйдёт в мёртвый сокет и будет ждать таймаута.
+  disconnect(server.id);
+  return res.stdout.slice(-4000);
 }
 
 export async function ensureDocker(server: Server): Promise<boolean> {

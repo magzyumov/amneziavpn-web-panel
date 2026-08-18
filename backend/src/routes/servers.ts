@@ -9,7 +9,7 @@ import { cacheDnsStatus } from '../services/serverProbe.js';
 import { auditTarget, auditDetails } from '../middleware/audit.js';
 import { validateBody } from '../middleware/validate.js';
 import { testConnection, disconnect } from '../services/ssh.js';
-import { listAmneziaContainers, ensureDocker, scanExistingProtocols, installDns, removeDns, isDnsRunning } from '../services/protocols/index.js';
+import { listAmneziaContainers, ensureDocker, updateAndRebootHost, scanExistingProtocols, installDns, removeDns, isDnsRunning } from '../services/protocols/index.js';
 import { assertContainerName, assertPort } from '../services/shell.js';
 import { createSubscription, getVpsHost } from '../services/subscription.js';
 import { logger } from '../services/logger.js';
@@ -131,6 +131,16 @@ router.post('/:id/ensure-docker', async (req, res) => {
 
   await ensureDocker(server);
   res.json({ ok: true });
+});
+
+// Обновление пакетов ОС + перезагрузка. Запрос висит всё время apt-get upgrade
+// (минуты), поэтому фронт показывает прогресс сам, а не ждёт быстрый ответ.
+router.post('/:id/update-system', async (req, res) => {
+  const server = loadServer(req, res);
+  if (!server) return;
+
+  const output = await updateAndRebootHost(server);
+  res.json({ ok: true, output });
 });
 
 // AmneziaDNS — серверный DNS-резолвер (защита от DNS-leak). Один на сервер.

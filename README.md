@@ -376,6 +376,7 @@ PUT    /api/servers/:id                   — обновить
 DELETE /api/servers/:id                   — удалить
 POST   /api/servers/:id/test              — тест SSH
 POST   /api/servers/:id/ensure-docker     — установить Docker
+POST   /api/servers/:id/update-system     — apt-get update/upgrade + перезагрузка сервера
 GET    /api/servers/:id/containers        — контейнеры Amnezia на сервере
 POST   /api/servers/:id/scan-protocols    — найти установленные протоколы
 POST   /api/servers/:id/import-protocol   — импортировать протокол вместе с клиентами

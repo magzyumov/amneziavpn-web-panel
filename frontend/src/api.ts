@@ -295,6 +295,7 @@ export const serversApi = {
   delete: (id: string) => api.delete(`/servers/${id}`),
   test: (id: string) => api.post(`/servers/${id}/test`),
   ensureDocker: (id: string) => api.post(`/servers/${id}/ensure-docker`),
+  updateSystem: (id: string) => api.post<{ ok: true; output: string }>(`/servers/${id}/update-system`),
   containers: (id: string) => api.get(`/servers/${id}/containers`),
   update: (id: string, data: Partial<ServerRecord> & { password?: string; private_key?: string }) => api.put(`/servers/${id}`, data),
   scanProtocols: (id: string) => api.post(`/servers/${id}/scan-protocols`),
