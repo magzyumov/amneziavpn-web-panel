@@ -61,3 +61,15 @@ describe('parseReport', () => {
     expect(JSON.stringify(parseReport(''))).not.toContain('docker system df');
   });
 });
+
+describe('DISK_ITEMS', () => {
+  it('размер висячих образов считается по тем же образам, что удалит кнопка', () => {
+    // docker image prune -f трогает ТОЛЬКО dangling. Пока размер брался из
+    // Reclaimable в `docker system df`, он включал и неиспользуемые образы
+    // с тегами — цифра над кнопкой не сходилась с тем, что кнопка освобождает.
+    const item = DISK_ITEMS.find(i => i.id === 'docker-images')!;
+    expect(item.cleanCmd).toBe('docker image prune -f');
+    expect(item.sizeCmd).toContain('dangling=true');
+    expect(item.sizeCmd).not.toContain('Reclaimable');
+  });
+});

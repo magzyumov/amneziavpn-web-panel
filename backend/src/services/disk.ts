@@ -30,8 +30,14 @@ export const DISK_ITEMS: DiskItem[] = [
   {
     id: 'docker-images',
     label: 'Висячие образы Docker',
-    hint: 'Слои от пересобранных образов, ни на что не ссылающиеся. Образы работающих контейнеров не трогаются.',
-    sizeCmd: `docker system df --format '{{.Type}}|{{.Reclaimable}}' | awk -F'|' '$1=="Images"{print $2}'`,
+    hint: 'Слои от пересобранных образов, потерявшие тег. Образы с тегами не трогаются, '
+      + 'даже если ими никто не пользуется, — старые версии протоколов удаляются вручную через docker rmi.',
+    // Размер считаем ровно по тем образам, которые удалит cleanCmd, — по dangling.
+    // Раньше здесь стоял Reclaimable из `docker system df`, а он включает и
+    // помеченные тегами неиспользуемые образы, которых `docker image prune -f`
+    // не касается: цифра над кнопкой обещала сотни мегабайт, а кнопка освобождала
+    // единицы. Заголовок файла обещает обратное — размер и очистка должны совпадать.
+    sizeCmd: `docker images -f dangling=true -q | xargs -r docker image inspect --format '{{.Size}}' | awk '{s+=$1} END{print s+0}'`,
     cleanCmd: 'docker image prune -f',
   },
   {
