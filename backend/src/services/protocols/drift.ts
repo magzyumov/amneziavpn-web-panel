@@ -10,12 +10,18 @@
 //
 // Здесь мы сравниваем метки на образе и контейнере с тем, что панель поставила
 // бы сейчас, и показываем расхождение в UI. Само по себе оно не ошибка —
-// лечится переустановкой протокола.
+// лечится upgradeProtocolContainer (в конце файла), а если новая версия требует
+// новых параметров в самом конфиге — переустановкой протокола.
 
 import { createHash } from 'crypto';
-import { exec } from '../ssh.js';
-import { RUN_ARGS_LABEL, runArgsSha } from './common.js';
-import { DOCKERFILES } from './dockerfiles.js';
+import { exec, execSudo } from '../ssh.js';
+import { UserError } from '../errors.js';
+import { assertContainerName } from '../shell.js';
+import {
+  RUN_ARGS_LABEL, runArgsSha, buildImage, runContainer, writeRemoteFile, driftFromLabels,
+  type ProtocolDrift,
+} from './common.js';
+import { DOCKERFILES, START_SCRIPTS } from './dockerfiles.js';
 import { wgRunArgs } from './wgCommon.js';
 // Флейворы берём из самих протоколов, а не держим копию: тег образа менялся бы
 // в двух местах, и детектор дрейфа начал бы сравнивать с несуществующим образом.
@@ -23,27 +29,52 @@ import { AWG2_FLAVOR } from './awg2.js';
 import { WG_FLAVOR } from './wireguard.js';
 import { xrayRunArgs, XRAY_IMAGE } from './xray.js';
 import { telemtRunArgs, TELEMT_IMAGE } from './telemt.js';
-import type { Server, ProtocolType } from '../../types.js';
+import type { Server, Protocol, ProtocolType } from '../../types.js';
 
 const DOCKERFILE_LABEL = 'panel.dockerfile-sha';
 
+interface ContainerPlan {
+  image: string;
+  dockerfile: string;
+  buildDir: string;
+  runArgs: string[];
+  /** Куда лечь start.sh. Каталог общий с конфигами протокола. */
+  confDir: string;
+  /** start.sh зависит от конфига протокола, поэтому считается лениво. */
+  startScript: (serverHost: string, config: Record<string, unknown>) => string;
+  /** Нужно ли подключать контейнер к amnezia-dns-net после запуска. */
+  dnsNet: boolean;
+}
+
 // Что панель поставила бы сейчас для протокола данного типа.
-function expected(type: ProtocolType, port: number): { image: string; dockerfile: string; runArgs: string[] } | null {
+function expected(type: ProtocolType, port: number): ContainerPlan | null {
+  const str = (v: unknown, fallback: string) => (typeof v === 'string' && v ? v : fallback);
   switch (type) {
-    case 'awg2':      return { image: AWG2_FLAVOR.imageName, dockerfile: DOCKERFILES.awg2,      runArgs: wgRunArgs(AWG2_FLAVOR, port) };
-    case 'wireguard': return { image: WG_FLAVOR.imageName,   dockerfile: DOCKERFILES.wireguard, runArgs: wgRunArgs(WG_FLAVOR, port) };
-    case 'xray':      return { image: XRAY_IMAGE,            dockerfile: DOCKERFILES.xray,      runArgs: xrayRunArgs(port) };
-    case 'telemt':    return { image: TELEMT_IMAGE,          dockerfile: DOCKERFILES.telemt,    runArgs: telemtRunArgs(port) };
-    default:          return null;
+    case 'awg2': return {
+      image: AWG2_FLAVOR.imageName, dockerfile: DOCKERFILES.awg2, buildDir: AWG2_FLAVOR.buildDir,
+      runArgs: wgRunArgs(AWG2_FLAVOR, port), confDir: AWG2_FLAVOR.confDir, dnsNet: true,
+      startScript: (host, c) => START_SCRIPTS.awg2(str(c.subnetIp, '10.8.1.0'), str(c.subnetCidr, '24'), host),
+    };
+    case 'wireguard': return {
+      image: WG_FLAVOR.imageName, dockerfile: DOCKERFILES.wireguard, buildDir: WG_FLAVOR.buildDir,
+      runArgs: wgRunArgs(WG_FLAVOR, port), confDir: WG_FLAVOR.confDir, dnsNet: true,
+      startScript: (host, c) => START_SCRIPTS.wireguard(str(c.subnetIp, '10.8.1.0'), str(c.subnetCidr, '24'), host),
+    };
+    case 'xray': return {
+      image: XRAY_IMAGE, dockerfile: DOCKERFILES.xray, buildDir: '/opt/amnezia/amnezia-xray',
+      runArgs: xrayRunArgs(port), confDir: '/opt/amnezia/xray', dnsNet: true,
+      startScript: host => START_SCRIPTS.xray(port, host),
+    };
+    case 'telemt': return {
+      image: TELEMT_IMAGE, dockerfile: DOCKERFILES.telemt, buildDir: '/opt/amnezia/amnezia-telemt',
+      runArgs: telemtRunArgs(port), confDir: '/opt/amnezia/telemt', dnsNet: false,
+      startScript: () => START_SCRIPTS.telemt(),
+    };
+    default: return null;
   }
 }
 
-export interface ProtocolDrift {
-  /** Образ собран из другого Dockerfile, чем описан в коде сейчас. */
-  image: boolean;
-  /** Контейнер запущен с другими аргументами docker run. */
-  runArgs: boolean;
-}
+export type { ProtocolDrift } from './common.js';
 
 export interface DriftTarget {
   id: string;
@@ -72,15 +103,59 @@ export async function getProtocolsDrift(
     const target = checkable.find(t => t.id === id);
     if (!target) continue;
     const e = expected(target.type, target.port as number)!;
-    const wantImage = createHash('sha256').update(e.dockerfile).digest('hex').slice(0, 16);
-
-    // Пустая метка = контейнер или образ созданы до появления меток. Это не
-    // доказательство расхождения, поэтому такие случаи не помечаем — иначе
-    // «устарел» горел бы у всех, кто не переустанавливался.
-    out[id] = {
-      image:   Boolean(actualImage) && actualImage.trim() !== wantImage,
-      runArgs: Boolean(actualRun)   && actualRun.trim()   !== runArgsSha(e.runArgs),
-    };
+    out[id] = driftFromLabels(actualRun || '', actualImage || '', e.dockerfile, e.runArgs);
   }
   return out;
+}
+
+// Пересоздаёт контейнер протокола на актуальном образе, НЕ трогая его конфиги.
+//
+// Единственным способом доехать до нового образа была переустановка протокола
+// (DELETE + POST), а она перегенерирует ключи: у Xray — Reality-пару и UUID,
+// у AWG — серверный приватный ключ. Вместе с ними умирают все выданные конфиги
+// и подписки. При этом всё состояние протокола лежит на ХОСТЕ
+// (`-v /opt/amnezia:/opt/amnezia` есть у всех четырёх типов), поэтому пересоздать
+// контейнер на новом образе можно, ничего не потеряв.
+//
+// Что обновляется: образ (если Dockerfile уехал), start.sh и аргументы docker run.
+// Что НЕ обновляется: содержимое конфигов протокола — параметры обфускации,
+// server.json, список пиров. Если бампнутая версия требует новых параметров
+// в самом конфиге (как RandomTrailers у AWG 3.1), нужна переустановка.
+export async function upgradeProtocolContainer(server: Server, protocol: Protocol): Promise<void> {
+  if (protocol.port == null) {
+    throw new UserError('Cannot upgrade a protocol without a known port. Reinstall it instead.');
+  }
+  const plan = expected(protocol.type, protocol.port);
+  if (!plan) throw new UserError(`Upgrade is not supported for protocol type ${protocol.type}`);
+  assertContainerName(protocol.container_name);
+
+  const config: Record<string, unknown> = typeof protocol.config === 'string'
+    ? JSON.parse(protocol.config)
+    : (protocol.config ?? {});
+
+  await buildImage(server, plan.image, plan.buildDir, plan.dockerfile);
+
+  await execSudo(server, `mkdir -p ${plan.confDir}`);
+  await writeRemoteFile(server, `${plan.confDir}/start.sh`, plan.startScript(server.host, config));
+  await execSudo(server, `chmod +x ${plan.confDir}/start.sh`);
+
+  await execSudo(server, `docker rm -f ${protocol.container_name} 2>/dev/null || true`);
+  const runRes = await runContainer(server, plan.runArgs);
+  if (runRes.code !== 0) {
+    throw new UserError(`Failed to start ${protocol.type} container: ${runRes.stderr || runRes.stdout}`);
+  }
+  if (plan.dnsNet) {
+    await execSudo(server, `docker network connect amnezia-dns-net ${protocol.container_name}`);
+  }
+  if (protocol.type === 'xray') {
+    await execSudo(server, `docker exec -i ${protocol.container_name} bash -c 'mkdir -p /dev/net; if [ ! -c /dev/net/tun ]; then mknod /dev/net/tun c 10 200; fi'`);
+  }
+
+  // Конфиг уже лежит на хосте на момент старта, так что start.sh поднимает
+  // протокол сам — перезапуск нужен только затем, чтобы демон подхватил
+  // /dev/net/tun и dns-net, появившиеся после запуска.
+  const restartRes = await execSudo(server, `docker restart ${protocol.container_name}`);
+  if (restartRes.code !== 0) {
+    throw new UserError(`Failed to restart ${protocol.type} container: ${restartRes.stderr || restartRes.stdout}`);
+  }
 }

@@ -72,18 +72,26 @@ function buildAwgContainer(reader: ConfReader, server: Server | null): Container
   const I1 = reader.get('I1'), I2 = reader.get('I2'), I3 = reader.get('I3');
   const I4 = reader.get('I4'), I5 = reader.get('I5');
 
-  // Параметры AmneziaWG 3.0. Имена ключей — как в апстримном configKeys.h.
+  // Параметры AmneziaWG 3.x. Имена ключей — как в апстримном configKeys.h
+  // (awgProtocolKeys()): приложение читает их ИМЕННО отсюда, а не из текста .conf
+  // в last_config.config. Забытый здесь ключ молча не доедет до клиента — так
+  // RandomTrailers остался выключенным на клиенте при включённом на сервере,
+  // и handshake-ответ сервера (с хвостом) отбрасывался как пакет неверного размера.
   // Апстрим (AwgClientConfig::toJson) кладёт их в JSON только непустыми, повторяем:
   // пустое значение приложение записало бы в .conf строкой "X = " и сломало парсинг.
   const awg3: Record<string, string> = {};
   for (const key of ['HeaderProtectionKey', 'ContentPaddingAddition', 'RekeyAfterTime',
-                     'RekeyTimeout', 'RejectAfterTime', 'KeepaliveTimeout', 'MaxHandshakeAttempts']) {
+                     'RekeyTimeout', 'RejectAfterTime', 'KeepaliveTimeout', 'MaxHandshakeAttempts',
+                     'RandomTrailers', 'DisableCookies']) {
     const value = reader.get(key);
     if (value) awg3[key] = value;
   }
-  // protocol_version=3 — маркер инсталляции с header protection (её задаёт панель
-  // при установке AWG2 на amneziawg-go 3.x).
-  const protocolVersion = awg3.HeaderProtectionKey ? '3' : '2';
+  // protocol_version: '3.1' — есть параметры AWG 3.1, '3' — только header protection
+  // (инсталляции до 25.08.2026), '2' — обфускация без AWG 3.x.
+  const protocolVersion = (awg3.RandomTrailers || awg3.DisableCookies) ? '3.1'
+    : awg3.HeaderProtectionKey ? '3' : '2';
+  // AWG 3.1 делает PersistentKeepalive диапазоном — берём из конфига, а не константу.
+  const persistentKeepAlive = reader.get('PersistentKeepalive') || '25';
 
   const lastConfigObj = {
     H1, H2, H3, H4, I1, I2, I3, I4, I5,
@@ -97,7 +105,7 @@ function buildAwgContainer(reader: ConfReader, server: Server | null): Container
     config: reader.conf(),
     hostName,
     mtu: '1376',
-    persistent_keep_alive: '25',
+    persistent_keep_alive: persistentKeepAlive,
     port: parseInt(port) || 0,
     psk_key: presharedKey,
     server_pub_key: serverPubKey,

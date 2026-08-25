@@ -300,13 +300,14 @@ export const serversApi = {
   update: (id: string, data: Partial<ServerRecord> & { password?: string; private_key?: string }) => api.put(`/servers/${id}`, data),
   scanProtocols: (id: string) => api.post(`/servers/${id}/scan-protocols`),
   importProtocol: (id: string, data: any) => api.post(`/servers/${id}/import-protocol`, data),
-  dnsStatus: (id: string) => api.get<{ installed: boolean }>(`/servers/${id}/dns`),
+  // drift — контейнер резолвера разошёлся с текущим кодом; лечится installDns
+  // (unbound не хранит состояния, пересоздание безопасно). null, если DNS не стоит.
+  dnsStatus: (id: string) => api.get<{ installed: boolean; drift: ProtocolDrift | null }>(`/servers/${id}/dns`),
   installDns: (id: string) => api.post(`/servers/${id}/dns`),
   removeDns: (id: string) => api.delete(`/servers/${id}/dns`),
 };
 
 export const protocolsApi = {
-  list: () => api.get('/protocols'),
   byServer: (serverId: string) => api.get<ProtocolRecord[]>(`/protocols/server/${serverId}`),
   install: (serverId: string, data: { type: string; options?: any }) => api.post(`/protocols/server/${serverId}`, data),
   delete: (id: string) => api.delete(`/protocols/${id}`),
@@ -317,6 +318,10 @@ export const protocolsApi = {
   logs: (id: string, lines: number) => api.get<{ logs: string }>(`/protocols/${id}/logs`, { params: { lines } }),
   statsStatus: (id: string) => api.get<{ statsEnabled: boolean }>(`/protocols/${id}/stats-status`),
   enableStats: (id: string) => api.post(`/protocols/${id}/enable-stats`),
+  // Пересобрать образ и пересоздать контейнер на текущем шаблоне. Ключи, конфиги
+  // и список пиров лежат на хосте и переживают операцию — в отличие от
+  // переустановки протокола, которая их перегенерирует.
+  upgrade: (id: string) => api.post<{ ok: true }>(`/protocols/${id}/upgrade`),
   // Смена параметров inbound'а Xray на живом протоколе. Порт сюда не входит —
   // он зашит в проброс контейнера. reissued = сколько клиентских конфигов
   // перевыпущено (uuid сохраняются, ссылки надо раздать заново).

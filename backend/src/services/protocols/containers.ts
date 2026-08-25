@@ -174,7 +174,15 @@ export async function scanExistingProtocols(server: Server): Promise<ScannedProt
         rejectAfterTime: getConf('RejectAfterTime') ?? '',
         keepaliveTimeout: getConf('KeepaliveTimeout') ?? '',
         maxHandshakeAttempts: getConf('MaxHandshakeAttempts') ?? '',
-        protocolVersion: getConf('HeaderProtectionKey') ? '3' : '2',
+        // AWG 3.1. randomTrailers обязан совпасть с сервером — иначе клиент,
+        // выпущенный после импорта, не увидит handshake-ответ.
+        randomTrailers: getConf('RandomTrailers') ?? '',
+        disableCookies: getConf('DisableCookies') ?? '',
+        // PersistentKeepalive живёт в секции [Peer] серверного конфига, а не
+        // в [Interface] — на сервере его нет. Клиентское значение восстановить
+        // неоткуда, поэтому берём дефолт для соответствующей версии протокола.
+        persistentKeepalive: getConf('RandomTrailers') ? '25-35' : '25',
+        protocolVersion: getConf('RandomTrailers') ? '3.1' : getConf('HeaderProtectionKey') ? '3' : '2',
       };
     } else if (c.type === 'wireguard') {
       const pubKey  = await readContainerFile(server, c.containerName, `${c.confDir}/wireguard_server_public_key.key`);
@@ -254,14 +262,3 @@ export async function scanExistingProtocols(server: Server): Promise<ScannedProt
 
   return found;
 }
-
-export const PROTOCOLS: Record<ProtocolType, { name: string; description: string; icon: string }> = {
-  // Тип протокола остаётся 'awg2', а контейнер — 'amnezia-awg2': это идентификатор
-  // из перечисления DockerContainer самого AmneziaVPN (Awg2), и контейнера
-  // 'amnezia-awg3' у апстрима нет — AWG 3.0 это набор параметров того же контейнера.
-  // Здесь только отображаемое имя.
-  awg2:      { name: 'AmneziaWG 3.0',      description: 'WireGuard + обфускация DPI и защита заголовков', icon: '🛡️' },
-  xray:      { name: 'Xray VLESS Reality', description: 'VLESS + Reality — имитирует TLS трафик',  icon: '⚡' },
-  wireguard: { name: 'WireGuard',          description: 'Классический WireGuard без обфускации',   icon: '🔒' },
-  telemt:    { name: 'Telemt',             description: 'Telegram-прокси с FakeTLS-маскировкой',    icon: '📨' },
-};

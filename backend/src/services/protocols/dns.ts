@@ -1,5 +1,5 @@
 import { exec, execSudo } from '../ssh.js';
-import { buildImage, runContainer } from './common.js';
+import { buildImage, runContainer, getContainerDrift, type ProtocolDrift } from './common.js';
 import { DOCKERFILES } from './dockerfiles.js';
 import type { Server } from '../../types.js';
 import { UserError } from '../errors.js';
@@ -47,9 +47,24 @@ export async function isDnsRunning(server: Server): Promise<boolean> {
   return res.stdout.trim() === 'running';
 }
 
+// Запасной резолвер. Апстрим всегда пишет в конфиг ДВА адреса
+// ($PRIMARY_DNS, $SECONDARY_DNS в template.conf), в том числе когда первый —
+// AmneziaDNS: если контейнер резолвера ляжет, у клиента останется чем резолвить.
+// Утечки наружу это не создаёт — AllowedIPs = 0.0.0.0/0, запросы идут в тоннель.
+const FALLBACK_DNS = '8.8.8.8';
+
 // DNS-строка для клиентских конфигов: AmneziaDNS если установлен, иначе публичные.
 export async function resolveClientDns(server: Server): Promise<string> {
-  return (await isDnsRunning(server)) ? AMNEZIA_DNS_IP : '1.1.1.1, 8.8.8.8';
+  return (await isDnsRunning(server)) ? `${AMNEZIA_DNS_IP}, ${FALLBACK_DNS}` : `1.1.1.1, ${FALLBACK_DNS}`;
+}
+
+// Дрейф контейнера резолвера. В таблице protocols его нет, поэтому детектор
+// протоколов сюда не достаёт — а контейнер при этом живёт годами и молча
+// расходится с кодом (так он 40 дней проработал с --log-driver none, хотя
+// dnsRunArgs уже давно просит json-file). Лечится переустановкой: unbound
+// не хранит состояния, installDns пересоздаёт его с текущими аргументами.
+export async function getDnsDrift(server: Server): Promise<ProtocolDrift> {
+  return getContainerDrift(server, CONTAINER, IMAGE, DOCKERFILES.dns, dnsRunArgs());
 }
 
 export function dnsRunArgs(): string[] {

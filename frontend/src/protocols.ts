@@ -12,10 +12,10 @@ export const PROTOCOL_ICONS: Record<ProtocolType, string> = {
   awg2: '🛡️', xray: '⚡', wireguard: '🔒', telemt: '📨',
 };
 
-// Имена того, что получаешь при установке СЕЙЧАС. Для awg2 это 3.0 — старые
-// инсталляции понижаются до 2.0 в protocolTitle по protocolVersion.
+// Имена того, что получаешь при установке СЕЙЧАС. Для awg2 это 3.1 — более
+// старые инсталляции понижаются до 3.0/2.0 в protocolTitle по protocolVersion.
 export const PROTOCOL_NAMES: Record<ProtocolType, string> = {
-  awg2: 'AmneziaWG 3.0',
+  awg2: 'AmneziaWG 3.1',
   xray: 'Xray VLESS Reality',
   wireguard: 'WireGuard',
   telemt: 'Telemt',
@@ -26,13 +26,21 @@ interface TitleSource {
   config?: Record<string, unknown> | string | null;
 }
 
-// Контейнер amnezia-awg2 обслуживает и AWG 2.0, и AWG 3.0 (header protection) —
-// различить их можно только по protocolVersion в конфиге.
+// Ключ 'awg2' и контейнер 'amnezia-awg2' — идентификаторы слота из апстрима
+// (DockerContainer::Awg2), а не версия протокола: тот же контейнер обслуживает
+// все версии AmneziaWG, и различить их можно только по protocolVersion в конфиге.
+// '3' — инсталляции с header protection, но без параметров AWG 3.1;
+// '3.1' — то, что ставится сейчас.
+const AWG_VERSION_NAMES: Record<string, string> = {
+  '3.1': 'AmneziaWG 3.1',
+  '3': 'AmneziaWG 3.0',
+};
+
 export function protocolTitle(p: TitleSource): string {
   const base = PROTOCOL_NAMES[p.type] ?? p.type;
   if (p.type !== 'awg2') return base;
   const config = typeof p.config === 'string' ? safeParse(p.config) : p.config;
-  return config?.protocolVersion === '3' ? base : 'AmneziaWG 2.0';
+  return AWG_VERSION_NAMES[String(config?.protocolVersion)] ?? 'AmneziaWG 2.0';
 }
 
 function safeParse(raw: string): Record<string, unknown> | null {

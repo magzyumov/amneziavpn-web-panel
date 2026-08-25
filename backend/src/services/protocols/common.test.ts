@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { renderTemplate, removePeerBlock, runArgsSha } from './common.js';
+import { createHash } from 'crypto';
+import { renderTemplate, removePeerBlock, runArgsSha, driftFromLabels } from './common.js';
 
 describe('renderTemplate', () => {
   it('подставляет значения по плейсхолдерам', () => {
@@ -97,5 +98,26 @@ describe('runArgsSha', () => {
 
   it('чувствителен к порядку аргументов', () => {
     expect(runArgsSha(args)).not.toBe(runArgsSha([args[1], args[0], args[2]]));
+  });
+});
+
+describe('driftFromLabels', () => {
+  const DF = 'FROM alpine:3.15\nRUN true';
+  const ARGS = ['--name x', '-p 443:443/tcp', 'img:1'];
+  const okImage = createHash('sha256').update(DF).digest('hex').slice(0, 16);
+
+  it('совпадающие метки — расхождения нет', () => {
+    expect(driftFromLabels(runArgsSha(ARGS), okImage, DF, ARGS)).toEqual({ image: false, runArgs: false });
+  });
+
+  it('ловит и другой Dockerfile, и другие аргументы запуска', () => {
+    expect(driftFromLabels('deadbeef', okImage, DF, ARGS).runArgs).toBe(true);
+    expect(driftFromLabels(runArgsSha(ARGS), 'deadbeef', DF, ARGS).image).toBe(true);
+  });
+
+  it('пустая метка не считается расхождением', () => {
+    // Контейнеры и образы старше самих меток. Иначе «устарел» горел бы у всех,
+    // кто ни разу не переустанавливался, — то есть у всех сразу.
+    expect(driftFromLabels('', '', DF, ARGS)).toEqual({ image: false, runArgs: false });
   });
 });

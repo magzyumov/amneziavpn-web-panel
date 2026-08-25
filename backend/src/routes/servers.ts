@@ -9,7 +9,7 @@ import { cacheDnsStatus } from '../services/serverProbe.js';
 import { auditTarget, auditDetails } from '../middleware/audit.js';
 import { validateBody } from '../middleware/validate.js';
 import { testConnection, disconnect } from '../services/ssh.js';
-import { listAmneziaContainers, ensureDocker, updateAndRebootHost, scanExistingProtocols, installDns, removeDns, isDnsRunning } from '../services/protocols/index.js';
+import { listAmneziaContainers, ensureDocker, updateAndRebootHost, scanExistingProtocols, installDns, removeDns, isDnsRunning, getDnsDrift } from '../services/protocols/index.js';
 import { assertContainerName, assertPort } from '../services/shell.js';
 import { createSubscription, getVpsHost } from '../services/subscription.js';
 import { logger } from '../services/logger.js';
@@ -150,7 +150,10 @@ router.get('/:id/dns', async (req, res) => {
   const installed = await isDnsRunning(server);
   // Кэшируем для дашборда — он про DNS знает, но по SSH за этим не ходит.
   cacheDnsStatus(server.id, installed);
-  res.json({ installed });
+  // Дрейф считаем только у запущенного: у отсутствующего контейнера метки пустые
+  // и сравнивать не с чем.
+  const drift = installed ? await getDnsDrift(server) : null;
+  res.json({ installed, drift });
 });
 
 router.post('/:id/dns', async (req, res) => {

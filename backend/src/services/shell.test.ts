@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   sh, shInt, assertContainerName, assertDomain, assertPort,
-  assertMagicHeader, assertUint32Range, assertWgKey,
+  assertMagicHeader, assertUint32Range, assertWgKey, assertOnOff,
 } from './shell.js';
 import { UserError } from './errors.js';
 
@@ -119,6 +119,19 @@ describe('assertWgKey', () => {
   it('отвергает обрезанный ключ, лишние символы и мусор', () => {
     for (const bad of [valid.slice(0, 20), `${valid}extra`, 'not a key', '']) {
       expect(() => assertWgKey(bad)).toThrow(UserError);
+    }
+  });
+});
+
+describe('assertOnOff', () => {
+  it('принимает on/off в любом регистре и нормализует', () => {
+    expect(assertOnOff('on')).toBe('on');
+    expect(assertOnOff('OFF')).toBe('off');
+  });
+
+  it('отвергает всё, что не понимает awg-tools parse_bool', () => {
+    for (const bad of ['', 'true', 'false', '1', '0', 'yes']) {
+      expect(() => assertOnOff(bad, 'randomTrailers')).toThrow(UserError);
     }
   });
 });

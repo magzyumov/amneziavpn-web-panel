@@ -132,6 +132,17 @@ export function assertUint32Range(value: unknown, label = 'range'): string {
   throw new UserError(`Invalid ${label}: expected uint32 or "min-max" range, got ${value}`);
 }
 
+// Тумблер AmneziaWG 3.1 (RandomTrailers, DisableCookies). amneziawg-tools
+// (config.c: parse_bool) принимает ровно "on"/"off" без учёта регистра и падает
+// на пустой строке, поэтому "выключено" здесь — это "off", а не отсутствие значения.
+export function assertOnOff(value: unknown, label = 'toggle'): 'on' | 'off' {
+  const s = String(value).toLowerCase();
+  if (s !== 'on' && s !== 'off') {
+    throw new UserError(`Invalid ${label}: expected "on" or "off", got ${value}`);
+  }
+  return s;
+}
+
 // Magic header AmneziaWG. В AWG 2.0 это либо uint32, либо диапазон "min-max"
 // (оба значения uint32, min <= max). Возвращает нормализованную строку, безопасную
 // для интерполяции в shell (только цифры и дефис).

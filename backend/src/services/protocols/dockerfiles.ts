@@ -9,9 +9,13 @@ export const DOCKERFILES = {
   // Версия базового образа ПРИБИТА: amneziavpn/amneziawg-go:latest переехал с 0.2.x
   // на 3.0.x (AmneziaWG 3.0) — при :latest пересборка молча меняла бы мажорную
   // версию демона под живыми клиентами. Апстрим ставит :latest, мы — нет.
-  // При бампе версии обязательно менять и тег imageName в awg2.ts (buildImage
-  // делает ранний выход, если образ с таким тегом уже есть).
-  awg2: `FROM amneziavpn/amneziawg-go:3.0.3
+  // При бампе версии меняй и тег imageName в awg2.ts — не ради пересборки
+  // (buildImage сравнивает метку panel.dockerfile-sha, так что смена базы
+  // пересоберёт образ и под тем же тегом), а чтобы по `docker images` было видно
+  // реальную версию демона и чтобы предыдущая осталась на диске для отката.
+  // 3.1.20260814, а не .0812: в .0812 SendHandshakeCookie выделяет буфер
+  // с cap < len (make([]byte, size, trailerLen)) — фикс приехал в .0814.
+  awg2: `FROM amneziavpn/amneziawg-go:3.1.20260814
 
 LABEL maintainer="AmneziaVPN"
 
@@ -35,7 +39,7 @@ CMD [ "" ]`,
   xray: `FROM alpine:3.15
 LABEL maintainer="AmneziaVPN"
 
-ARG XRAY_RELEASE="v25.8.3"
+ARG XRAY_RELEASE="v26.7.28"
 
 RUN apk add --no-cache curl unzip bash openssl netcat-openbsd dumb-init rng-tools xz
 RUN apk --update upgrade --no-cache
@@ -200,7 +204,9 @@ iptables -A INPUT -i lo -j ACCEPT
 iptables -A INPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
 iptables -A INPUT -p icmp -j ACCEPT
 iptables -A INPUT -p tcp --dport 80 -j ACCEPT
+iptables -A INPUT -p tcp --dport 443 -j ACCEPT
 iptables -A INPUT -p tcp --dport ${port} -j ACCEPT
+iptables -A INPUT -p udp --dport ${port} -j ACCEPT
 iptables -P INPUT DROP
 ip6tables -A INPUT -i lo -j ACCEPT
 ip6tables -A INPUT -m state --state RELATED,ESTABLISHED -j ACCEPT
@@ -330,16 +336,19 @@ EOF`,
 
 XRAY_CLIENT_ID=$(xray uuid) && echo $XRAY_CLIENT_ID > /opt/amnezia/xray/xray_uuid.key
 XRAY_SHORT_ID=$(openssl rand -hex 8) && echo $XRAY_SHORT_ID > /opt/amnezia/xray/xray_short_id.key
+# Разбираем вывод \`xray x25519\` по МЕТКАМ, а не по номеру строки: в v26.3.27
+# публичный ключ переименован в "Password (PublicKey)" и добавилась третья строка
+# Hash32, из-за чего позиционный разбор молча клал в public именно её.
 KEYPAIR=$(xray x25519)
-LINE_NUM=1
-while IFS= read -r line; do
-    if [[ $LINE_NUM -gt 1 ]]; then
-        IFS=":" read FIST XRAY_PUBLIC_KEY <<< "$line"
-    else
-        LINE_NUM=$((LINE_NUM + 1))
-        IFS=":" read FIST XRAY_PRIVATE_KEY <<< "$line"
-    fi
-done <<< "$KEYPAIR"
+XRAY_PRIVATE_KEY=$(echo "$KEYPAIR" | sed -n 's/.*[Pp]rivate[ ]*[Kk]ey:[[:space:]]*//p' | head -1)
+XRAY_PUBLIC_KEY=$(echo "$KEYPAIR" | sed -n 's/.*(PublicKey):[[:space:]]*//p' | head -1)
+[ -z "$XRAY_PUBLIC_KEY" ] && XRAY_PUBLIC_KEY=$(echo "$KEYPAIR" | sed -n 's/.*[Pp]ublic[ ]*[Kk]ey:[[:space:]]*//p' | head -1)
+# Падаем громко: пустой ключ дал бы рабочий с виду контейнер с нерабочим Reality.
+if [ -z "$XRAY_PRIVATE_KEY" ] || [ -z "$XRAY_PUBLIC_KEY" ]; then
+    echo "Failed to parse 'xray x25519' output:" >&2
+    echo "$KEYPAIR" >&2
+    exit 1
+fi
 XRAY_PRIVATE_KEY=$(echo $XRAY_PRIVATE_KEY | tr -d ' ')
 XRAY_PUBLIC_KEY=$(echo $XRAY_PUBLIC_KEY | tr -d ' ')
 echo $XRAY_PUBLIC_KEY > /opt/amnezia/xray/xray_public.key
@@ -350,7 +359,7 @@ echo $XRAY_PRIVATE_KEY > /opt/amnezia/xray/xray_private.key
 # Блок realitySettings собираем printf'ом, а не внутри heredoc: значения
 # подставляются через %s и не зависят от экранирования в шаблоне.
 if [ "$XRAY_SECURITY" = "reality" ]; then
-    XRAY_REALITY_BLOCK=$(printf ',\n                "realitySettings": { "dest": "%s:443", "serverNames": ["%s"], "privateKey": "%s", "shortIds": ["%s"] }' "$XRAY_SITE_NAME" "$XRAY_SITE_NAME" "$XRAY_PRIVATE_KEY" "$XRAY_SHORT_ID")
+    XRAY_REALITY_BLOCK=$(printf ',\n                "realitySettings": { "dest": "%s:443", "fingerprint": "%s", "privateKey": "%s", "serverNames": ["%s"], "shortIds": ["%s"] }' "$XRAY_SITE_NAME" "$XRAY_FINGERPRINT" "$XRAY_PRIVATE_KEY" "$XRAY_SITE_NAME" "$XRAY_SHORT_ID")
 else
     XRAY_REALITY_BLOCK=""
 fi
@@ -427,7 +436,7 @@ PublicKey = $WIREGUARD_SERVER_PUBLIC_KEY
 PresharedKey = $WIREGUARD_PSK
 AllowedIPs = 0.0.0.0/0, ::/0
 Endpoint = $SERVER_IP_ADDRESS:$AWG_SERVER_PORT
-PersistentKeepalive = 25`;
+PersistentKeepalive = $PERSISTENT_KEEPALIVE`;
 
 export const WG_CLIENT_TEMPLATE = `[Interface]
 Address = $WIREGUARD_CLIENT_IP/32

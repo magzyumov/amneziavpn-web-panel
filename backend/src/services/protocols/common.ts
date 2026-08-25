@@ -2,6 +2,7 @@ import { createHash } from 'crypto';
 import { exec, execSudo } from '../ssh.js';
 import type { Server } from '../../types.js';
 import { UserError } from '../errors.js';
+import { assertContainerName } from '../shell.js';
 
 export function randInt(min: number, max: number): number {
   return Math.floor(Math.random() * (max - min + 1)) + min;
@@ -146,4 +147,41 @@ export function removePeerBlock(conf: string, pubKey: string): string {
   }
   flush();
   return out.join('\n');
+}
+
+export interface ProtocolDrift {
+  /** Образ собран из другого Dockerfile, чем описан в коде сейчас. */
+  image: boolean;
+  /** Контейнер запущен с другими аргументами docker run. */
+  runArgs: boolean;
+}
+
+// Сравнение меток вынесено сюда, а не в drift.ts: тот же расчёт нужен контейнеру
+// AmneziaDNS, а drift.ts тянет за собой все протоколы — импорт из dns.ts замкнул бы
+// цикл dns → drift → awg2 → dns. Чистая функция, её и тестируем.
+export function driftFromLabels(
+  actualRun: string, actualImage: string, dockerfile: string, runArgs: readonly string[],
+): ProtocolDrift {
+  const wantImage = createHash('sha256').update(dockerfile).digest('hex').slice(0, 16);
+  // Пустая метка = контейнер или образ созданы до появления меток. Это не
+  // доказательство расхождения, поэтому такие случаи не помечаем — иначе
+  // «устарел» горел бы у всех, кто не переустанавливался.
+  return {
+    image:   Boolean(actualImage) && actualImage.trim() !== wantImage,
+    runArgs: Boolean(actualRun)   && actualRun.trim()   !== runArgsSha(runArgs),
+  };
+}
+
+// Метки одного контейнера. Для протоколов есть батч-версия (getProtocolsDrift),
+// здесь — одиночный случай вне таблицы protocols.
+export async function getContainerDrift(
+  server: Server, containerName: string, imageName: string,
+  dockerfile: string, runArgs: readonly string[],
+): Promise<ProtocolDrift> {
+  assertContainerName(containerName);
+  const res = await exec(server,
+    `echo "$(docker inspect --format='{{index .Config.Labels "${RUN_ARGS_LABEL}"}}' ${containerName} 2>/dev/null)|`
+    + `$(docker image inspect --format='{{index .Config.Labels "${DOCKERFILE_LABEL}"}}' ${imageName} 2>/dev/null)"`);
+  const [actualRun, actualImage] = res.stdout.trim().split('|');
+  return driftFromLabels(actualRun || '', actualImage || '', dockerfile, runArgs);
 }

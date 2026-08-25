@@ -1,6 +1,6 @@
 # Project Context — amneziavpn-web-panel
 _Generated: 2026-08-14_
-_Git commit: 569a7c0_
+_Git commit: 8b33b9f_
 _Scan: .claude/agents/project-scanner_
 
 ## Overview
@@ -56,8 +56,8 @@ Frontend — React SPA; nginx отдаёт статику и проксируе�
 | /api/users | routes/users.ts | 4: `GET /`, `POST /`, `PUT /:id`, `DELETE /:id` (→ `{ ok, orphanedClients }`). Админский; публичной регистрации нет |
 | /api/dashboard | routes/dashboard.ts | 2: `GET /` (сводка целиком из БД, без SSH), `POST /probe` (единственный SSH дашборда — по кнопке) |
 | /api/audit | routes/audit.ts | 1: `GET /` с фильтрами `username/action/status/since/limit(≤200)/offset` → `{ rows, total, retentionDays, usernames, actions }`. Только чтение |
-| /api/servers | routes/servers.ts | 13: CRUD (`GET /`, `POST /`, `PUT /:id`, `DELETE /:id`), `POST /:id/test`, `POST /:id/ensure-docker`, `POST /:id/update-system`, `GET/POST/DELETE /:id/dns`, `GET /:id/containers`, `POST /:id/scan-protocols`, `POST /:id/import-protocol` |
-| /api/protocols | routes/protocols.ts | 12: `GET /` (каталог PROTOCOLS), `GET /server/:serverId`, `GET /server/:serverId/health` → `{ statuses, drift }`, `POST /server/:serverId` (install), **`POST /:id/settings`** (Xray на живую → `{ protocol, reissued }`), `DELETE /:id`, `POST /:id/start|stop`, `GET /:id/status`, `GET /:id/stats-status`, `POST /:id/enable-stats`, `GET /:id/logs` |
+| /api/servers | routes/servers.ts | 13: CRUD (`GET /`, `POST /`, `PUT /:id`, `DELETE /:id`), `POST /:id/test`, `POST /:id/ensure-docker`, `POST /:id/update-system`, `GET/POST/DELETE /:id/dns` (GET → `{ installed, drift }`), `GET /:id/containers`, `POST /:id/scan-protocols`, `POST /:id/import-protocol` |
+| /api/protocols | routes/protocols.ts | 12: `GET /server/:serverId`, `GET /server/:serverId/health` → `{ statuses, drift }`, `POST /server/:serverId` (install), **`POST /:id/settings`** (Xray на живую → `{ protocol, reissued }`), **`POST /:id/upgrade`** (пересобрать образ + пересоздать контейнер, конфиги/ключи/клиенты сохраняются), `DELETE /:id`, `POST /:id/start|stop`, `GET /:id/status`, `GET /:id/stats-status`, `POST /:id/enable-stats`, `GET /:id/logs` |
 | /api/clients | routes/clients.ts | 12: `POST /`, `GET /protocol/:protocolId` (с `owner_username`), **`GET /mine`**, **`GET /available-protocols`**, **`PUT /:id/limits`** (admin), `GET /:id/config`, `/config-amnezia`, `/config-text`, `/qr`, `/subscription`, `/stats?range=`, `DELETE /:id` (с отзывом peer'а на сервере) |
 | /api/subscriptions + `/` | routes/subscriptions.ts | 9: публичный `GET /sub/:slug` (rate-limit), `GET /`, `DELETE /:id`, `GET/POST /template`, `POST /template/reset`, `POST /regenerate`, `GET/POST /settings` |
 | **/api/disk** | **routes/disk.ts** | **2: `GET /:serverId` → `DiskReport`, `POST /:serverId/clean` `{item}` → `DiskReport & {output}`. Роутер целиком admin: команды идут под sudo и удаляют файлы** |
@@ -77,7 +77,10 @@ Frontend — React SPA; nginx отдаёт статику и проксируе�
   `exec` / `execSudo` / `disconnectAll`.
 - `shell.ts` — валидаторы ввода в shell: `assertContainerName`, `assertPort`,
   `assertDomain`, `assertWgKey`, `assertMagicHeader`, `assertUint32Range`,
-  `assertXrayPath`, `assertXhttpMode`, `sh`, `shInt`. Бросают `UserError`.
+  `assertOnOff` (тумблеры AWG 3.1: апстримный `parse_bool` принимает только
+  `on`/`off`, а не true/1/yes), `assertXrayPath`, `assertXhttpMode`,
+  `assertXraySecurity`, `assertXrayFingerprint`, `assertXrayFlow`, `sh`,
+  `shInt`. Бросают `UserError`.
 - `access.ts` — RBAC: `isAdmin`, `canAccessClient`, `quotaReached`,
   `grantedProtocolIds`, `canUseProtocol`, `setUserProtocols`,
   `revokeProtocolGrants/revokeUserGrants`, `accessibleProtocols`, `countUserClients`.
@@ -105,10 +108,22 @@ Frontend — React SPA; nginx отдаёт статику и проксируе�
   Все размеры за один SSH-заход (`sizeScript`), парсинг — чистые `toBytes` и
   `parseReport`; `collectDisk`, `cleanDiskItem`. `cleanCmd` намеренно уезжает на
   фронт: админ должен видеть, что выполнится под sudo. Код возврата очистки не
-  проверяется (пустой список у truncate/find даёт ненулевой код).**
+  проверяется (пустой список у truncate/find даёт ненулевой код). `sizeCmd`
+  пункта `docker-images` считает только dangling-образы (`docker images -f
+  dangling=true`), а не `Reclaimable` из `docker system df`: у второго в цифру
+  попадали и помеченные тегами образы, которых `docker image prune -f` не
+  трогает — размер над кнопкой обязан совпадать с тем, что кнопка освободит.**
 - `logger.ts` — pino (pino-pretty вне prod), `LOG_LEVEL`.
 - `peerId.ts` — извлечение peer_id из stored config (pubkey / UUID / secret).
 - `amneziaExport.ts` — Amnezia-формат: JSON, `vpn://` URI, chunked QR (qCompress).
+  **AWG-параметры приложение читает из ключей контейнера (`configKeys::awgProtocolKeys`),
+  а НЕ из текста `.conf` в `last_config.config`** — забытый здесь ключ молча не
+  доедет до клиента (так `RandomTrailers` остался выключенным на клиенте при
+  включённом на сервере). Выгружаются `HeaderProtectionKey`, тайминги AWG 3.0 и
+  `RandomTrailers`/`DisableCookies`; `protocol_version` трёхзначный
+  (`'3.1'` → есть параметры AWG 3.1, `'3'` → только header protection,
+  `'2'` → обфускация без AWG 3.x), `persistent_keep_alive` берётся из конфига
+  (AWG 3.1 делает его диапазоном), а не константой `25`.
 - `subscription.ts` — Clash YAML подписки (шаблон в `settings.clash_template`), slug'и.
 - `statsWorker.ts` — периодический опрос протоколов (одно SSH-соединение на
   сервер), накопительные снимки в `client_stats`, purge + `enforceLimits`.
@@ -135,33 +150,38 @@ Frontend — React SPA; nginx отдаёт статику и проксируе�
 
 | Protocol | File | install / addClient notes |
 |---|---|---|
-| awg2 (AmneziaWG) | awg2.ts | userspace amneziawg-go. Обфускация: Jc/Jmin/Jmax, S1-S4 (>=12), H1-H4, I1-I5. **AWG 3.0**: `HeaderProtectionKey` (server-side) + client-side `contentPaddingAddition`, `rekeyAfterTime/Timeout`, `rejectAfterTime`, `keepaliveTimeout`, `maxHandshakeAttempts`; `config.protocolVersion` = `'3'` при header protection, иначе `'2'`. Механика — через `wgCommon`. |
+| awg2 (AmneziaWG) | awg2.ts | userspace amneziawg-go. Обфускация: Jc/Jmin/Jmax, S1-S4 (>=12, S4 прибит к 12), I1-I5. **H1-H4 при header protection — одиночные 1/2/3/4 как в апстриме, НЕ диапазоны:** в AWG 3.1 приёмник с RandomTrailers проверяет на попадание в диапазон H1/H2/H3 любой пакет крупнее S1+148, и широкий диапазон выбрасывал ~28% транспорта как битый handshake. Диапазоны остаются только в режиме AWG 2.0. **AWG 3.x**: `HeaderProtectionKey` + тайминги `contentPaddingAddition`, `rekeyAfterTime/Timeout`, `rejectAfterTime`, `keepaliveTimeout`, `maxHandshakeAttempts`, `persistentKeepalive` (диапазон) и тумблеры **AWG 3.1** `randomTrailers`/`disableCookies` (`'on'`/`'off'`, дефолт on). Все они уезжают и в серверный `awg0.conf`, и в клиентский конфиг. `config.protocolVersion` = `'3.1'` при header protection, иначе `'2'` (у инсталляций до 25.08.2026 — `'3'`). **`randomTrailers=on` требует AmneziaVPN 5.0.1.5+ у клиента.** Механика — через `wgCommon`. |
 | wireguard | wireguard.ts | kernel-модуль `wireguard` (alpine + wireguard-tools); свой `start.sh` в `/opt/amnezia/wireguard/`. Механика — через `wgCommon`. |
-| xray | xray.ts | VLESS; `security` = `reality` или `none`, транспорт `tcp` (flow xtls-rprx-vision) или `xhttp` (SplitHTTP, без flow); настраиваемые `sni`/`fingerprint`/`flow` меняются на живом протоколе через `applyXraySettings` (клиентские конфиги перевыпускаются, uuid сохраняются). addClient правит server.json в контейнере + restart; stats через StatsService API. vless обязан быть `inbounds[0]`. |
+| xray | xray.ts | VLESS; `security` = `reality` или `none`, транспорт `tcp` (flow xtls-rprx-vision) или `xhttp` (SplitHTTP, без flow); настраиваемые `sni`/`fingerprint`/`flow` меняются на живом протоколе через `applyXraySettings` (клиентские конфиги перевыпускаются, uuid сохраняются). addClient правит server.json в контейнере + restart; stats через StatsService API. vless обязан быть `inbounds[0]`. Чистая `effectiveXhttpMode` схлопывает `auto`/`packet-up` (и пустое) в `stream-one` — как апстримный `XrayConfigurator::buildStreamSettings`; выбор пользователя при этом сохраняется как есть. |
 | telemt | telemt.ts | Telegram MTProto-прокси с FakeTLS; клиент = отдельный secret → `tg://proxy`. |
 | — | wgCommon.ts | общая механика WG/AWG: `WgFlavor` (tool/iface/confDir/container/image/buildDir), `wgRunArgs`, `installWgLike`, `genPeerKeys`, `nextClientIp`, `addPeer`, `removePeer`, `assertContainerRunning`. |
-| — | common.ts | `prepareHost` (ip_forward + сеть `amnezia-dns-net`), `assertPortFree`, `buildImage` (по sha Dockerfile), `runContainer` + `RUN_ARGS_LABEL`/`runArgsSha`, `writeRemoteFile`/`readRemoteFile`/`readContainerFile` (base64), `renderTemplate`, `removePeerBlock`, rand*. |
-| — | containers.ts | статусы контейнеров (`getContainersHealth` — один SSH-вызов), start/stop/remove/logs, `listAmneziaContainers`, `ensureDocker`, **`updateAndRebootHost`** (apt-get update+upgrade под `DEBIAN_FRONTEND=noninteractive` и `--force-confold/confdef`, затем `shutdown -r +1` и `disconnect(server.id)` — соединение умрёт вместе с сервером), `scanExistingProtocols`, каталог `PROTOCOLS`. `getContainerLogs` подменяет ошибку демона «does not support reading» человеческим текстом: так отвечают контейнеры, поднятые до 18.08.2026 с `--log-driver none`. |
+| — | common.ts | `driftFromLabels`/`getContainerDrift` (сравнение меток живёт здесь, а не в drift.ts: импорт из dns.ts замкнул бы цикл dns → drift → awg2 → dns). `prepareHost` (ip_forward + сеть `amnezia-dns-net`), `assertPortFree`, `buildImage` (по sha Dockerfile), `runContainer` + `RUN_ARGS_LABEL`/`runArgsSha`, `writeRemoteFile`/`readRemoteFile`/`readContainerFile` (base64), `renderTemplate`, `removePeerBlock`, rand*. |
+| — | containers.ts | статусы контейнеров (`getContainersHealth` — один SSH-вызов), start/stop/remove/logs, `listAmneziaContainers`, `ensureDocker`, **`updateAndRebootHost`** (apt-get update+upgrade под `DEBIAN_FRONTEND=noninteractive` и `--force-confold/confdef`, затем `shutdown -r +1` и `disconnect(server.id)` — соединение умрёт вместе с сервером), `scanExistingProtocols`. `getContainerLogs` подменяет ошибку демона «does not support reading» человеческим текстом: так отвечают контейнеры, поднятые до 18.08.2026 с `--log-driver none`. |
 | — | dockerfiles.ts | JS template literals: Dockerfile'ы + start/configure-скрипты + шаблоны клиентских конфигов (следить за экранированием). |
 | — | stats.ts | per-peer трафик: `readAwgWgPeerStats`, `readXrayPeerStats`, `readTelemtPeerStats`, `withIdleXrayPeers`, `isXrayStatsEnabled`, `enableXrayStats`. **`readXrayPeerStats` различает `null` (stats API не ответил — снимать нечего) и `[]` (ответил, но счётчиков ещё нет)**; `withIdleXrayPeers` дописывает нулевые снимки для клиентов, которых Xray не вернул (счётчик заводится только при трафике и теряется при рестарте). |
-| — | dns.ts | AmneziaDNS (unbound, DoT наружу), фиксированный IP `172.29.172.254`. |
-| — | drift.ts | сравнивает метки образа (`panel.dockerfile-sha`) и контейнера (`panel.run-sha`) с тем, что панель поставила бы сейчас; отдаёт `{ image, runArgs }` на протокол. Один SSH-вызов на все контейнеры; падение не роняет health. |
+| — | dns.ts | AmneziaDNS (unbound, DoT наружу), фиксированный IP `172.29.172.254`. `getDnsDrift` — расхождение контейнера резолвера с кодом: в таблице `protocols` его нет, в `getProtocolsDrift` он не попадает, поэтому дрейф отдаётся из `GET /servers/:id/dns` и лечится повторным `installDns` (unbound без состояния). `resolveClientDns` отдаёт **два** адреса (`AmneziaDNS, 8.8.8.8`, без DNS — `1.1.1.1, 8.8.8.8`) — как `$PRIMARY_DNS, $SECONDARY_DNS` у апстрима: с одним адресом клиент остаётся без резолвера, если контейнер DNS лёг. |
+| — | drift.ts | сравнивает метки образа (`panel.dockerfile-sha`) и контейнера (`panel.run-sha`) с тем, что панель поставила бы сейчас; отдаёт `{ image, runArgs }` на протокол. Один SSH-вызов на все контейнеры; падение не роняет health. Там же `upgradeProtocolContainer` (роут `POST /protocols/:id/upgrade`): пересобирает образ, переписывает `start.sh` и пересоздаёт контейнер на текущем шаблоне. Конфиги, ключи и пиры лежат на хосте (`-v /opt/amnezia:/opt/amnezia`) и переживают операцию — в отличие от переустановки протокола, которая их перегенерирует. |
 
 ### Pinned images (как ЗАДУМАНО, не как развёрнуто)
 | Протокол | FROM в dockerfiles.ts | Тег собираемого образа |
 |---|---|---|
-| awg2 | `amneziavpn/amneziawg-go:3.0.3` | `amnezia-awg2:3.0.3` |
+| awg2 | `amneziavpn/amneziawg-go:3.1.20260814` | `amnezia-awg2:3.1.20260814` |
 | wireguard | `alpine:3.15` (+ wireguard-tools из apk) | `amnezia-wireguard:latest` |
-| xray | `alpine:3.15`, `ARG XRAY_RELEASE="v25.8.3"` | `amnezia-xray:latest` |
+| xray | `alpine:3.15`, `ARG XRAY_RELEASE="v26.7.28"` | `amnezia-xray:26.7.28` |
 | telemt | `debian:12-slim`, `TELEMT_VERSION="3.4.25"` (**версия прибита**, раньше был `releases/latest`) | `amnezia-telemt:latest` |
 | dns | `mvance/unbound:1.22.0` | `amnezia-dns:latest` |
+
+_В образе xray НЕТ iptables_ — весь firewall-блок в его `start.sh` не выполняется
+(и у нас, и в апстриме: Dockerfile ставит curl/unzip/bash/openssl/netcat/dumb-init/rng-tools/xz).
+Контейнер защищён только тем, что наружу опубликован единственный порт.
 
 _Пометки про `:latest`:_ локальные теги `amnezia-*:latest` — наши собственные,
 дрейфа апстрима не несут (образ пересобирается при смене sha Dockerfile).
 Все апстрим-версии сейчас прибиты: `amneziavpn/amneziawg-go:latest` однажды
 уехал с 0.2.19 на 3.0.3 и сменил мажорную версию демона под живыми клиентами,
-telemt по той же причине переведён с `releases/latest` на 3.4.25. При бампе
-версии awg2 менять и `FROM`, и `imageName` (`awg2.ts`, `drift.ts`).
+telemt по той же причине переведён с `releases/latest` на 3.4.25. Тег `imageName`
+меняется вместе с `FROM`/`ARG` не ради пересборки (её триггерит sha Dockerfile),
+а чтобы версия была видна в `docker images` и предыдущая осталась для отката.
 Что реально крутится на сервере — вопрос рантайма, его решает `drift.ts`, не этот файл.
 
 ### Data
@@ -176,11 +196,12 @@ telemt по той же причине переведён с `releases/latest` �
 - Секреты (SSH-пароли/ключи) шифруются `PANEL_ENCRYPTION_KEY` в `services/crypto.ts`.
 
 ### Тесты
-vitest, 14 файлов `*.test.ts` рядом с модулями: `shell`, `peerId`,
+vitest, 15 файлов `*.test.ts` рядом с модулями: `shell`, `peerId`,
 `amneziaExport`, `statsAggregate`, `db`, `access`, `audit`, `dashboard`,
 `limits`, **`disk`**, `protocols/common`, `protocols/awg2`,
-`protocols/xrayTemplate`, **`protocols/stats`** (`withIdleXrayPeers`). Плюс `src/test-setup.ts` — изолирует тесты от боевой
-базы. Покрывают чистые функции (валидаторы, рендер шаблонов, агрегация,
+**`protocols/awg2Template`** (плейсхолдеры `$AWG3_*` в клиентском конфиге),
+`protocols/xrayTemplate`, **`protocols/stats`** (`withIdleXrayPeers`) — 176 тестов.
+Плюс `src/test-setup.ts` — изолирует тесты от боевой базы. Покрывают чистые функции (валидаторы, рендер шаблонов, агрегация,
 run-args, парсинг размеров диска) — там и случались баги.
 
 ## Frontend
@@ -207,17 +228,27 @@ run-args, парсинг размеров диска) — там и случал
   `title` тем же изменением, иначе интерфейс расслаивается.
 - `src/protocols.ts` — единственный источник отображаемых названий и иконок
   (`PROTOCOL_ICONS`, `PROTOCOL_NAMES`, `protocolTitle`). Заголовок карточки
-  выводится из `type + config` (awg2 → «AmneziaWG 3.0» / «2.0» по
-  `protocolVersion`), а НЕ из `protocols.name` в БД.
+  выводится из `type + config` (awg2 → «AmneziaWG 3.1» / «3.0» / «2.0» по
+  `protocolVersion`), а НЕ из `protocols.name` в БД. Бэкендового каталога больше
+  нет: `GET /api/protocols`, константа `PROTOCOLS` в `containers.ts` и
+  `protocolsApi.list` удалены — имена жили в двух местах и разъезжались.
 - Pages (`src/pages/`): `LoginPage`, `SetupPage`, `AuthForm`, `DashboardPage`,
   `MyClientsPage`, `ServersPage`, `ServerPage`, `SubscriptionsPage`,
   `UsersPage`, `AuditPage`, **`DiskPage`** (выбор сервера → таблица пунктов с
   размером, подсказкой, показом sudo-команды и кнопкой очистки у каждого).
-  В шапке `ServerPage` — Edit Server / Ensure Docker / AmneziaDNS / **⬆ Update
+  В шапке `ServerPage` — Edit Server / Ensure Docker / AmneziaDNS (рядом
+  условная кнопка **⟳ DNS устарел**: показывается по `drift` из
+  `GET /servers/:id/dns`, жмёт `installDns` — тот сам делает `rm -f`) / **⬆ Update
   Server** (`serversApi.updateSystem` → `POST /servers/:id/update-system`,
   `{ ok, output }`; спрашивает подтверждение, держит спиннер минуты и честно
   предупреждает про ребут) / Scan Server / Install Protocol.
-- `pages/server/`: ProtocolCard, InstallProtocolModal, AddClientModal,
+- `pages/server/`: ProtocolCard (бейдж «⟳ устарел» — **кнопка**:
+  `protocolsApi.upgrade` → `POST /protocols/:id/upgrade` с подтверждением,
+  после успеха бейдж прячется до следующего health-опроса),
+  InstallProtocolModal (у awg2 `jc`/`S1-S4` по умолчанию **пустые** — их
+  генерирует backend по алгоритму апстрима, преднастроенные значения сами были
+  отпечатком; плюс чекбоксы AWG 3.1 RandomTrailers/DisableCookies с
+  предупреждением про AmneziaVPN 5.0.1.5+), AddClientModal,
   ClientModal, ClientLimitsModal, LimitBadges, LimitFields, EditServerModal,
   ScanProtocolsModal, XraySettingsModal, XrayOptionFields, StatsModal, StatsTab,
   Sparkline, CopySubButton + утилиты `clipboard.ts`, `format.ts` (`formatBytes`).
@@ -257,11 +288,16 @@ run-args, парсинг размеров диска) — там и случал
   `telemtRunArgs`, `dnsRunArgs`) с 18.08.2026 задают `--log-driver json-file`
   + `max-size=10m --max-file=3` вместо прежнего `--log-driver none` (тот глотал
   логи, и `GET /protocols/:id/logs` возвращал ошибку демона). Это меняет
-  `runArgsSha` → **все контейнеры, поднятые раньше, покажут runArgs-drift, пока
-  их не переустановят**; на старых `getContainerLogs` отдаёт объяснение вместо
-  ошибки. Ротация обязательна: журнал без лимита забивает и без того тесный диск VPS.
+  `runArgsSha` → **все контейнеры, поднятые раньше, показывают runArgs-drift**;
+  на старых `getContainerLogs` отдаёт объяснение вместо ошибки. Лечится кнопкой
+  на бейдже дрейфа (`POST /protocols/:id/upgrade`) — переустановка протокола с
+  потерей ключей для этого больше не нужна. Ротация обязательна: журнал без лимита забивает и без того тесный диск VPS.
 - **Drift:** health-запрос попутно сверяет метки образа/контейнера с текущим кодом
-  и показывает расхождение в UI — сигнал «переустанови протокол», не ошибка.
+  и показывает расхождение в UI — это сигнал, а не ошибка. Лечится не
+  переустановкой, а кнопкой на самом бейдже (`POST /protocols/:id/upgrade` →
+  `upgradeProtocolContainer`): образ пересобирается, контейнер пересоздаётся на
+  текущем шаблоне, а конфиги/ключи/клиенты остаются — всё состояние протокола
+  лежит на хосте в `/opt/amnezia` и монтируется в контейнер.
 - **Лимиты клиентов:** срок (`expires_at`) — удаление клиента вместе с пиром;
   суточный трафик (`daily_limit_bytes`) — приостановка (пир снимается) с
   возвратом тем же ключом в новые сутки. Проверяет `enforceLimits` на каждом

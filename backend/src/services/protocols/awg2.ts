@@ -1,6 +1,7 @@
 import { execSudo } from '../ssh.js';
 import {
   assertContainerName, assertPort, shInt, assertMagicHeader, assertUint32Range, assertWgKey,
+  assertOnOff,
 } from '../shell.js';
 import { randInt, randPort, renderTemplate } from './common.js';
 import {
@@ -23,15 +24,18 @@ interface InstallOptions {
   s1?: number; s2?: number; s3?: number; s4?: number;
   // H1-H4 в AWG 2.0 — диапазоны "min-max" либо одиночные uint32.
   h1?: number | string; h2?: number | string; h3?: number | string; h4?: number | string;
-  // AWG 3.0. headerProtection выключается только явным false (по умолчанию — вкл).
-  // Остальные — тип "uint32,range", по умолчанию не задаются (как в апстриме).
+  // AWG 3.0/3.1. Тумблеры выключаются только явным false (по умолчанию — вкл,
+  // как в AmneziaVPN 5.0.1.5). Остальные — тип "uint32,range".
   headerProtection?: boolean;
+  randomTrailers?: boolean;
+  disableCookies?: boolean;
   contentPaddingAddition?: string;
   rekeyAfterTime?: string;
   rekeyTimeout?: string;
   rejectAfterTime?: string;
   keepaliveTimeout?: string;
   maxHandshakeAttempts?: string;
+  persistentKeepalive?: string;
 }
 
 // Базовые размеры handshake-пакетов AmneziaWG (AwgConstant). Нужны, чтобы итоговые
@@ -51,6 +55,30 @@ const DEFAULT_I1 = '<r 2><b 0x858000010001000000000669636c6f756403636f6d00000100
 // конфигов, где H1-H4 ещё не сохранены (protocolConstants.h:191-194).
 const DEFAULT_H = { h1: '1020325451', h2: '3288052141', h3: '1766607858', h4: '2528465083' };
 
+// Дефолты таймингов AWG 3.x — один-в-один с AmneziaVPN 5.0.1.5
+// (protocolConstants.h, namespace awg). До 5.0.1.5 апстрим их не задавал вовсе,
+// поэтому у инсталляций панели старше этого релиза они пустые.
+const AWG3_DEFAULTS = {
+  contentPaddingAddition: '10-100',
+  rekeyAfterTime: '100-120',
+  rekeyTimeout: '3-7',
+  rejectAfterTime: '150-180',
+  keepaliveTimeout: '5-15',
+  maxHandshakeAttempts: '15-20',
+} as const;
+
+// PersistentKeepalive: AWG 3.1 делает его диапазоном (рандомизация тайминга),
+// на инсталляциях без AWG3-параметров остаётся классическая одиночная 25.
+const AWG3_PERSISTENT_KEEPALIVE = '25-35';
+const DEFAULT_PERSISTENT_KEEPALIVE = '25';
+
+// Форма шлёт boolean'ы, но через `options: z.record(z.unknown())` может прилететь
+// и строка. Тумблер считается выключенным только при явном false/"false" —
+// отсутствие значения означает «дефолт», а дефолт у всех трёх тумблеров — вкл.
+function toggleOn(v: unknown): boolean {
+  return !(v === false || v === 'false');
+}
+
 // Минимальный размер S1-S4 при включённой header protection: S-паддинг служит
 // nonce для шифра заголовков, и amneziawg-go 3.x жёстко требует >= 12 (проверено:
 // с S3=5 и заданным HeaderProtectionKey `awg setconf` падает с "Unable to modify
@@ -58,26 +86,43 @@ const DEFAULT_H = { h1: '1020325451', h2: '3288052141', h3: '1766607858', h4: '2
 // header protection несовместимы.
 const HP_MIN_JUNK = 12;
 
-// Генерация S1-S4 — копия AwgInstaller::generateAwgParameters: значения уникальны
-// и не дают совпадающих итоговых размеров пакетов. min поднимается до HP_MIN_JUNK,
-// когда включена header protection (AWG 3.0).
+// S4 в AmneziaVPN 5.0.1.5 не рандомизируется — protocolConstants::defaultTransportPacketJunkSize.
+const UPSTREAM_S4 = 12;
+
+// Генерация S1-S4 — копия AwgInstaller::generateAwgParameters из AmneziaVPN 5.0.1.5:
+// значения уникальны и не дают совпадающих итоговых размеров пакетов. Границы
+// апстримные (junkPacketSizeMin=12, S1/S2 < 150, S3 < 64), S4 прибит к 12
+// (defaultTransportPacketJunkSize). min поднимается до HP_MIN_JUNK при header protection.
 export function genPacketSizes(min: number): { s1: number; s2: number; s3: number; s4: number } {
-  const used = new Set<number>();
-  const lo1 = Math.max(15, min), lo3 = Math.max(0, min), lo4 = Math.max(0, min);
-  const s1 = randInt(lo1, 149); used.add(s1);
-  let s2 = randInt(lo1, 149);
-  while (used.has(s2) || s1 + MSG_INIT === s2 + MSG_RESP) s2 = randInt(lo1, 149);
+  const lo = Math.max(HP_MIN_JUNK, min);
+  const s4 = UPSTREAM_S4;
+  const s1 = randInt(lo, 149);
+  const used = new Set<number>([s1, s4]);
+  let s2 = randInt(lo, 149);
+  while (used.has(s2) || s1 + MSG_INIT === s2 + MSG_RESP) s2 = randInt(lo, 149);
   used.add(s2);
-  let s3 = randInt(lo3, 63);
-  while (used.has(s3) || s1 + MSG_INIT === s3 + MSG_COOKIE || s2 + MSG_RESP === s3 + MSG_COOKIE) s3 = randInt(lo3, 63);
-  used.add(s3);
-  let s4 = randInt(lo4, 19);
-  while (used.has(s4)) s4 = randInt(lo4, 19);
+  let s3 = randInt(lo, 63);
+  while (used.has(s3) || s1 + MSG_INIT === s3 + MSG_COOKIE || s2 + MSG_RESP === s3 + MSG_COOKIE) s3 = randInt(lo, 63);
   return { s1, s2, s3, s4 };
 }
 
-// Генерация H1-H4 как диапазонов "min-max" (формат AWG 2.0, AwgInstaller isAwg2).
-// Диапазоны возрастающие и непересекающиеся → заголовки гарантированно различны.
+// H1-H4 при header protection — апстримные ОДИНОЧНЫЕ 1/2/3/4, а не случайные диапазоны.
+//
+// Это не косметика. В AWG 3.1 приёмник с RandomTrailers сначала проверяет ЛЮБОЙ
+// пакет размером больше S1+148 на попадание в диапазон H1, затем H2, затем H3
+// (device/receive.go: DeterminePacketTypeAndPadding) — размер больше не отсеивает
+// транспортные пакеты, как это было в 3.0. Байты, по которым считается заголовок,
+// в транспортном пакете — шифртекст, то есть равномерный шум, поэтому доля ложных
+// срабатываний равна ширине диапазона / 2^32. Со случайными диапазонами шириной
+// в сотни миллионов это ~28% транспортных пакетов, опознанных как битый handshake
+// и выброшенных, — в каждую сторону (проверено на живом сервере 25.08.2026).
+// Одиночное значение даёт ложное срабатывание раз на 4 млрд, а сами заголовки
+// всё равно скрыты header protection, так что энтропию мы не теряем.
+const UPSTREAM_H: [string, string, string, string] = ['1', '2', '3', '4'];
+
+// Диапазоны остаются только для AWG 2.0 (header protection выключена): там
+// RandomTrailers нет, приёмник отсеивает транспорт по точному размеру, и широкий
+// диапазон безопасен. Диапазоны возрастающие и непересекающиеся → заголовки различны.
 function genMagicHeaderRanges(): [string, string, string, string] {
   const out: string[] = [];
   let min = 5;
@@ -90,16 +135,23 @@ function genMagicHeaderRanges(): [string, string, string, string] {
   return out as [string, string, string, string];
 }
 
-// Тег образа включает версию amneziawg-go: buildImage делает ранний выход по
-// существующему образу, поэтому переезд на новую базу возможен только через новый тег.
+// Тег образа включает версию amneziawg-go — чтобы по `docker images` было видно,
+// что реально крутится, и чтобы предыдущая версия осталась на диске для отката.
+// Пересборку триггерит не тег, а изменение Dockerfile (buildImage сравнивает
+// метку panel.dockerfile-sha), так что бамп базового образа виден и без смены тега.
+// containerName 'amnezia-awg2' — идентификатор апстрима (DockerContainer::Awg2),
+// а не «AmneziaWG версии 2». У апстрима два слота под AmneziaWG: 'amnezia-awg'
+// читает конфиг из wg0.conf, 'amnezia-awg2' — из awg0.conf. Мы пишем awg0.conf,
+// значит слот именно второй; переименование сломало бы и импорт vpn://-конфига
+// приложением, и подхват серверов, развёрнутых настоящим клиентом AmneziaVPN.
 export const AWG2_FLAVOR: WgFlavor = {
   tool: 'awg',
   iface: 'awg0',
   confDir: '/opt/amnezia/awg',
   containerName: 'amnezia-awg2',
-  imageName: 'amnezia-awg2:3.0.3',
+  imageName: 'amnezia-awg2:3.1.20260814',
   buildDir: '/opt/amnezia/amnezia-awg2',
-  label: 'AWG2',
+  label: 'AmneziaWG',
 };
 
 const SUBNET_PREFIX = '10.8.1';
@@ -119,8 +171,10 @@ export async function installAWG2(server: Server, options: InstallOptions = {}):
   const jmin = intOpt(options.jmin, 10,            'jmin');
   const jmax = intOpt(options.jmax, 50,            'jmax');
 
-  // AWG 3.0: header protection включена по умолчанию, выключается явным false.
-  const headerProtection = options.headerProtection !== false;
+  // AWG 3.0/3.1: все три тумблера включены по умолчанию, выключаются явным false.
+  const headerProtection = toggleOn(options.headerProtection);
+  const randomTrailers = toggleOn(options.randomTrailers);
+  const disableCookies = toggleOn(options.disableCookies);
 
   // S1-S4 генерируем единым набором (уникальны + без коллизий размеров пакетов),
   // одиночные override'ы валидируем поверх. При header protection все четыре
@@ -139,20 +193,22 @@ export async function installAWG2(server: Server, options: InstallOptions = {}):
     }
   }
 
-  // Клиентские параметры AWG 3.0 — тип "uint32,range". По умолчанию не задаются
-  // (апстрим их тоже не генерирует при self-hosted установке).
-  const rangeOpt = (v: string | undefined, label: string): string =>
-    v == null || v === '' ? '' : assertUint32Range(v, label);
-  const contentPaddingAddition = rangeOpt(options.contentPaddingAddition, 'contentPaddingAddition');
-  const rekeyAfterTime         = rangeOpt(options.rekeyAfterTime,         'rekeyAfterTime');
-  const rekeyTimeout           = rangeOpt(options.rekeyTimeout,           'rekeyTimeout');
-  const rejectAfterTime        = rangeOpt(options.rejectAfterTime,        'rejectAfterTime');
-  const keepaliveTimeout       = rangeOpt(options.keepaliveTimeout,       'keepaliveTimeout');
-  const maxHandshakeAttempts   = rangeOpt(options.maxHandshakeAttempts,   'maxHandshakeAttempts');
+  // Тайминги AWG 3.x — тип "uint32,range". Дефолты берём апстримные; очищенное
+  // поле формы ('' ) означает «не задавать параметр вовсе», а не «взять дефолт».
+  const rangeOpt = (v: string | undefined, fallback: string, label: string): string =>
+    v == null ? fallback : v === '' ? '' : assertUint32Range(v, label);
+  const contentPaddingAddition = rangeOpt(options.contentPaddingAddition, AWG3_DEFAULTS.contentPaddingAddition, 'contentPaddingAddition');
+  const rekeyAfterTime         = rangeOpt(options.rekeyAfterTime,         AWG3_DEFAULTS.rekeyAfterTime,         'rekeyAfterTime');
+  const rekeyTimeout           = rangeOpt(options.rekeyTimeout,           AWG3_DEFAULTS.rekeyTimeout,           'rekeyTimeout');
+  const rejectAfterTime        = rangeOpt(options.rejectAfterTime,        AWG3_DEFAULTS.rejectAfterTime,        'rejectAfterTime');
+  const keepaliveTimeout       = rangeOpt(options.keepaliveTimeout,       AWG3_DEFAULTS.keepaliveTimeout,       'keepaliveTimeout');
+  const maxHandshakeAttempts   = rangeOpt(options.maxHandshakeAttempts,   AWG3_DEFAULTS.maxHandshakeAttempts,   'maxHandshakeAttempts');
+  const persistentKeepalive    = rangeOpt(options.persistentKeepalive,    AWG3_PERSISTENT_KEEPALIVE,            'persistentKeepalive')
+    || DEFAULT_PERSISTENT_KEEPALIVE;
 
-  // H1-H4 — диапазоны "min-max" (AWG 2.0). amneziawg-go в образе их поддерживает
-  // (формат "%d-%d", h как строка в UAPI).
-  const gh = genMagicHeaderRanges();
+  // H1-H4: при header protection — апстримные 1/2/3/4 (см. UPSTREAM_H), иначе
+  // диапазоны AWG 2.0.
+  const gh = headerProtection ? UPSTREAM_H : genMagicHeaderRanges();
   const h1 = options.h1 != null ? assertMagicHeader(options.h1, 'h1') : gh[0];
   const h2 = options.h2 != null ? assertMagicHeader(options.h2, 'h2') : gh[1];
   const h3 = options.h3 != null ? assertMagicHeader(options.h3, 'h3') : gh[2];
@@ -172,9 +228,25 @@ export async function installAWG2(server: Server, options: InstallOptions = {}):
     }
     // Пустое значение параметра = ошибка парсинга у awg setconf, поэтому строку
     // либо пишем целиком, либо не пишем вовсе (вместо неё — комментарий).
-    const awg3ServerParams = headerProtectionKey
-      ? `HeaderProtectionKey = ${headerProtectionKey}`
-      : '# AWG 3.0 header protection disabled';
+    // Тайминги и тумблеры уезжают и в серверный конфиг тоже — так же, как в
+    // configure_container.sh AmneziaVPN 5.0.1.5.
+    const serverLines: string[] = [];
+    if (headerProtectionKey) serverLines.push(`HeaderProtectionKey = ${headerProtectionKey}`);
+    for (const [key, value] of [
+      ['ContentPaddingAddition', contentPaddingAddition],
+      ['RekeyAfterTime',         rekeyAfterTime],
+      ['RekeyTimeout',           rekeyTimeout],
+      ['RejectAfterTime',        rejectAfterTime],
+      ['KeepaliveTimeout',       keepaliveTimeout],
+      ['MaxHandshakeAttempts',   maxHandshakeAttempts],
+    ] as const) {
+      if (value) serverLines.push(`${key} = ${value}`);
+    }
+    serverLines.push(`RandomTrailers = ${randomTrailers ? 'on' : 'off'}`);
+    serverLines.push(`DisableCookies = ${disableCookies ? 'on' : 'off'}`);
+    const awg3ServerParams = serverLines.length
+      ? serverLines.join('\n')
+      : '# AWG 3.x parameters disabled';
 
     return [
       `export AWG3_SERVER_PARAMS='${awg3ServerParams}'`,
@@ -208,9 +280,12 @@ export async function installAWG2(server: Server, options: InstallOptions = {}):
 
   const config: Awg2Config = {
     port, subnetIp, subnetCidr, serverPubKey,
-    // protocolVersion=3 означает "инсталляция знает про AWG 3.0" — по нему
+    // protocolVersion=3.1 означает "инсталляция знает про AWG 3.x" — по нему
     // addAWG2Client решает, можно ли писать AWG3-параметры в клиентский конфиг.
-    protocolVersion: headerProtection ? '3' : '2',
+    // Строка совпадает с awgV3 из AmneziaVPN 5.0.1.5, чтобы приложение показывало
+    // правильную версию протокола. Старое значение '3' у уже установленных
+    // протоколов остаётся валидным — его понимают и панель, и клиент.
+    protocolVersion: headerProtection ? '3.1' : '2',
     jc, jmin, jmax,
     s1, s2, s3, s4,
     h1, h2, h3, h4,
@@ -218,6 +293,9 @@ export async function installAWG2(server: Server, options: InstallOptions = {}):
     headerProtectionKey,
     contentPaddingAddition, rekeyAfterTime, rekeyTimeout,
     rejectAfterTime, keepaliveTimeout, maxHandshakeAttempts,
+    randomTrailers: randomTrailers ? 'on' : 'off',
+    disableCookies: disableCookies ? 'on' : 'off',
+    persistentKeepalive,
   };
   return { containerName: AWG2_FLAVOR.containerName, port, config };
 }
@@ -228,7 +306,7 @@ export async function addAWG2Client(server: Server, protocol: Protocol, _clientN
   const cn = protocol.container_name;
 
   if (!c.serverPubKey || !c.port) {
-    throw new UserError('AWG2 protocol config is incomplete (missing serverPubKey or port). Reinstall the protocol.');
+    throw new UserError('AmneziaWG protocol config is incomplete (missing serverPubKey or port). Reinstall the protocol.');
   }
 
   await assertContainerRunning(server, AWG2_FLAVOR);
@@ -238,7 +316,7 @@ export async function addAWG2Client(server: Server, protocol: Protocol, _clientN
   const pskRes = await execSudo(server, `docker exec ${AWG2_FLAVOR.containerName} awg genpsk`);
   const presharedKey = pskRes.stdout.trim();
   if (!presharedKey) {
-    throw new UserError('Failed to generate AWG2 PSK: empty output');
+    throw new UserError('Failed to generate AmneziaWG PSK: empty output');
   }
 
   const clientIp = await nextClientIp(server, AWG2_FLAVOR, SUBNET_PREFIX);
@@ -270,6 +348,10 @@ export async function addAWG2Client(server: Server, protocol: Protocol, _clientN
   pushAwg3('RejectAfterTime',      'rejectAfterTime',      c.rejectAfterTime,      assertUint32Range);
   pushAwg3('KeepaliveTimeout',     'keepaliveTimeout',     c.keepaliveTimeout,     assertUint32Range);
   pushAwg3('MaxHandshakeAttempts', 'maxHandshakeAttempts', c.maxHandshakeAttempts, assertUint32Range);
+  // AWG 3.1. 'off' пишем так же явно, как 'on': awg-tools трактует отсутствие
+  // ключа и off одинаково, но в конфиге у клиента виден выбранный режим.
+  pushAwg3('RandomTrailers',       'randomTrailers',       c.randomTrailers,       assertOnOff);
+  pushAwg3('DisableCookies',       'disableCookies',       c.disableCookies,       assertOnOff);
 
   // Плейсхолдер занимает отдельную строку шаблона: пустое значение схлопывается в
   // пустую строку-разделитель перед [Peer], непустое — в блок строк + разделитель.
@@ -299,6 +381,10 @@ export async function addAWG2Client(server: Server, protocol: Protocol, _clientN
     SPECIAL_JUNK_5: c.i5 ?? '',
     AWG3_CLIENT_PARAMS: awg3ClientParams,
     AWG3_JSON_FIELDS: awg3JsonFields,
+    // Инсталляции до AWG 3.1 диапазона не знают — им остаётся классическая 25.
+    PERSISTENT_KEEPALIVE: typeof c.persistentKeepalive === 'string' && c.persistentKeepalive
+      ? assertUint32Range(c.persistentKeepalive, 'persistentKeepalive')
+      : '25',
     PROTOCOL_VERSION: typeof c.protocolVersion === 'string' ? c.protocolVersion : '2',
     WIREGUARD_SERVER_PUBLIC_KEY: c.serverPubKey,
     WIREGUARD_PSK: presharedKey,

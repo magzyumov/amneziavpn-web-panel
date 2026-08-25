@@ -16,9 +16,13 @@ describe('genPacketSizes', () => {
     }
   });
 
-  it('значения не повторяются', () => {
+  it('s2 и s3 не совпадают ни с s1/s4, ни между собой', () => {
+    // Ровно то, что гарантирует апстримный generateAwgParameters: usedValues
+    // засевается {s1, s4}, и уникальность форсируется только для s2 и s3.
+    // s1 == s4 == 12 апстрим допускает — базовые размеры пакетов всё равно разные.
     for (const { s1, s2, s3, s4 } of runs) {
-      expect(new Set([s1, s2, s3, s4]).size).toBe(4);
+      expect([s1, s4, s3]).not.toContain(s2);
+      expect([s1, s4, s2]).not.toContain(s3);
     }
   });
 
@@ -32,19 +36,19 @@ describe('genPacketSizes', () => {
     }
   });
 
-  it('без header protection допускает апстримные нижние границы', () => {
-    const low = Array.from({ length: 300 }, () => genPacketSizes(0));
-    // s4 генерится из диапазона 0..19 — хотя бы раз должен выпасть ниже 12,
-    // иначе поведение по сути не отличается от режима с header protection.
-    expect(low.some(({ s4 }) => s4 < 12)).toBe(true);
+  it('S4 прибит к 12 — апстрим его не рандомизирует', () => {
+    // protocolConstants::defaultTransportPacketJunkSize. min ниже 12 не опускает:
+    // amneziawg-go 3.x с header protection такой конфиг не примет.
+    for (const { s4 } of [...runs, ...Array.from({ length: 50 }, () => genPacketSizes(0))]) {
+      expect(s4).toBe(12);
+    }
   });
 
-  it('верхние границы соблюдаются', () => {
-    for (const { s1, s2, s3, s4 } of runs) {
-      expect(s1).toBeLessThanOrEqual(149);
-      expect(s2).toBeLessThanOrEqual(149);
-      expect(s3).toBeLessThanOrEqual(63);
-      expect(s4).toBeLessThanOrEqual(19);
+  it('границы апстримные: S1/S2 в [12,149], S3 в [12,63]', () => {
+    for (const { s1, s2, s3 } of [...runs, ...Array.from({ length: 50 }, () => genPacketSizes(0))]) {
+      expect(s1).toBeGreaterThanOrEqual(12); expect(s1).toBeLessThanOrEqual(149);
+      expect(s2).toBeGreaterThanOrEqual(12); expect(s2).toBeLessThanOrEqual(149);
+      expect(s3).toBeGreaterThanOrEqual(12); expect(s3).toBeLessThanOrEqual(63);
     }
   });
 });
