@@ -10,12 +10,12 @@ import { validateBody } from '../middleware/validate.js';
 import {
   installAWG2, installXray, installWireGuard, installTelemt,
   getContainerStatus, getContainersHealth, startContainer, stopContainer,
-  removeContainer, getContainerLogs, PROTOCOLS,
+  removeContainer, getContainerLogs,
   isXrayStatsEnabled, enableXrayStats,
   applyXraySettings, renderXrayClient,
 } from '../services/protocols/index.js';
 import { prepareHost } from '../services/protocols/common.js';
-import { getProtocolsDrift, type ProtocolDrift } from '../services/protocols/drift.js';
+import { getProtocolsDrift, upgradeProtocolContainer, type ProtocolDrift } from '../services/protocols/drift.js';
 import { logger } from '../services/logger.js';
 import { shInt } from '../services/shell.js';
 import type { Server, Protocol, ProtocolType } from '../types.js';
@@ -31,8 +31,6 @@ const installSchema = z.object({
   type: z.enum(['awg2', 'wireguard', 'xray', 'telemt']),
   options: z.record(z.unknown()).optional().default({}),
 });
-
-router.get('/', (_req, res) => res.json(PROTOCOLS));
 
 router.get('/server/:serverId', (req, res) => {
   const protocols = query<Protocol>('SELECT * FROM protocols WHERE server_id = ?', [req.params.serverId]);
@@ -152,6 +150,19 @@ router.post('/:id/settings', validateBody(xraySettingsSchema), async (req: Reque
 
   const row = queryOne<Protocol>('SELECT * FROM protocols WHERE id = ?', [p.id]);
   res.json({ protocol: { ...row, config: row?.config ? JSON.parse(row.config) : {} }, reissued });
+});
+
+// Пересобрать образ и пересоздать контейнер на актуальном шаблоне, сохранив
+// ключи и конфиги протокола. Лечит «⟳ устарел» без потери клиентов и подписок.
+router.post('/:id/upgrade', async (req: Request, res: Response) => {
+  const p = queryOne<Protocol>('SELECT * FROM protocols WHERE id = ?', [req.params.id]);
+  if (!p) return res.status(404).json({ error: 'Not found' });
+  const server = queryOne<Server>('SELECT * FROM servers WHERE id = ?', [p.server_id]);
+  if (!server) return res.status(404).json({ error: 'Server not found' });
+  auditTarget(req, { id: p.id, name: `${p.type} на ${server.name}` });
+
+  await upgradeProtocolContainer(server, p);
+  res.json({ ok: true });
 });
 
 router.delete('/:id', async (req, res) => {

@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { CONFIGURE_SCRIPTS } from './dockerfiles.js';
-import { normalizeXraySettings, settingsFromConfig, buildVlessUrl, renderXrayClient } from './xray.js';
+import { normalizeXraySettings, settingsFromConfig, buildVlessUrl, renderXrayClient, effectiveXhttpMode } from './xray.js';
 
 // Рендерит server.json из heredoc'а configure-скрипта Xray с подставленными
 // переменными — так же, как это делает bash внутри контейнера.
@@ -13,7 +13,7 @@ function renderServerJson(vars: Record<string, string>): any {
   return JSON.parse(rendered);
 }
 
-const REALITY_BLOCK = ',\n "realitySettings": { "dest": "www.googletagmanager.com:443", "serverNames": ["www.googletagmanager.com"], "privateKey": "priv", "shortIds": ["f9612bdf0dc35a8c"] }';
+const REALITY_BLOCK = ',\n "realitySettings": { "dest": "www.googletagmanager.com:443", "fingerprint": "chrome", "privateKey": "priv", "serverNames": ["www.googletagmanager.com"], "shortIds": ["f9612bdf0dc35a8c"] }';
 
 const TCP_VARS = {
   XRAY_SERVER_PORT: '443',
@@ -65,12 +65,27 @@ describe('xray server.json template', () => {
       ...TCP_VARS,
       XRAY_NETWORK: 'xhttp',
       XRAY_FLOW_SUFFIX: '',
-      XRAY_XHTTP_BLOCK: ',\n "xhttpSettings": { "host": "h.example.com", "path": "/", "mode": "auto" }',
+      // Блок задан литералом: здесь проверяется только вклейка в шаблон.
+      // Нормализацию режима покрывают effectiveXhttpMode и renderXrayClient.
+      XRAY_XHTTP_BLOCK: ',\n "xhttpSettings": { "host": "h.example.com", "path": "/", "mode": "stream-one" }',
     });
     const stream = json.inbounds[0].streamSettings;
     expect(stream.network).toBe('xhttp');
-    expect(stream.xhttpSettings).toEqual({ host: 'h.example.com', path: '/', mode: 'auto' });
+    expect(stream.xhttpSettings).toEqual({ host: 'h.example.com', path: '/', mode: 'stream-one' });
     expect(json.inbounds[0].settings.clients[0].flow).toBeUndefined();
+  });
+});
+
+describe('effectiveXhttpMode', () => {
+  it('auto и packet-up схлопываются в stream-one — как в апстриме', () => {
+    // XrayConfigurator::buildStreamSettings подменяет их перед записью в конфиг,
+    // сохраняя при этом выбор пользователя в настройках протокола.
+    for (const m of ['auto', 'packet-up', '']) expect(effectiveXhttpMode(m)).toBe('stream-one');
+  });
+
+  it('явно выбранные режимы не трогает', () => {
+    expect(effectiveXhttpMode('stream-up')).toBe('stream-up');
+    expect(effectiveXhttpMode('stream-one')).toBe('stream-one');
   });
 });
 
@@ -165,7 +180,7 @@ describe('renderXrayClient', () => {
     const json = parse({ security: 'reality', transport: 'xhttp', xhttpHost: 'h.example.com', xhttpPath: '/x', xhttpMode: 'auto' });
     const stream = json.outbounds[0].streamSettings;
     expect(stream.network).toBe('xhttp');
-    expect(stream.xhttpSettings).toEqual({ host: 'h.example.com', path: '/x', mode: 'auto' });
+    expect(stream.xhttpSettings).toEqual({ host: 'h.example.com', path: '/x', mode: 'stream-one' });
   });
 
   it('socks-inbound на месте — по нему приложение находит локальный порт', () => {
@@ -204,6 +219,6 @@ describe('buildVlessUrl', () => {
     const url = buildVlessUrl(s, '10.0.0.1', 443, 'uuid-1', 'Client', 'PUB', 'SID');
     expect(url).toContain('type=xhttp');
     expect(url).toContain('path=%2Fapi%2Fv1');
-    expect(url).toContain('mode=auto');
+    expect(url).toContain('mode=stream-one');
   });
 });

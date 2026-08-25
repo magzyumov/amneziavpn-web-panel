@@ -84,10 +84,18 @@ export function settingsFromConfig(config: unknown): XraySettings {
   }, LEGACY_DEFAULTS);
 }
 
+// Апстрим (XrayConfigurator::buildStreamSettings) отдаёт Xray не тот режим, что
+// выбран в UI: auto и packet-up схлопываются в stream-one. Сам выбор пользователя
+// сохраняем как есть — подменяем только значение, уезжающее в конфиг.
+export function effectiveXhttpMode(mode: string): string {
+  return mode === 'auto' || mode === 'packet-up' || mode === '' ? 'stream-one' : mode;
+}
+
 function xhttpBlock(s: XraySettings): string {
   if (s.transport !== 'xhttp') return '';
-  // Блок 'headers' НЕ добавляем — Xray 25.8.3 запрещает "host" внутри headers.
-  return `,\n                "xhttpSettings": { "host": "${s.xhttpHost}", "path": "${s.xhttpPath}", "mode": "${s.xhttpMode}" }`;
+  // Блок 'headers' НЕ добавляем — Xray запрещает "host" внутри headers, когда
+  // задано верхнеуровневое поле "host" (та же причина у апстрима).
+  return `,\n                "xhttpSettings": { "host": "${s.xhttpHost}", "path": "${s.xhttpPath}", "mode": "${effectiveXhttpMode(s.xhttpMode)}" }`;
 }
 
 // Переменные для configure-скрипта (server.json). Блок realitySettings серверной
@@ -126,7 +134,7 @@ export function buildVlessUrl(
     q.push(`pbk=${publicKey}`, `fp=${s.fingerprint}`, `sni=${s.sni}`, `sid=${shortId}`);
   }
   if (s.transport === 'xhttp') {
-    q.push(`host=${s.xhttpHost}`, `path=${encodeURIComponent(s.xhttpPath)}`, `mode=${s.xhttpMode}`);
+    q.push(`host=${s.xhttpHost}`, `path=${encodeURIComponent(s.xhttpPath)}`, `mode=${effectiveXhttpMode(s.xhttpMode)}`);
   }
   if (s.flow) q.push(`flow=${s.flow}`);
   return `vless://${clientId}@${host}:${port}?${q.join('&')}#${name}`;
@@ -161,7 +169,10 @@ export function renderXrayClient(server: Server, config: unknown, clientId: stri
 }
 
 export const XRAY_CONTAINER = 'amnezia-xray';
-export const XRAY_IMAGE = 'amnezia-xray:latest';
+// Тег включает версию xray-core: по `docker images` видно, что реально крутится,
+// а предыдущая версия остаётся на диске для отката. Пересборку триггерит не тег,
+// а изменение Dockerfile (buildImage сравнивает метку panel.dockerfile-sha).
+export const XRAY_IMAGE = 'amnezia-xray:26.7.28';
 
 // Аргументы docker run — отдельно, чтобы проверка дрейфа могла пересчитать
 // ожидаемый отпечаток для уже запущенного контейнера.
@@ -176,6 +187,9 @@ export function xrayRunArgs(port: number): string[] {
     `--cap-add NET_ADMIN`,
     `-v /opt/amnezia:/opt/amnezia`,
     `-p ${port}:${port}/tcp`,
+    // UDP нужен транспортам поверх QUIC (XHTTP/3, mKCP). Апстрим публикует оба
+    // протокола начиная с 5.0.1.5.
+    `-p ${port}:${port}/udp`,
     XRAY_IMAGE,
   ];
 }
@@ -208,6 +222,9 @@ export async function installXray(server: Server, options: Record<string, unknow
     `export XRAY_SITE_NAME=${s.sni}`,
     `export XRAY_NETWORK=${vars.XRAY_NETWORK}`,
     `export XRAY_SECURITY=${vars.XRAY_SECURITY}`,
+    // Апстрим кладёт fingerprint и в СЕРВЕРНЫЙ realitySettings
+    // (XrayConfigurator::writeServerConfigForSetup), не только в клиентский.
+    `export XRAY_FINGERPRINT=${sh(s.fingerprint)}`,
     `export XRAY_FLOW_SUFFIX=${sh(vars.XRAY_FLOW_SUFFIX)}`,
     `export XRAY_XHTTP_BLOCK=${sh(vars.XRAY_XHTTP_BLOCK)}`,
     '',
@@ -296,13 +313,14 @@ export async function applyXraySettings(server: Server, protocol: Protocol, opti
     }
     stream.realitySettings = {
       dest: `${s.sni}:443`,
-      serverNames: [s.sni],
+      fingerprint: s.fingerprint,
       privateKey,
+      serverNames: [s.sni],
       shortIds: [c?.shortId ?? ''],
     };
   }
   if (s.transport === 'xhttp') {
-    stream.xhttpSettings = { host: s.xhttpHost, path: s.xhttpPath, mode: s.xhttpMode };
+    stream.xhttpSettings = { host: s.xhttpHost, path: s.xhttpPath, mode: effectiveXhttpMode(s.xhttpMode) };
   }
   inbound.streamSettings = stream;
 

@@ -16,7 +16,11 @@ const S_MIN = 12;
 const S_KEYS = ['s1', 's2', 's3', 's4'];
 
 const DEFAULTS: Record<ProtocolType, Record<string, any>> = {
-  awg2:      { port: '', jc: 6, jmin: 10, jmax: 50, s1: 143, s2: 122, s3: 59, s4: 17 },
+  // jc и S1-S4 оставляем пустыми: их генерирует backend по алгоритму апстрима
+  // (AwgInstaller::generateAwgParameters) — случайно и на каждую установку свои.
+  // Прежние преднастроенные значения делали параметры одинаковыми у всех серверов,
+  // то есть сами по себе становились отпечатком. Jmin/Jmax у апстрима — константы.
+  awg2:      { port: '', jc: '', jmin: 10, jmax: 50, s1: '', s2: '', s3: '', s4: '', randomTrailers: true, disableCookies: true },
   xray:      { port: 443, sni: 'www.googletagmanager.com', transport: 'tcp', security: 'reality', fingerprint: 'chrome', flow: 'xtls-rprx-vision' },
   wireguard: { port: '' },
   telemt:    { port: '', tlsDomain: 'www.google.com' },
@@ -82,9 +86,10 @@ export default function InstallProtocolModal({ serverId, onClose, onInstalled }:
         {type === 'awg2' && (
           <div>
             <div className="notice notice-info" style={{ marginBottom: 12, fontSize: 11 }}>
-              Порт и параметры H1-H4 генерируются автоматически если не заданы.
-              S1-S4 служат nonce для защиты заголовков (AWG 3.0), поэтому каждый
-              должен быть не меньше {S_MIN} — иначе AmneziaWG отвергнет конфиг.
+              Пустые поля генерируются на сервере по алгоритму AmneziaVPN 5.0.1.5.
+              S1-S4 служат nonce для защиты заголовков, поэтому каждый должен быть
+              не меньше {S_MIN} — иначе AmneziaWG отвергнет конфиг. H1-H4 при
+              защите заголовков всегда 1/2/3/4, как в апстриме.
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
               {[
@@ -109,6 +114,25 @@ export default function InstallProtocolModal({ serverId, onClose, onInstalled }:
             {sTooSmall.length > 0 && (
               <div className="notice notice-error" style={{ marginTop: 10, fontSize: 11 }}>
                 {sTooSmall.join(', ').toUpperCase()} меньше {S_MIN} — установка не пройдёт.
+              </div>
+            )}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 12 }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12 }}>
+                <input type="checkbox" checked={opts.randomTrailers !== false}
+                  onChange={e => set('randomTrailers', e.target.checked)} />
+                RandomTrailers — случайный хвост у handshake-пакетов (AWG 3.1)
+              </label>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12 }}>
+                <input type="checkbox" checked={opts.disableCookies !== false}
+                  onChange={e => set('disableCookies', e.target.checked)} />
+                DisableCookies — не отвечать cookie-пакетами (AWG 3.1)
+              </label>
+            </div>
+            {opts.randomTrailers !== false && (
+              <div className="notice notice-warning" style={{ marginTop: 10, fontSize: 11 }}>
+                RandomTrailers требует AmneziaVPN <b>5.0.1.5</b> или новее у всех клиентов:
+                приложение постарше ждёт handshake-ответ точного размера и молча его отбросит.
+                Выключите галочку, если клиенты ещё не обновились.
               </div>
             )}
           </div>

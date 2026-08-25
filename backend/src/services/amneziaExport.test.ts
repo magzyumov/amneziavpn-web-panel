@@ -6,7 +6,7 @@ const SEP = '\n---AMNEZIA_JSON---\n';
 const I1 = '<r 2><b 0xdeadbeef>';
 const HPK = '2PgMtXNQAWt9ul11vICYNYiLKBM8aO0cjMHWvWbbHng=';
 
-function awgClient(extra = ''): Client {
+function awgClient(extra = '', keepalive = '25'): Client {
   const conf = [
     '[Interface]',
     'Address = 10.8.1.2/32',
@@ -23,7 +23,7 @@ function awgClient(extra = ''): Client {
     'PresharedKey = PSK',
     'AllowedIPs = 0.0.0.0/0, ::/0',
     'Endpoint = 203.0.113.7:51820',
-    'PersistentKeepalive = 25',
+    `PersistentKeepalive = ${keepalive}`,
   ].filter(l => l !== '').join('\n');
   return { name: 'TEST', config: `${conf}${SEP}{"client_pub_key":"CLIENTPUB"}` } as Client;
 }
@@ -50,12 +50,35 @@ describe('buildAmneziaExportJson — AWG', () => {
     expect(awg.protocol_version).toBe('3');
   });
 
+  it('AWG 3.1: RandomTrailers/DisableCookies доезжают и поднимают версию до 3.1', () => {
+    // Приложение читает эти ключи из awg-контейнера (configKeys::awgProtocolKeys),
+    // а не из текста .conf в last_config.config. Пока их тут не было, клиент
+    // импортировал конфиг без RandomTrailers и молча отбрасывал handshake-ответ
+    // сервера — тот приходил с random-хвостом и не совпадал по размеру.
+    const awg = awgOf(awgClient(
+      `HeaderProtectionKey = ${HPK}\nRandomTrailers = on\nDisableCookies = on`,
+    ));
+    expect(awg.RandomTrailers).toBe('on');
+    expect(awg.DisableCookies).toBe('on');
+    expect(JSON.parse(awg.last_config).RandomTrailers).toBe('on');
+    expect(awg.protocol_version).toBe('3.1');
+  });
+
+  it('PersistentKeepalive берётся из конфига — AWG 3.1 делает его диапазоном', () => {
+    const plain = awgOf(awgClient());
+    expect(JSON.parse(plain.last_config).persistent_keep_alive).toBe('25');
+
+    const ranged = awgOf(awgClient('RandomTrailers = on', '25-35'));
+    expect(JSON.parse(ranged.last_config).persistent_keep_alive).toBe('25-35');
+  });
+
   it('без AWG3-параметров ключи не появляются вовсе, версия остаётся 2', () => {
     // Апстрим не пишет пустые значения: приложение вывело бы их в .conf строкой
     // "X = ", а на ней awg setconf падает.
     const awg = awgOf(awgClient());
     expect(awg).not.toHaveProperty('HeaderProtectionKey');
     expect(awg).not.toHaveProperty('ContentPaddingAddition');
+    expect(awg).not.toHaveProperty('RandomTrailers');
     expect(awg.protocol_version).toBe('2');
   });
 

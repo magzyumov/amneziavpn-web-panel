@@ -44,6 +44,9 @@ export default function ServerPage() {
   const [updating, setUpdating] = useState(false);
   const [dockerMsg, setDockerMsg] = useState('');
   const [dnsInstalled, setDnsInstalled] = useState<boolean | null>(null);
+  // Контейнер резолвера в таблице protocols не лежит, поэтому в общий детектор
+  // дрейфа не попадает — статус приходит вместе с его own-эндпоинтом.
+  const [dnsDrifted, setDnsDrifted] = useState(false);
   const [dnsBusy, setDnsBusy] = useState(false);
 
   const sensors = useSensors(
@@ -71,7 +74,10 @@ export default function ServerPage() {
   // Статус AmneziaDNS (отдельно — SSH-вызов не должен блокировать загрузку страницы)
   useEffect(() => {
     if (!id) return;
-    serversApi.dnsStatus(id).then(r => setDnsInstalled(r.data.installed)).catch(() => setDnsInstalled(null));
+    serversApi.dnsStatus(id).then(r => {
+      setDnsInstalled(r.data.installed);
+      setDnsDrifted(Boolean(r.data.drift?.image || r.data.drift?.runArgs));
+    }).catch(() => setDnsInstalled(null));
   }, [id]);
 
   // Polling реальных статусов каждые 30 секунд
@@ -138,6 +144,22 @@ export default function ServerPage() {
     }
   };
 
+  // Пересоздание резолвера на текущем шаблоне. installDns сам делает rm -f,
+  // так что отдельного «выключить» не нужно.
+  const rebuildDns = async () => {
+    if (!id || dnsBusy) return;
+    setDnsBusy(true);
+    try {
+      await serversApi.installDns(id);
+      setDnsDrifted(false);
+      setDockerMsg('AmneziaDNS пересоздан на текущем шаблоне.');
+    } catch (e: any) {
+      setDockerMsg('Не удалось пересоздать AmneziaDNS: ' + (e?.response?.data?.error || e?.message));
+    } finally {
+      setDnsBusy(false);
+    }
+  };
+
   const toggleDns = async () => {
     if (!id || dnsBusy) return;
     setDnsBusy(true);
@@ -192,6 +214,12 @@ export default function ServerPage() {
                 ? <><span className="spinner" /> AmneziaDNS…</>
                 : `🛡️ AmneziaDNS: ${dnsInstalled === null ? '—' : dnsInstalled ? 'On' : 'Off'}`}
             </button>
+            {dnsInstalled && dnsDrifted && (
+              <button className="btn btn-outline" onClick={rebuildDns} disabled={dnsBusy}
+                title="Контейнер AmneziaDNS собран не по текущему коду. Пересоздать: резолвер не хранит состояния, пропадёт на пару секунд — у клиентов есть запасной DNS">
+                ⟳ DNS устарел
+              </button>
+            )}
             <button className="btn btn-outline" onClick={updateSystem} disabled={updating}
               title="apt-get update && upgrade на сервере, затем перезагрузка через минуту. Занимает несколько минут, VPN на время ребута отвалится">
               {updating ? <><span className="spinner" /> Обновляю…</> : '⬆ Update Server'}

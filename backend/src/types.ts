@@ -84,9 +84,9 @@ export interface ExecResult {
 
 // Конфиги протоколов (то, что хранится в protocols.config после JSON.parse).
 //
-// h1-h4 и i1-i5 — это магические маркеры пакетов AWG (одиночные целые;
-// userspace amneziawg-go не принимает range "min-max"). installAWG2 кладёт их
-// строкой (число от пользователя или сгенерированный randInt);
+// h1-h4 и i1-i5 — это магические маркеры пакетов AWG. h1-h4 — либо одиночный
+// uint32, либо диапазон "min-max" (формат AWG 2.0, installAWG2 генерирует
+// именно диапазоны); i1-i5 — DSL-пакеты. installAWG2 кладёт их строкой,
 // scanExistingProtocols читает их из awg0.conf тоже строкой. Поэтому в типе
 // они всегда string, не number.
 //
@@ -113,6 +113,14 @@ export interface Awg2Config {
   rejectAfterTime?: string;
   keepaliveTimeout?: string;
   maxHandshakeAttempts?: string;
+  // AWG 3.1. Хранятся строкой "on"/"off" — ровно в том виде, в каком уезжают
+  // в awg0.conf и в каком их читает обратно scanExistingProtocols.
+  // randomTrailers обязан совпадать на сервере и клиенте: с ним handshake-ответ
+  // получает случайный хвост, а приёмник без флага требует точного размера.
+  randomTrailers?: string;
+  disableCookies?: string;
+  // PersistentKeepalive клиента: "25" либо диапазон "25-35" (AWG 3.1).
+  persistentKeepalive?: string;
 }
 
 export interface WireGuardConfig {

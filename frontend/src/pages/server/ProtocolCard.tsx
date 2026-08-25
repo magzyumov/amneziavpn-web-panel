@@ -57,6 +57,11 @@ function ProtocolCard({ protocol, server: _server, onDelete, drift, dragHandlePr
   // как мы стали включать stats в шаблоне. Тогда показываем кнопку Enable.
   const [statsEnabled, setStatsEnabled] = useState<boolean | null>(null);
   const [enablingStats, setEnablingStats] = useState(false);
+  const [upgrading, setUpgrading] = useState(false);
+  // Бейдж дрейфа приходит из health-опроса раз в 30 секунд. После успешного
+  // апгрейда прячем его сразу, чтобы кнопка не выглядела «не сработавшей».
+  const [upgraded, setUpgraded] = useState(false);
+  useEffect(() => { setUpgraded(false); }, [drift]);
 
   useEffect(() => {
     clientsApi.byProtocol(protocol.id).then(r => setClients(r.data)).finally(() => setLoadingClients(false));
@@ -77,6 +82,27 @@ function ProtocolCard({ protocol, server: _server, onDelete, drift, dragHandlePr
       alert('Не удалось включить stats: ' + (e?.response?.data?.error || e?.message));
     } finally {
       setEnablingStats(false);
+    }
+  };
+
+  // Пересборка образа + пересоздание контейнера. Конфиги протокола лежат на
+  // хосте, поэтому клиенты и подписки переживают операцию — в отличие от
+  // переустановки протокола.
+  const upgrade = async () => {
+    if (!confirm(
+      'Пересобрать образ и пересоздать контейнер на текущем шаблоне?\n\n'
+      + 'Ключи, конфиги и клиенты сохранятся. Контейнер будет недоступен несколько секунд, '
+      + 'а сборка образа может занять минуту.'
+    )) return;
+    setUpgrading(true);
+    try {
+      await protocolsApi.upgrade(protocol.id);
+      setUpgraded(true);
+      setStatus('running');
+    } catch (e: any) {
+      alert('Не удалось обновить контейнер: ' + (e?.response?.data?.error || e?.message));
+    } finally {
+      setUpgrading(false);
     }
   };
 
@@ -150,12 +176,14 @@ function ProtocolCard({ protocol, server: _server, onDelete, drift, dragHandlePr
           </div>
         </div>
         <div className="flex gap-8 items-center proto-card-actions">
-          {driftReason && (
-            <span
+          {driftReason && !upgraded && (
+            <button
               className="badge badge-stopped"
-              title={`${driftReason} Протокол работает, но собран не по текущему коду — переустановите, чтобы применить изменения.`}
-              style={{ cursor: 'help' }}
-            >⟳ устарел</span>
+              onClick={upgrade}
+              disabled={upgrading}
+              title={`${driftReason} Нажмите, чтобы пересобрать образ и пересоздать контейнер — клиенты и ключи сохранятся.`}
+              style={{ cursor: 'pointer', border: 'none' }}
+            >{upgrading ? 'обновляем…' : '⟳ устарел'}</button>
           )}
           <span className={`badge badge-${status === 'running' ? 'running' : 'stopped'}`}>
             {status}
