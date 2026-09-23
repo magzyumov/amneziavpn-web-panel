@@ -155,7 +155,7 @@ Frontend — React SPA; nginx отдаёт статику и проксируе�
 | xray | xray.ts | VLESS; `security` = `reality` или `none`, транспорт `tcp` (flow xtls-rprx-vision) или `xhttp` (SplitHTTP, без flow); настраиваемые `sni`/`fingerprint`/`flow` меняются на живом протоколе через `applyXraySettings` (клиентские конфиги перевыпускаются, uuid сохраняются). addClient правит server.json в контейнере + restart; stats через StatsService API. vless обязан быть `inbounds[0]`. Чистая `effectiveXhttpMode` схлопывает `auto`/`packet-up` (и пустое) в `stream-one` — как апстримный `XrayConfigurator::buildStreamSettings`; выбор пользователя при этом сохраняется как есть. |
 | telemt | telemt.ts | Telegram MTProto-прокси с FakeTLS; клиент = отдельный secret → `tg://proxy`. |
 | — | wgCommon.ts | общая механика WG/AWG: `WgFlavor` (tool/iface/confDir/container/image/buildDir), `wgRunArgs`, `installWgLike`, `genPeerKeys`, `nextClientIp`, `addPeer`, `removePeer`, `assertContainerRunning`. |
-| — | common.ts | `driftFromLabels`/`getContainerDrift` (сравнение меток живёт здесь, а не в drift.ts: импорт из dns.ts замкнул бы цикл dns → drift → awg2 → dns). `prepareHost` (ip_forward + сеть `amnezia-dns-net`), `assertPortFree`, `buildImage` (по sha Dockerfile), `runContainer` + `RUN_ARGS_LABEL`/`runArgsSha`, `writeRemoteFile`/`readRemoteFile`/`readContainerFile` (base64), `renderTemplate`, `removePeerBlock`, rand*. |
+| — | common.ts | `driftFromLabels`/`getContainerDrift` (сравнение меток живёт здесь, а не в drift.ts: импорт из dns.ts замкнул бы цикл dns → drift → awg2 → dns). `prepareHost` (ip_forward + MSS-клампинг под PMTU аплинка + сеть `amnezia-dns-net`), `assertPortFree`, `buildImage` (по sha Dockerfile), `runContainer` + `RUN_ARGS_LABEL`/`runArgsSha`, `writeRemoteFile`/`readRemoteFile`/`readContainerFile` (base64), `renderTemplate`, `removePeerBlock`, rand*. |
 | — | containers.ts | статусы контейнеров (`getContainersHealth` — один SSH-вызов), start/stop/remove/logs, `listAmneziaContainers`, `ensureDocker`, **`updateAndRebootHost`** (apt-get update+upgrade под `DEBIAN_FRONTEND=noninteractive` и `--force-confold/confdef`, затем `shutdown -r +1` и `disconnect(server.id)` — соединение умрёт вместе с сервером), `scanExistingProtocols`. `getContainerLogs` подменяет ошибку демона «does not support reading» человеческим текстом: так отвечают контейнеры, поднятые до 18.08.2026 с `--log-driver none`. |
 | — | dockerfiles.ts | JS template literals: Dockerfile'ы + start/configure-скрипты + шаблоны клиентских конфигов (следить за экранированием). |
 | — | stats.ts | per-peer трафик: `readAwgWgPeerStats`, `readXrayPeerStats`, `readTelemtPeerStats`, `withIdleXrayPeers`, `isXrayStatsEnabled`, `enableXrayStats`. **`readXrayPeerStats` различает `null` (stats API не ответил — снимать нечего) и `[]` (ответил, но счётчиков ещё нет)**; `withIdleXrayPeers` дописывает нулевые снимки для клиентов, которых Xray не вернул (счётчик заводится только при трафике и теряется при рестарте). |
@@ -278,7 +278,8 @@ run-args, парсинг размеров диска) — там и случал
   своя статистика). Роль в токен не кладётся — читается из БД на каждом запросе,
   чтобы разжалование действовало сразу.
 - **Управление протоколом:** панель по SSH делает `prepareHost` (ip_forward +
-  сеть `amnezia-dns-net`), проверяет свободность порта, собирает Docker-образ
+  MSS-клампинг под измеренный PMTU аплинка + сеть `amnezia-dns-net`), проверяет
+  свободность порта, собирает Docker-образ
   (`buildImage`, skip если sha Dockerfile совпал), пишет start/configure-скрипты
   через base64, запускает контейнер с меткой `panel.run-sha` и конфигурирует через
   `docker exec`. Клиенты добавляются правкой конфига внутри контейнера
