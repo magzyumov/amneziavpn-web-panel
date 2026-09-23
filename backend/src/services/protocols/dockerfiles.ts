@@ -96,7 +96,7 @@ RUN apt-get update \\
     && rm -rf /var/lib/apt/lists/*
 
 RUN set -eux; \\
-    TELEMT_VERSION="3.4.25"; \\
+    TELEMT_VERSION="3.5.7"; \\
     ARCH="$(uname -m)"; \\
     case "$ARCH" in \\
         x86_64) ASSET="telemt-x86_64-linux-musl.tar.gz" ;; \\
