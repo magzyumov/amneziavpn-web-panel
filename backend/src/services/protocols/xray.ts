@@ -56,7 +56,11 @@ export function normalizeXraySettings(raw: Record<string, unknown> = {}, base: X
 
   // Vision несовместим с security=none и с xhttp — молча гасим, а не падаем:
   // пользователь мог переключить транспорт, не трогая flow.
-  const flowRaw = assertXrayFlow(pick('flow'));
+  // flow — единственное поле, где пустая строка осмысленна («без Vision»), так что
+  // для него '' ≠ «поле не заполнено»: иначе выбор «пусто — без Vision» в форме
+  // не применялся бы, а сохранённый flow='' рендерил бы клиенту ссылку с Vision,
+  // которого на inbound'е уже нет.
+  const flowRaw = assertXrayFlow(raw.flow === undefined ? base.flow : raw.flow);
   const flow = security === 'reality' && transport === 'tcp' ? flowRaw : '';
 
   const fingerprint = security === 'reality' ? assertXrayFingerprint(pick('fingerprint')) : '';
