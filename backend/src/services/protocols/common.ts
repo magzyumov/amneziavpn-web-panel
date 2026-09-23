@@ -13,10 +13,30 @@ export function randPort(): number {
 }
 
 // Подготовка хоста перед установкой протокола (идемпотентно).
-// Включает IP-форвардинг и создаёт сеть amnezia-dns-net один раз.
+// Включает IP-форвардинг, подгоняет MSS под реальный PMTU аплинка и создаёт
+// сеть amnezia-dns-net один раз.
 export async function prepareHost(server: Server): Promise<void> {
   // Docker обычно включает форвардинг сам, но делаем явно. best-effort.
   await execSudo(server, 'sysctl -w net.ipv4.ip_forward=1 >/dev/null 2>&1 || true');
+  // MSS под реальный PMTU аплинка. У части хостеров интерфейс настроен на 1500,
+  // а наружу проходит меньше: у NEKOBYTE (31.77.133.138) — 1476, 24 байта съедает
+  // инкапсуляция провайдера. Сервер при этом объявляет MSS 1460, шлёт пакеты по
+  // 1500 и они молча тонут, а ICMP "fragmentation needed" до мобильных клиентов
+  // обычно не доходит — PMTU discovery не срабатывает, соединение просто встаёт.
+  // Меряем PMTU пингом с DF (он же наполняет кэш маршрута) и прибиваем MSS сами.
+  // ponytail: правило не переживает перезагрузку — как и sysctl выше; ставится
+  // заново при каждой установке протокола. Нужна стойкость — netfilter-persistent.
+  // Сменится PMTU — добавится вторая строка с новым значением; она окажется
+  // последней в цепочке и перебьёт прежнюю, так что чистка не нужна.
+  await execSudo(server, [
+    'ping -c1 -W2 -M do -s 1472 1.1.1.1 >/dev/null 2>&1',
+    'PMTU=$(ip route get 1.1.1.1 2>/dev/null | sed -n \'s/.*mtu \\([0-9]*\\).*/\\1/p\')',
+    '[ -n "$PMTU" ] && [ "$PMTU" -lt 1500 ] || exit 0',
+    'MSS=$((PMTU-40))',
+    'iptables -t mangle -C FORWARD -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --set-mss $MSS 2>/dev/null'
+      + ' || iptables -t mangle -A FORWARD -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --set-mss $MSS',
+  ].join('; ') + ' >/dev/null 2>&1 || true');
+
   // Параметры сети — как в оригинальном prepare_host.sh (фиксированная подсеть,
   // чтобы будущий AmneziaDNS-контейнер мог получить статичный IP). Создаём один раз.
   const exists = await exec(server, `docker network ls --format '{{.Name}}' | grep -qx amnezia-dns-net && echo yes || echo no`);
