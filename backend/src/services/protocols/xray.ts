@@ -172,7 +172,7 @@ export const XRAY_CONTAINER = 'amnezia-xray';
 // Тег включает версию xray-core: по `docker images` видно, что реально крутится,
 // а предыдущая версия остаётся на диске для отката. Пересборку триггерит не тег,
 // а изменение Dockerfile (buildImage сравнивает метку panel.dockerfile-sha).
-export const XRAY_IMAGE = 'amnezia-xray:26.7.28';
+export const XRAY_IMAGE = 'amnezia-xray:26.9.9';
 
 // Аргументы docker run — отдельно, чтобы проверка дрейфа могла пересчитать
 // ожидаемый отпечаток для уже запущенного контейнера.

@@ -149,7 +149,7 @@ export const AWG2_FLAVOR: WgFlavor = {
   iface: 'awg0',
   confDir: '/opt/amnezia/awg',
   containerName: 'amnezia-awg2',
-  imageName: 'amnezia-awg2:3.1.20260814',
+  imageName: 'amnezia-awg2:3.1.20260828',
   buildDir: '/opt/amnezia/amnezia-awg2',
   label: 'AmneziaWG',
 };
