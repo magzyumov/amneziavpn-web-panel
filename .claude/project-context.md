@@ -165,10 +165,10 @@ Frontend — React SPA; nginx отдаёт статику и проксируе�
 ### Pinned images (как ЗАДУМАНО, не как развёрнуто)
 | Протокол | FROM в dockerfiles.ts | Тег собираемого образа |
 |---|---|---|
-| awg2 | `amneziavpn/amneziawg-go:3.1.20260814` | `amnezia-awg2:3.1.20260814` |
+| awg2 | `amneziavpn/amneziawg-go:3.1.20260828` | `amnezia-awg2:3.1.20260828` |
 | wireguard | `alpine:3.15` (+ wireguard-tools из apk) | `amnezia-wireguard:latest` |
-| xray | `alpine:3.15`, `ARG XRAY_RELEASE="v26.7.28"` | `amnezia-xray:26.7.28` |
-| telemt | `debian:12-slim`, `TELEMT_VERSION="3.4.25"` (**версия прибита**, раньше был `releases/latest`) | `amnezia-telemt:latest` |
+| xray | `alpine:3.15`, `ARG XRAY_RELEASE="v26.9.9"` | `amnezia-xray:26.9.9` |
+| telemt | `debian:12-slim`, `TELEMT_VERSION="3.5.7"` (**версия прибита**, раньше был `releases/latest`) | `amnezia-telemt:3.5.7` |
 | dns | `mvance/unbound:1.22.0` | `amnezia-dns:latest` |
 
 _В образе xray НЕТ iptables_ — весь firewall-блок в его `start.sh` не выполняется
@@ -179,7 +179,7 @@ _Пометки про `:latest`:_ локальные теги `amnezia-*:latest
 дрейфа апстрима не несут (образ пересобирается при смене sha Dockerfile).
 Все апстрим-версии сейчас прибиты: `amneziavpn/amneziawg-go:latest` однажды
 уехал с 0.2.19 на 3.0.3 и сменил мажорную версию демона под живыми клиентами,
-telemt по той же причине переведён с `releases/latest` на 3.4.25. Тег `imageName`
+telemt по той же причине переведён с `releases/latest` на прибитую версию. Тег `imageName`
 меняется вместе с `FROM`/`ARG` не ради пересборки (её триггерит sha Dockerfile),
 а чтобы версия была видна в `docker images` и предыдущая осталась для отката.
 Что реально крутится на сервере — вопрос рантайма, его решает `drift.ts`, не этот файл.
