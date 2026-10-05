@@ -119,6 +119,26 @@ describe('normalizeXraySettings', () => {
     expect(s).toMatchObject({ transport: 'tcp', xhttpHost: '', xhttpPath: '', xhttpMode: '' });
   });
 
+  // Пустая строка во flow — это выбор «без Vision» в форме, а не «поле не трогали».
+  it('выключает Vision по явному пустому flow', () => {
+    const base = normalizeXraySettings({ security: 'reality', flow: 'xtls-rprx-vision' });
+    const s = normalizeXraySettings({ flow: '' }, base);
+    expect(s.flow).toBe('');
+    expect(s.security).toBe('reality');
+    // а отсутствие поля по-прежнему наследует текущее значение
+    expect(normalizeXraySettings({}, base).flow).toBe('xtls-rprx-vision');
+  });
+
+  // Ссылка клиенту собирается из сохранённого конфига: flow='' там означает, что
+  // на inbound'е Vision нет, и в URI его быть не должно — иначе клиент говорит
+  // на XTLS с сервером, который его не ждёт.
+  it('не подставляет Vision в ссылку, если в конфиге flow пустой', () => {
+    const s = settingsFromConfig({ port: 443, sni: 'www.googletagmanager.com', security: 'reality',
+      fingerprint: 'chrome', flow: '', transport: 'tcp' });
+    expect(s.flow).toBe('');
+    expect(buildVlessUrl(s, '1.2.3.4', 443, 'uuid', 'c', 'pbk', 'sid')).not.toContain('flow=');
+  });
+
   it('наследует неуказанные поля из базовых настроек', () => {
     const base = normalizeXraySettings({ sni: 'swdist.apple.com', fingerprint: 'firefox' });
     const s = normalizeXraySettings({ security: 'none' }, base);

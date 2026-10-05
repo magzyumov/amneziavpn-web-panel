@@ -56,7 +56,11 @@ export function normalizeXraySettings(raw: Record<string, unknown> = {}, base: X
 
   // Vision несовместим с security=none и с xhttp — молча гасим, а не падаем:
   // пользователь мог переключить транспорт, не трогая flow.
-  const flowRaw = assertXrayFlow(pick('flow'));
+  // flow — единственное поле, где пустая строка осмысленна («без Vision»), так что
+  // для него '' ≠ «поле не заполнено»: иначе выбор «пусто — без Vision» в форме
+  // не применялся бы, а сохранённый flow='' рендерил бы клиенту ссылку с Vision,
+  // которого на inbound'е уже нет.
+  const flowRaw = assertXrayFlow(raw.flow === undefined ? base.flow : raw.flow);
   const flow = security === 'reality' && transport === 'tcp' ? flowRaw : '';
 
   const fingerprint = security === 'reality' ? assertXrayFingerprint(pick('fingerprint')) : '';
@@ -172,7 +176,7 @@ export const XRAY_CONTAINER = 'amnezia-xray';
 // Тег включает версию xray-core: по `docker images` видно, что реально крутится,
 // а предыдущая версия остаётся на диске для отката. Пересборку триггерит не тег,
 // а изменение Dockerfile (buildImage сравнивает метку panel.dockerfile-sha).
-export const XRAY_IMAGE = 'amnezia-xray:26.7.28';
+export const XRAY_IMAGE = 'amnezia-xray:26.9.9';
 
 // Аргументы docker run — отдельно, чтобы проверка дрейфа могла пересчитать
 // ожидаемый отпечаток для уже запущенного контейнера.

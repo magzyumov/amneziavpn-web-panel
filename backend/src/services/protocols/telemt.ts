@@ -20,7 +20,9 @@ function buildMtprotoLink(host: string, port: number, secret: string, tlsDomain:
 }
 
 export const TELEMT_CONTAINER = 'amnezia-telemt';
-export const TELEMT_IMAGE = 'amnezia-telemt:latest';
+// Тег с версией, как у awg2/xray: при бампе TELEMT_VERSION в dockerfiles.ts
+// прошлый образ остаётся на диске и откат не требует качать релиз заново.
+export const TELEMT_IMAGE = 'amnezia-telemt:3.5.7';
 
 export function telemtRunArgs(port: number): string[] {
   return [

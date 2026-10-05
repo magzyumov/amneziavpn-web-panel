@@ -70,7 +70,7 @@ docker compose up -d --build
 | Протокол | Что это | Особенности |
 |---|---|---|
 | **AmneziaWG 3.1** | WireGuard с обфускацией под DPI | Junk-пакеты (`Jc/Jmin/Jmax`), паддинг `S1-S4`, заголовки `H1-H4`, сигнатурный пакет `I1` (`I2-I5` зарезервированы, пустые), **защита заголовков** (`HeaderProtectionKey`), рандомизированные тайминги (`ContentPaddingAddition`, `Rekey*`, `RejectAfterTime`, `KeepaliveTimeout`, `MaxHandshakeAttempts`, диапазонный `PersistentKeepalive`) и **AWG 3.1** — `RandomTrailers` + `DisableCookies` |
-| **Xray VLESS** (xray-core v26.7.28) | Маскировка под TLS чужого сайта (Reality) либо без TLS | `security` = `reality`/`none`, транспорт `tcp`/`xhttp`, произвольные SNI, fingerprint и `flow`, per-client UUID. Всё, кроме порта, меняется на живом протоколе |
+| **Xray VLESS** (xray-core v26.9.9) | Маскировка под TLS чужого сайта (Reality) либо без TLS | `security` = `reality`/`none`, транспорт `tcp`/`xhttp`, произвольные SNI, fingerprint и `flow`, per-client UUID. Всё, кроме порта, меняется на живом протоколе |
 | **WireGuard** | Классический WG | Без обфускации — быстрый, но узнаваемый для DPI |
 | **Telemt** | Telegram-прокси MTProto | Обязательная FakeTLS-маскировка, per-client секреты и `tg://`-ссылки |
 | **AmneziaDNS** | Резолвер на стороне сервера | unbound с DNS-over-TLS наружу; клиентам WG/AWG прописывается автоматически, вторым адресом идёт публичный резолвер — как в апстриме (`$PRIMARY_DNS, $SECONDARY_DNS`), чтобы падение контейнера не оставляло клиента без DNS |

@@ -13,9 +13,12 @@ export const DOCKERFILES = {
   // (buildImage сравнивает метку panel.dockerfile-sha, так что смена базы
   // пересоберёт образ и под тем же тегом), а чтобы по `docker images` было видно
   // реальную версию демона и чтобы предыдущая осталась на диске для отката.
-  // 3.1.20260814, а не .0812: в .0812 SendHandshakeCookie выделяет буфер
+  // Не опускаться ниже .0814: в .0812 SendHandshakeCookie выделяет буфер
   // с cap < len (make([]byte, size, trailerLen)) — фикс приехал в .0814.
-  awg2: `FROM amneziavpn/amneziawg-go:3.1.20260814
+  // .0828 добавляет к нему два фикса ровно в том же пути, которым мы и ходим
+  // (H3/underload, DisableCookies): udp window для RandomPaddingAddition и
+  // отключение всего underload-пути, когда DisableCookies включён.
+  awg2: `FROM amneziavpn/amneziawg-go:3.1.20260828
 
 LABEL maintainer="AmneziaVPN"
 
@@ -39,7 +42,7 @@ CMD [ "" ]`,
   xray: `FROM alpine:3.15
 LABEL maintainer="AmneziaVPN"
 
-ARG XRAY_RELEASE="v26.7.28"
+ARG XRAY_RELEASE="v26.9.9"
 
 RUN apk add --no-cache curl unzip bash openssl netcat-openbsd dumb-init rng-tools xz
 RUN apk --update upgrade --no-cache
@@ -93,7 +96,7 @@ RUN apt-get update \\
     && rm -rf /var/lib/apt/lists/*
 
 RUN set -eux; \\
-    TELEMT_VERSION="3.4.25"; \\
+    TELEMT_VERSION="3.5.7"; \\
     ARCH="$(uname -m)"; \\
     case "$ARCH" in \\
         x86_64) ASSET="telemt-x86_64-linux-musl.tar.gz" ;; \\
