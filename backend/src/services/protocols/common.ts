@@ -13,8 +13,8 @@ export function randPort(): number {
 }
 
 // Подготовка хоста перед установкой протокола (идемпотентно).
-// Включает IP-форвардинг, подгоняет MSS под реальный PMTU аплинка и создаёт
-// сеть amnezia-dns-net один раз.
+// Включает IP-форвардинг, подгоняет MSS под реальный PMTU аплинка, поднимает
+// лимит conntrack и создаёт сеть amnezia-dns-net один раз.
 export async function prepareHost(server: Server): Promise<void> {
   // Docker обычно включает форвардинг сам, но делаем явно. best-effort.
   await execSudo(server, 'sysctl -w net.ipv4.ip_forward=1 >/dev/null 2>&1 || true');
@@ -35,6 +35,16 @@ export async function prepareHost(server: Server): Promise<void> {
     'MSS=$((PMTU-40))',
     'iptables -t mangle -C FORWARD -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --set-mss $MSS 2>/dev/null'
       + ' || iptables -t mangle -A FORWARD -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --set-mss $MSS',
+  ].join('; ') + ' >/dev/null 2>&1 || true');
+  // Таблица conntrack — как в setup_host_firewall.sh AmneziaVPN 5.0.3.0: Telegram-
+  // прокси (Telemt) держат сотни соединений к middle-proxy, дефолтные 8192 записей
+  // переполняются, и новые соединения молча дропаются. Только поднимаем: если на
+  // хосте уже больше, не трогаем. Ключа нет, пока не загружен nf_conntrack, — тогда
+  // пропускаем. ponytail: как и ip_forward, до перезагрузки.
+  await execSudo(server, [
+    'CUR=$(sysctl -n net.netfilter.nf_conntrack_max 2>/dev/null)',
+    '[ -n "$CUR" ] && [ "$CUR" -lt 262144 ] || exit 0',
+    'sysctl -w net.netfilter.nf_conntrack_max=262144',
   ].join('; ') + ' >/dev/null 2>&1 || true');
 
   // Параметры сети — как в оригинальном prepare_host.sh (фиксированная подсеть,
