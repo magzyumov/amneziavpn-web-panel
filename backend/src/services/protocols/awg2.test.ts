@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { genPacketSizes } from './awg2.js';
+import { genPacketSizes, defaultPacketSizes } from './awg2.js';
 
 // Базовые размеры handshake-пакетов AmneziaWG — те же константы, что в awg2.ts.
 const MSG_INIT = 148, MSG_RESP = 92, MSG_COOKIE = 64;
@@ -49,6 +49,28 @@ describe('genPacketSizes', () => {
       expect(s1).toBeGreaterThanOrEqual(12); expect(s1).toBeLessThanOrEqual(149);
       expect(s2).toBeGreaterThanOrEqual(12); expect(s2).toBeLessThanOrEqual(149);
       expect(s3).toBeGreaterThanOrEqual(12); expect(s3).toBeLessThanOrEqual(63);
+    }
+  });
+});
+
+describe('defaultPacketSizes', () => {
+  it('при header protection — все S по 12, как в AmneziaVPN 5.0.3.0', () => {
+    // protocolConstants::defaultPadding; апстрим перестал их рандомизировать (9a7db347).
+    expect(defaultPacketSizes(true)).toEqual({ s1: 12, s2: 12, s3: 12, s4: 12 });
+  });
+
+  it('при одинаковых S итоговые размеры пакетов всё равно различны', () => {
+    const { s1, s2, s3 } = defaultPacketSizes(true);
+    expect(new Set([s1 + MSG_INIT, s2 + MSG_RESP, s3 + MSG_COOKIE]).size).toBe(3);
+  });
+
+  it('без header protection (AWG 2.0) размеры остаются случайными', () => {
+    // Фиксированные 12 дали бы всем серверам в режиме 2.0 один и тот же отпечаток.
+    const runs = Array.from({ length: 50 }, () => defaultPacketSizes(false));
+    expect(new Set(runs.map(r => r.s1)).size).toBeGreaterThan(1);
+    for (const { s2, s3 } of runs) {
+      expect(s2).toBeGreaterThanOrEqual(12);
+      expect(s3).toBeLessThanOrEqual(63);
     }
   });
 });

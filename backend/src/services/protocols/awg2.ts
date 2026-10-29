@@ -55,11 +55,14 @@ const DEFAULT_I1 = '<r 2><b 0x858000010001000000000669636c6f756403636f6d00000100
 // конфигов, где H1-H4 ещё не сохранены (protocolConstants.h:191-194).
 const DEFAULT_H = { h1: '1020325451', h2: '3288052141', h3: '1766607858', h4: '2528465083' };
 
-// Дефолты таймингов AWG 3.x — один-в-один с AmneziaVPN 5.0.1.5
+// Дефолты таймингов AWG 3.x — один-в-один с AmneziaVPN 5.0.3.0
 // (protocolConstants.h, namespace awg). До 5.0.1.5 апстрим их не задавал вовсе,
 // поэтому у инсталляций панели старше этого релиза они пустые.
+// ContentPaddingAddition по умолчанию не задаётся: с 5.0.3.0 апстрим его не
+// генерирует (коммит 9a7db347, «adjust awg selfhosted defaults»), хотя константа
+// 10-100 у него осталась. Задать вручную по-прежнему можно.
 const AWG3_DEFAULTS = {
-  contentPaddingAddition: '10-100',
+  contentPaddingAddition: '',
   rekeyAfterTime: '100-120',
   rekeyTimeout: '3-7',
   rejectAfterTime: '150-180',
@@ -88,6 +91,22 @@ const HP_MIN_JUNK = 12;
 
 // S4 в AmneziaVPN 5.0.1.5 не рандомизируется — protocolConstants::defaultTransportPacketJunkSize.
 const UPSTREAM_S4 = 12;
+
+// Паддинг S1-S4 при header protection в AmneziaVPN 5.0.3.0 — все четыре равны
+// protocolConstants::defaultPadding (12), без рандома. Итоговые размеры пакетов
+// (160/104/76/44) всё равно различны, а сами заголовки скрыты шифром.
+const UPSTREAM_PADDING = 12;
+
+// Дефолтные S1-S4. При header protection (AWG 3.x) — как в апстриме 5.0.3.0,
+// фиксированные 12. Без неё (режим AWG 2.0) размеры пакетов — единственное, что
+// прячет WireGuard от сигнатурного анализа, поэтому там остаётся генератор
+// из 5.0.1.5: одинаковые 12 на каждом сервере дали бы общий отпечаток.
+export function defaultPacketSizes(headerProtection: boolean): { s1: number; s2: number; s3: number; s4: number } {
+  if (headerProtection) {
+    return { s1: UPSTREAM_PADDING, s2: UPSTREAM_PADDING, s3: UPSTREAM_PADDING, s4: UPSTREAM_PADDING };
+  }
+  return genPacketSizes(0);
+}
 
 // Генерация S1-S4 — копия AwgInstaller::generateAwgParameters из AmneziaVPN 5.0.1.5:
 // значения уникальны и не дают совпадающих итоговых размеров пакетов. Границы
@@ -176,11 +195,10 @@ export async function installAWG2(server: Server, options: InstallOptions = {}):
   const randomTrailers = toggleOn(options.randomTrailers);
   const disableCookies = toggleOn(options.disableCookies);
 
-  // S1-S4 генерируем единым набором (уникальны + без коллизий размеров пакетов),
-  // одиночные override'ы валидируем поверх. При header protection все четыре
-  // обязаны быть >= HP_MIN_JUNK — иначе awg setconf отвергнет конфиг.
-  const sMin = headerProtection ? HP_MIN_JUNK : 0;
-  const gen = genPacketSizes(sMin);
+  // Дефолтные S1-S4 берём набором (см. defaultPacketSizes), одиночные override'ы
+  // валидируем поверх. При header protection все четыре обязаны быть
+  // >= HP_MIN_JUNK — иначе awg setconf отвергнет конфиг.
+  const gen = defaultPacketSizes(headerProtection);
   const s1 = intOpt(options.s1, gen.s1, 's1');
   const s2 = intOpt(options.s2, gen.s2, 's2');
   const s3 = intOpt(options.s3, gen.s3, 's3');
